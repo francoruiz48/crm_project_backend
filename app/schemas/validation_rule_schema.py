@@ -8,7 +8,6 @@ from app.schemas.lead_field_schema import LeadFieldResponse
 
 
 class ValidationRuleBase(BaseModel):
-    name: str
     static_value: Optional[str] = None
     min_value: Optional[float] = None
     max_value: Optional[float] = None
@@ -17,24 +16,23 @@ class ValidationRuleBase(BaseModel):
     regex_pattern: Optional[str] = None
     date_from: Optional[datetime.date] = None
     date_to: Optional[datetime.date] = None
+    rule_type_code : str
 
 
 class ValidationRuleCreate(ValidationRuleBase, BaseCreate):
-    rule_type_id : int
+    
     field_id : int
     related_field_id: Optional[int] = None
 
 
 class ValidationRuleResponse(ValidationRuleBase, BaseResponse):
-    rule_type : ValidationRuleTypeResponse
-    field : LeadFieldResponse
-    related_field : Optional[LeadFieldResponse] = None
+    _field : LeadFieldResponse = PrivateAttr(default=None)
+    _related_field : Optional[LeadFieldResponse] = PrivateAttr(default=None)
 
     @computed_field
     def fields(self) -> Dict[str, Any]:
         result = {
-            "rule_type": self.rule_type.code,
-            "field": self.field.name,
-            "related_field": self.related_field.name if self.related_field else ""
+            "field": self._field.name if self._field else None,
+            "related_field": self._related_field.name if self._related_field else None
         }
         return result

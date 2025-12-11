@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 
 class BaseController:
     router_prefix = ""
@@ -26,12 +26,12 @@ class BaseController:
 
         if "POST" in cls.enabled_methods:
             @router.post("/", response_model=cls.schema_out)
-            def create(obj_in: cls.schema_in):
+            def create(obj_in: cls.schema_in = Body(...)):
                 return cls.service.create(obj_in)
 
         if "PUT" in cls.enabled_methods:
             @router.put("/{obj_id}", response_model=cls.schema_out)
-            def update(obj_id: int, obj_in: cls.schema_in):
+            def update(obj_id: int, obj_in: cls.schema_in = Body(...)):
                 return cls.service.update(obj_id, obj_in)
 
         if "DELETE" in cls.enabled_methods:
