@@ -1,3 +1,4 @@
+from app.schemas.base_schema import BaseResponse, BaseCreate
 from app.schemas.lead_field_schema import LeadFieldResponse
 from pydantic import BaseModel
 from typing import Optional
@@ -8,15 +9,11 @@ class LeadFieldValueBase(BaseModel):
     value: Optional[str] = None
 
 
-class LeadFieldValueCreate(LeadFieldValueBase):
+class LeadFieldValueCreate(LeadFieldValueBase, BaseCreate):
     pass
 
 
-class LeadFieldValueResponse(LeadFieldValueBase):
-    id: int
+class LeadFieldValueResponse(LeadFieldValueBase, BaseResponse):
     lead_id: int
     field: Optional[LeadFieldResponse] = None
 
-    model_config = {
-        "from_attributes": True
-    }

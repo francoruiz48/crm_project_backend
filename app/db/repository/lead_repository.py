@@ -37,7 +37,7 @@ class LeadRepository(BaseRepository):
             result = []
             for lead in leads:
                 lead_resp = LeadResponse.model_validate(lead)
-                lead_resp._field_values = lead.field_values  # 👈 se asigna acá
+                lead_resp._field_values = lead.field_values
                 result.append(lead_resp)
             return result
 
@@ -56,5 +56,5 @@ class LeadRepository(BaseRepository):
             )
 
             lead_resp = LeadResponse.model_validate(lead)
-            lead_resp._field_values = lead.field_values  # 👈 se asigna acá
+            lead_resp._field_values = lead.field_values 
             return lead_resp

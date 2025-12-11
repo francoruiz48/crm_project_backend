@@ -1,6 +1,6 @@
 
 from app.db.base_sql import Base
-from sqlalchemy import Column, Integer, DateTime, func
+from sqlalchemy import Boolean, Column, Integer, DateTime, func
 from sqlalchemy.ext.declarative import declared_attr
 
 class BaseModelDB(Base):
@@ -9,6 +9,7 @@ class BaseModelDB(Base):
     id = Column(Integer, primary_key=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    active = Column(Boolean, default=True, nullable=False)
 
     @declared_attr
     def __tablename__(cls):

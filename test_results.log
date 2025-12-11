@@ -1,24 +1,75 @@
 ============================= test session starts ==============================
-platform linux -- Python 3.11.14, pytest-8.4.2, pluggy-1.6.0 -- /usr/local/bin/python3.11
+platform linux -- Python 3.11.14, pytest-9.0.2, pluggy-1.6.0 -- /usr/local/bin/python3.11
 cachedir: .pytest_cache
 rootdir: /code
-plugins: asyncio-1.2.0, anyio-4.11.0
+plugins: anyio-4.12.0, asyncio-1.3.0
 asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
 collecting ... collected 4 items
 
 tests/test_leads.py::test_get_empty_leads PASSED                         [ 25%]
-tests/test_leads.py::test_create_lead_success FAILED                     [ 50%]
+tests/test_leads.py::test_create_lead_success ERROR                      [ 50%]
 tests/test_leads.py::test_get_leads ERROR                                [ 75%]
 tests/test_leads.py::test_create_lead_missing_values PASSED              [100%]
 
 ==================================== ERRORS ====================================
+__________________ ERROR at setup of test_create_lead_success __________________
+
+fixturedef = <FixtureDef argname='initial_fields' scope='function' baseid='tests'>
+request = <SubRequest 'initial_fields' for <Function test_create_lead_success>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+>               return (yield)
+                        ^^^^^
+
+/usr/local/lib/python3.11/site-packages/pytest_asyncio/plugin.py:728: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/conftest.py:48: in initial_fields
+    nombre_field = LeadField(name="Nombre", field_type_id=string_type.id, required=True)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/state.py:596: in _initialize_instance
+    with util.safe_reraise():
+/usr/local/lib/python3.11/site-packages/sqlalchemy/util/langhelpers.py:224: in __exit__
+    raise exc_value.with_traceback(exc_tb)
+/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/state.py:594: in _initialize_instance
+    manager.original_init(*mixed[1:], **kwargs)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <LeadField(id=None)>
+kwargs = {'field_type_id': 1, 'name': 'Nombre', 'required': True}
+cls_ = <class 'app.models.lead_field.LeadField'>, k = 'field_type_id'
+
+    def _declarative_constructor(self: Any, **kwargs: Any) -> None:
+        """A simple constructor that allows initialization from kwargs.
+    
+        Sets attributes on the constructed instance using the names and
+        values in ``kwargs``.
+    
+        Only keys that are present as
+        attributes of the instance's class are allowed. These could be,
+        for example, any mapped columns or relationships.
+        """
+        cls_ = type(self)
+        for k in kwargs:
+            if not hasattr(cls_, k):
+>               raise TypeError(
+                    "%r is an invalid keyword argument for %s" % (k, cls_.__name__)
+                )
+E               TypeError: 'field_type_id' is an invalid keyword argument for LeadField
+
+/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/decl_base.py:2179: TypeError
 _______________________ ERROR at setup of test_get_leads _______________________
 
-self = <sqlalchemy.engine.base.Connection object at 0x765123c17590>
-dialect = <sqlalchemy.dialects.sqlite.pysqlite.SQLiteDialect_pysqlite object at 0x76512dca0fd0>
-context = <sqlalchemy.dialects.sqlite.base.SQLiteExecutionContext object at 0x765123c161d0>
-statement = <sqlalchemy.dialects.sqlite.base.SQLiteCompiler object at 0x76512af8fb90>
-parameters = [('STRING', 'Texto')]
+self = <sqlalchemy.engine.base.Connection object at 0x737546e82cd0>
+dialect = <sqlalchemy.dialects.sqlite.pysqlite.SQLiteDialect_pysqlite object at 0x737548b90f90>
+context = <sqlalchemy.dialects.sqlite.base.SQLiteExecutionContext object at 0x737546e835d0>
+statement = <sqlalchemy.dialects.sqlite.base.SQLiteCompiler object at 0x73754874a9d0>
+parameters = [('STRING', 'Texto', 1)]
 
     def _exec_single_context(
         self,
@@ -144,17 +195,17 @@ parameters = [('STRING', 'Texto')]
 /usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1967: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
-self = <sqlalchemy.dialects.sqlite.pysqlite.SQLiteDialect_pysqlite object at 0x76512dca0fd0>
-cursor = <sqlite3.Cursor object at 0x7651236fccc0>
-statement = 'INSERT INTO lead_field_type (code, description) VALUES (?, ?) RETURNING id, created_at, updated_at'
-parameters = ('STRING', 'Texto')
-context = <sqlalchemy.dialects.sqlite.base.SQLiteExecutionContext object at 0x765123c161d0>
+self = <sqlalchemy.dialects.sqlite.pysqlite.SQLiteDialect_pysqlite object at 0x737548b90f90>
+cursor = <sqlite3.Cursor object at 0x737546b2ce40>
+statement = 'INSERT INTO lead_field_type (code, description, active) VALUES (?, ?, ?) RETURNING id, created_at, updated_at'
+parameters = ('STRING', 'Texto', 1)
+context = <sqlalchemy.dialects.sqlite.base.SQLiteExecutionContext object at 0x737546e835d0>
 
     def do_execute(self, cursor, statement, parameters, context=None):
 >       cursor.execute(statement, parameters)
 E       sqlite3.IntegrityError: UNIQUE constraint failed: lead_field_type.code
 
-/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/default.py:951: IntegrityError
+/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/default.py:952: IntegrityError
 
 The above exception was the direct cause of the following exception:
 
@@ -171,7 +222,7 @@ request = <SubRequest 'initial_fields' for <Function test_get_leads>>
 >               return (yield)
                         ^^^^^
 
-/usr/local/lib/python3.11/site-packages/pytest_asyncio/plugin.py:733: 
+/usr/local/lib/python3.11/site-packages/pytest_asyncio/plugin.py:728: 
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 tests/conftest.py:44: in initial_fields
     db_session.commit()
@@ -205,7 +256,7 @@ tests/conftest.py:44: in initial_fields
     result = connection.execute(
 /usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1419: in execute
     return meth(
-/usr/local/lib/python3.11/site-packages/sqlalchemy/sql/elements.py:526: in _execute_on_connection
+/usr/local/lib/python3.11/site-packages/sqlalchemy/sql/elements.py:527: in _execute_on_connection
     return connection._execute_clauseelement(
 /usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1641: in _execute_clauseelement
     ret = self._execute_context(
@@ -213,353 +264,33 @@ tests/conftest.py:44: in initial_fields
     return self._exec_single_context(
 /usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1986: in _exec_single_context
     self._handle_dbapi_exception(
-/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py:2355: in _handle_dbapi_exception
+/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py:2363: in _handle_dbapi_exception
     raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
 /usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1967: in _exec_single_context
     self.dialect.do_execute(
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
-self = <sqlalchemy.dialects.sqlite.pysqlite.SQLiteDialect_pysqlite object at 0x76512dca0fd0>
-cursor = <sqlite3.Cursor object at 0x7651236fccc0>
-statement = 'INSERT INTO lead_field_type (code, description) VALUES (?, ?) RETURNING id, created_at, updated_at'
-parameters = ('STRING', 'Texto')
-context = <sqlalchemy.dialects.sqlite.base.SQLiteExecutionContext object at 0x765123c161d0>
+self = <sqlalchemy.dialects.sqlite.pysqlite.SQLiteDialect_pysqlite object at 0x737548b90f90>
+cursor = <sqlite3.Cursor object at 0x737546b2ce40>
+statement = 'INSERT INTO lead_field_type (code, description, active) VALUES (?, ?, ?) RETURNING id, created_at, updated_at'
+parameters = ('STRING', 'Texto', 1)
+context = <sqlalchemy.dialects.sqlite.base.SQLiteExecutionContext object at 0x737546e835d0>
 
     def do_execute(self, cursor, statement, parameters, context=None):
 >       cursor.execute(statement, parameters)
 E       sqlalchemy.exc.IntegrityError: (sqlite3.IntegrityError) UNIQUE constraint failed: lead_field_type.code
-E       [SQL: INSERT INTO lead_field_type (code, description) VALUES (?, ?) RETURNING id, created_at, updated_at]
-E       [parameters: ('STRING', 'Texto')]
+E       [SQL: INSERT INTO lead_field_type (code, description, active) VALUES (?, ?, ?) RETURNING id, created_at, updated_at]
+E       [parameters: ('STRING', 'Texto', 1)]
 E       (Background on this error at: https://sqlalche.me/e/20/gkpj)
 
-/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/default.py:951: IntegrityError
-=================================== FAILURES ===================================
-___________________________ test_create_lead_success ___________________________
-
-self = <sqlalchemy.engine.base.Connection object at 0x76512af99590>
-dialect = <sqlalchemy.dialects.sqlite.pysqlite.SQLiteDialect_pysqlite object at 0x76512dca0fd0>
-context = <sqlalchemy.dialects.sqlite.base.SQLiteExecutionContext object at 0x76512af9ae50>
-statement = <sqlalchemy.dialects.sqlite.base.SQLiteCompiler object at 0x76512af9ad90>
-parameters = [(34, 1, 'Franco')]
-
-    def _exec_single_context(
-        self,
-        dialect: Dialect,
-        context: ExecutionContext,
-        statement: Union[str, Compiled],
-        parameters: Optional[_AnyMultiExecuteParams],
-    ) -> CursorResult[Any]:
-        """continue the _execute_context() method for a single DBAPI
-        cursor.execute() or cursor.executemany() call.
-    
-        """
-        if dialect.bind_typing is BindTyping.SETINPUTSIZES:
-            generic_setinputsizes = context._prepare_set_input_sizes()
-    
-            if generic_setinputsizes:
-                try:
-                    dialect.do_set_input_sizes(
-                        context.cursor, generic_setinputsizes, context
-                    )
-                except BaseException as e:
-                    self._handle_dbapi_exception(
-                        e, str(statement), parameters, None, context
-                    )
-    
-        cursor, str_statement, parameters = (
-            context.cursor,
-            context.statement,
-            context.parameters,
-        )
-    
-        effective_parameters: Optional[_AnyExecuteParams]
-    
-        if not context.executemany:
-            effective_parameters = parameters[0]
-        else:
-            effective_parameters = parameters
-    
-        if self._has_events or self.engine._has_events:
-            for fn in self.dispatch.before_cursor_execute:
-                str_statement, effective_parameters = fn(
-                    self,
-                    cursor,
-                    str_statement,
-                    effective_parameters,
-                    context,
-                    context.executemany,
-                )
-    
-        if self._echo:
-            self._log_info(str_statement)
-    
-            stats = context._get_cache_stats()
-    
-            if not self.engine.hide_parameters:
-                self._log_info(
-                    "[%s] %r",
-                    stats,
-                    sql_util._repr_params(
-                        effective_parameters,
-                        batches=10,
-                        ismulti=context.executemany,
-                    ),
-                )
-            else:
-                self._log_info(
-                    "[%s] [SQL parameters hidden due to hide_parameters=True]",
-                    stats,
-                )
-    
-        evt_handled: bool = False
-        try:
-            if context.execute_style is ExecuteStyle.EXECUTEMANY:
-                effective_parameters = cast(
-                    "_CoreMultiExecuteParams", effective_parameters
-                )
-                if self.dialect._has_events:
-                    for fn in self.dialect.dispatch.do_executemany:
-                        if fn(
-                            cursor,
-                            str_statement,
-                            effective_parameters,
-                            context,
-                        ):
-                            evt_handled = True
-                            break
-                if not evt_handled:
-                    self.dialect.do_executemany(
-                        cursor,
-                        str_statement,
-                        effective_parameters,
-                        context,
-                    )
-            elif not effective_parameters and context.no_parameters:
-                if self.dialect._has_events:
-                    for fn in self.dialect.dispatch.do_execute_no_params:
-                        if fn(cursor, str_statement, context):
-                            evt_handled = True
-                            break
-                if not evt_handled:
-                    self.dialect.do_execute_no_params(
-                        cursor, str_statement, context
-                    )
-            else:
-                effective_parameters = cast(
-                    "_CoreSingleExecuteParams", effective_parameters
-                )
-                if self.dialect._has_events:
-                    for fn in self.dialect.dispatch.do_execute:
-                        if fn(
-                            cursor,
-                            str_statement,
-                            effective_parameters,
-                            context,
-                        ):
-                            evt_handled = True
-                            break
-                if not evt_handled:
->                   self.dialect.do_execute(
-                        cursor, str_statement, effective_parameters, context
-                    )
-
-/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1967: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-
-self = <sqlalchemy.dialects.sqlite.pysqlite.SQLiteDialect_pysqlite object at 0x76512dca0fd0>
-cursor = <sqlite3.Cursor object at 0x76512ab67ac0>
-statement = 'INSERT INTO lead_field_value (lead_id, field_id, value) VALUES (?, ?, ?) RETURNING id, created_at, updated_at'
-parameters = (34, 1, 'Franco')
-context = <sqlalchemy.dialects.sqlite.base.SQLiteExecutionContext object at 0x76512af9ae50>
-
-    def do_execute(self, cursor, statement, parameters, context=None):
->       cursor.execute(statement, parameters)
-E       sqlite3.OperationalError: no such table: lead_field_value
-
-/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/default.py:951: OperationalError
-
-The above exception was the direct cause of the following exception:
-
-client = <starlette.testclient.TestClient object at 0x76512af56b10>
-initial_fields = {'apellido': <LeadField(id=2)>, 'nombre': <LeadField(id=1)>}
-
-    def test_create_lead_success(client, initial_fields):
-        """POST /leads/ exitoso"""
-        payload = {
-            "values": [
-                {"field_id": initial_fields["nombre"].id, "value": "Franco"},
-                {"field_id": initial_fields["apellido"].id, "value": "Ruiz"}
-            ]
-        }
->       response = client.post("/leads/", json=payload)
-                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-tests/test_leads.py:15: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-/usr/local/lib/python3.11/site-packages/starlette/testclient.py:552: in post
-    return super().post(
-/usr/local/lib/python3.11/site-packages/httpx/_client.py:1144: in post
-    return self.request(
-/usr/local/lib/python3.11/site-packages/starlette/testclient.py:451: in request
-    return super().request(
-/usr/local/lib/python3.11/site-packages/httpx/_client.py:825: in request
-    return self.send(request, auth=auth, follow_redirects=follow_redirects)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-/usr/local/lib/python3.11/site-packages/httpx/_client.py:914: in send
-    response = self._send_handling_auth(
-/usr/local/lib/python3.11/site-packages/httpx/_client.py:942: in _send_handling_auth
-    response = self._send_handling_redirects(
-/usr/local/lib/python3.11/site-packages/httpx/_client.py:979: in _send_handling_redirects
-    response = self._send_single_request(request)
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-/usr/local/lib/python3.11/site-packages/httpx/_client.py:1014: in _send_single_request
-    response = transport.handle_request(request)
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-/usr/local/lib/python3.11/site-packages/starlette/testclient.py:354: in handle_request
-    raise exc
-/usr/local/lib/python3.11/site-packages/starlette/testclient.py:351: in handle_request
-    portal.call(self.app, scope, receive, send)
-/usr/local/lib/python3.11/site-packages/anyio/from_thread.py:321: in call
-    return cast(T_Retval, self.start_task_soon(func, *args).result())
-                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-/usr/local/lib/python3.11/concurrent/futures/_base.py:456: in result
-    return self.__get_result()
-           ^^^^^^^^^^^^^^^^^^^
-/usr/local/lib/python3.11/concurrent/futures/_base.py:401: in __get_result
-    raise self._exception
-/usr/local/lib/python3.11/site-packages/anyio/from_thread.py:252: in _call_func
-    retval = await retval_or_awaitable
-             ^^^^^^^^^^^^^^^^^^^^^^^^^
-/usr/local/lib/python3.11/site-packages/fastapi/applications.py:1134: in __call__
-    await super().__call__(scope, receive, send)
-/usr/local/lib/python3.11/site-packages/starlette/applications.py:113: in __call__
-    await self.middleware_stack(scope, receive, send)
-/usr/local/lib/python3.11/site-packages/starlette/middleware/errors.py:186: in __call__
-    raise exc
-/usr/local/lib/python3.11/site-packages/starlette/middleware/errors.py:164: in __call__
-    await self.app(scope, receive, _send)
-/usr/local/lib/python3.11/site-packages/starlette/middleware/exceptions.py:63: in __call__
-    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
-/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py:53: in wrapped_app
-    raise exc
-/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py:42: in wrapped_app
-    await app(scope, receive, sender)
-/usr/local/lib/python3.11/site-packages/fastapi/middleware/asyncexitstack.py:18: in __call__
-    await self.app(scope, receive, send)
-/usr/local/lib/python3.11/site-packages/starlette/routing.py:716: in __call__
-    await self.middleware_stack(scope, receive, send)
-/usr/local/lib/python3.11/site-packages/starlette/routing.py:736: in app
-    await route.handle(scope, receive, send)
-/usr/local/lib/python3.11/site-packages/starlette/routing.py:290: in handle
-    await self.app(scope, receive, send)
-/usr/local/lib/python3.11/site-packages/fastapi/routing.py:125: in app
-    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
-/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py:53: in wrapped_app
-    raise exc
-/usr/local/lib/python3.11/site-packages/starlette/_exception_handler.py:42: in wrapped_app
-    await app(scope, receive, sender)
-/usr/local/lib/python3.11/site-packages/fastapi/routing.py:111: in app
-    response = await f(request)
-               ^^^^^^^^^^^^^^^^
-/usr/local/lib/python3.11/site-packages/fastapi/routing.py:391: in app
-    raw_response = await run_endpoint_function(
-/usr/local/lib/python3.11/site-packages/fastapi/routing.py:292: in run_endpoint_function
-    return await run_in_threadpool(dependant.call, **values)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-/usr/local/lib/python3.11/site-packages/starlette/concurrency.py:38: in run_in_threadpool
-    return await anyio.to_thread.run_sync(func)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-/usr/local/lib/python3.11/site-packages/anyio/to_thread.py:56: in run_sync
-    return await get_async_backend().run_sync_in_worker_thread(
-/usr/local/lib/python3.11/site-packages/anyio/_backends/_asyncio.py:2485: in run_sync_in_worker_thread
-    return await future
-           ^^^^^^^^^^^^
-/usr/local/lib/python3.11/site-packages/anyio/_backends/_asyncio.py:976: in run
-    result = context.run(func, *args)
-             ^^^^^^^^^^^^^^^^^^^^^^^^
-app/controllers/base_controller.py:30: in create
-    return cls.service.create(obj_in)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^
-app/services/lead_service.py:20: in create
-    LeadFieldValueService.create_for_lead(lead.id, values)
-app/services/lead_field_value_service.py:16: in create_for_lead
-    created_value = cls.repository.create_simple(data_dict)
-                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-app/db/repository/lead_field_value_repository.py:17: in create_simple
-    db.commit()
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py:2030: in commit
-    trans.commit(_to_root=True)
-<string>:2: in commit
-    ???
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/state_changes.py:137: in _go
-    ret_value = fn(self, *arg, **kw)
-                ^^^^^^^^^^^^^^^^^^^^
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py:1311: in commit
-    self._prepare_impl()
-<string>:2: in _prepare_impl
-    ???
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/state_changes.py:137: in _go
-    ret_value = fn(self, *arg, **kw)
-                ^^^^^^^^^^^^^^^^^^^^
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py:1286: in _prepare_impl
-    self.session.flush()
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py:4331: in flush
-    self._flush(objects)
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py:4466: in _flush
-    with util.safe_reraise():
-/usr/local/lib/python3.11/site-packages/sqlalchemy/util/langhelpers.py:224: in __exit__
-    raise exc_value.with_traceback(exc_tb)
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py:4427: in _flush
-    flush_context.execute()
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/unitofwork.py:466: in execute
-    rec.execute(self)
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/unitofwork.py:642: in execute
-    util.preloaded.orm_persistence.save_obj(
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/persistence.py:93: in save_obj
-    _emit_insert_statements(
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/persistence.py:1233: in _emit_insert_statements
-    result = connection.execute(
-/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1419: in execute
-    return meth(
-/usr/local/lib/python3.11/site-packages/sqlalchemy/sql/elements.py:526: in _execute_on_connection
-    return connection._execute_clauseelement(
-/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1641: in _execute_clauseelement
-    ret = self._execute_context(
-/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1846: in _execute_context
-    return self._exec_single_context(
-/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1986: in _exec_single_context
-    self._handle_dbapi_exception(
-/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py:2355: in _handle_dbapi_exception
-    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
-/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1967: in _exec_single_context
-    self.dialect.do_execute(
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-
-self = <sqlalchemy.dialects.sqlite.pysqlite.SQLiteDialect_pysqlite object at 0x76512dca0fd0>
-cursor = <sqlite3.Cursor object at 0x76512ab67ac0>
-statement = 'INSERT INTO lead_field_value (lead_id, field_id, value) VALUES (?, ?, ?) RETURNING id, created_at, updated_at'
-parameters = (34, 1, 'Franco')
-context = <sqlalchemy.dialects.sqlite.base.SQLiteExecutionContext object at 0x76512af9ae50>
-
-    def do_execute(self, cursor, statement, parameters, context=None):
->       cursor.execute(statement, parameters)
-E       sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) no such table: lead_field_value
-E       [SQL: INSERT INTO lead_field_value (lead_id, field_id, value) VALUES (?, ?, ?) RETURNING id, created_at, updated_at]
-E       [parameters: (34, 1, 'Franco')]
-E       (Background on this error at: https://sqlalche.me/e/20/e3q8)
-
-/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/default.py:951: OperationalError
+/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/default.py:952: IntegrityError
 =============================== warnings summary ===============================
 app/core/config.py:3
   /code/app/core/config.py:3: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
     class Settings(BaseSettings):
 
-tests/test_leads.py::test_create_lead_success
-  /code/app/services/lead_field_value_service.py:14: PydanticDeprecatedSince20: The `dict` method is deprecated; use `model_dump` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
-    data_dict = value_data.dict()
-
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
 =========================== short test summary info ============================
-FAILED tests/test_leads.py::test_create_lead_success - sqlalchemy.exc.Operati...
+ERROR tests/test_leads.py::test_create_lead_success - TypeError: 'field_type_...
 ERROR tests/test_leads.py::test_get_leads - sqlalchemy.exc.IntegrityError: (s...
-=============== 1 failed, 2 passed, 2 warnings, 1 error in 1.65s ===============
+==================== 2 passed, 1 warning, 2 errors in 1.48s ====================

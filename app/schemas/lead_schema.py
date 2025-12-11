@@ -1,26 +1,23 @@
-from datetime import datetime
+
+from app.schemas.base_schema import BaseResponse, BaseCreate
 from pydantic import BaseModel, computed_field, PrivateAttr
 from typing import List, Dict, Any
 from app.schemas.lead_field_value_schema import LeadFieldValueCreate, LeadFieldValueResponse
 
 
 class LeadBase(BaseModel):
-    pass  # en este modelo todavía no  hay campos fijos, los define dinámicamente el usuario
+    pass
 
 
-class LeadCreate(LeadBase):
+class LeadCreate(LeadBase, BaseCreate):
     values: List[LeadFieldValueCreate]
 
 
-class LeadResponse(LeadBase):
-    id: int
-    created_at: datetime
-    updated_at: datetime
+class LeadResponse(LeadBase, BaseResponse):
     _field_values: List[LeadFieldValueResponse] = PrivateAttr(default=[])
 
     @computed_field
     def fields(self) -> List[Dict[str, Any]]:
-        """Devuelve [{name, value, required}]"""
         result = []
         for fv in self._field_values:
             result.append({
@@ -30,6 +27,3 @@ class LeadResponse(LeadBase):
             })
         return result
 
-    model_config = {
-        "from_attributes": True
-    }

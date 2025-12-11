@@ -1,23 +1,20 @@
-from pydantic import BaseModel
+from app.schemas.base_schema import BaseCreate, BaseResponse
+from pydantic import BaseModel, computed_field
 from typing import Optional
 from app.schemas.lead_field_type_schema import LeadFieldTypeResponse
 
 
 class LeadFieldBase(BaseModel):
     name: str
-    field_type_id: int
+    field_type_code: str
     required: bool = False
     default_value: Optional[str] = None
 
 
-class LeadFieldCreate(LeadFieldBase):
+class LeadFieldCreate(LeadFieldBase, BaseCreate):
     pass
 
 
-class LeadFieldResponse(LeadFieldBase):
-    id: int
-    field_type: Optional[LeadFieldTypeResponse] = None  # relación
-
-    model_config = {
-        "from_attributes": True
-    }
+class LeadFieldResponse(LeadFieldBase, BaseResponse):
+    pass
+    
