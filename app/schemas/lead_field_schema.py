@@ -9,6 +9,7 @@ class LeadFieldBase(BaseModel):
     field_type_code: str
     required: bool = False
     default_value: Optional[str] = None
+    is_primary: bool = False
 
 
 class LeadFieldCreate(LeadFieldBase, BaseCreate):
