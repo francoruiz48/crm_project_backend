@@ -17,8 +17,9 @@ class LeadRepository(BaseRepository):
     ]
 
     @classmethod
-    def upsert_values(cls, lead_id: int, values: list):
-        return cls.upsert_children(
+    def upsert_values(cls, session, lead_id: int, values: list):
+        cls.upsert_children(
+            session=session,
             parent_model=Lead,
             parent_id=lead_id,
             relation_name="field_values",
@@ -29,4 +30,3 @@ class LeadRepository(BaseRepository):
                 value=item.value
             )
         )
-
