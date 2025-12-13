@@ -13,8 +13,8 @@ class BaseController:
 
         if "GET_ALL" in cls.enabled_methods:
             @router.get("/", response_model=list[cls.schema_out])
-            def get_all():
-                return cls.service.get_all()
+            def get_all(only_active: bool = True):
+                return cls.service.get_all(only_active)
 
         if "GET_ONE" in cls.enabled_methods:
             @router.get("/{obj_id}", response_model=cls.schema_out)
@@ -39,5 +39,17 @@ class BaseController:
             def delete(obj_id: int):
                 cls.service.delete(obj_id)
                 return {"deleted": True}
+            
+        if "PUT" in cls.enabled_methods:
+            @router.put("/disable/{obj_id}")
+            def set_disable(obj_id: int):
+                cls.service.set_disable(obj_id)
+                return {"disabled": True}
+            
+        if "PUT" in cls.enabled_methods:
+            @router.put("/active/{obj_id}")
+            def set_active(obj_id: int):
+                cls.service.set_active(obj_id)
+                return {"actived": True}
 
         return router

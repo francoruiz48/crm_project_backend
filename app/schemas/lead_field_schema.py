@@ -1,7 +1,8 @@
 from app.schemas.base_schema import BaseCreate, BaseResponse
-from pydantic import BaseModel, computed_field
+from pydantic import BaseModel
 from typing import Optional
-from app.schemas.lead_field_type_schema import LeadFieldTypeResponse
+from typing import List
+from app.schemas.validation_rule_schema import ValidationRuleResponse
 
 
 class LeadFieldBase(BaseModel):
@@ -17,5 +18,6 @@ class LeadFieldCreate(LeadFieldBase, BaseCreate):
 
 
 class LeadFieldResponse(LeadFieldBase, BaseResponse):
-    pass
+    validation_rules: List[ValidationRuleResponse] = []
+    validation_rules_related: List[ValidationRuleResponse] = []
     

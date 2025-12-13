@@ -1,10 +1,7 @@
 import datetime
-from typing import Any, Dict, Optional, List
+from typing import Optional
+from pydantic import BaseModel
 from app.schemas.base_schema import BaseResponse, BaseCreate
-from pydantic import BaseModel, computed_field, PrivateAttr
-
-from app.schemas.validation_rule_type_schema import ValidationRuleTypeResponse
-from app.schemas.lead_field_schema import LeadFieldResponse
 
 
 class ValidationRuleBase(BaseModel):
@@ -17,22 +14,13 @@ class ValidationRuleBase(BaseModel):
     date_from: Optional[datetime.date] = None
     date_to: Optional[datetime.date] = None
     rule_type_code : str
-
-
-class ValidationRuleCreate(ValidationRuleBase, BaseCreate):
-    
     field_id : int
     related_field_id: Optional[int] = None
 
 
-class ValidationRuleResponse(ValidationRuleBase, BaseResponse):
-    _field : LeadFieldResponse = PrivateAttr(default=None)
-    _related_field : Optional[LeadFieldResponse] = PrivateAttr(default=None)
+class ValidationRuleCreate(ValidationRuleBase, BaseCreate):
+    pass
 
-    @computed_field
-    def fields(self) -> Dict[str, Any]:
-        result = {
-            "field": self._field.name if self._field else None,
-            "related_field": self._related_field.name if self._related_field else None
-        }
-        return result
+
+class ValidationRuleResponse(ValidationRuleBase, BaseResponse):
+    pass
