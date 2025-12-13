@@ -4,3 +4,5 @@ from app.services.base_service import BaseService
 
 class ValidationRuleTypeService(BaseService):
     repository = ValidationRuleTypeRepository
+
+    

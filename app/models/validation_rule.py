@@ -6,14 +6,7 @@ from datetime import datetime
 
 class ValidationRule(BaseModelDB):
     __tablename__ = "validation_rule"
-    static_value = Column(String, nullable=True)
-    min_value = Column(Float, nullable=True)
-    max_value = Column(Float, nullable=True)
-    min_length = Column(Integer, nullable=True)
-    max_length = Column(Integer, nullable=True)
-    regex_pattern = Column(String, nullable=True)
-    date_from = Column(Date, nullable=True)
-    date_to = Column(Date, nullable=True)
+    value = Column(String, nullable=False)
 
     rule_type_code = Column(String, ForeignKey("validation_rule_type.code"), nullable=False)
     field_id = Column(Integer, ForeignKey("lead_field.id"), nullable=False)
