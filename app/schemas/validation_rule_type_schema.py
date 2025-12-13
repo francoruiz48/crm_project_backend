@@ -6,6 +6,7 @@ from pydantic import BaseModel, computed_field, PrivateAttr
 class ValidationRuleTypeBase(BaseModel):
     code : str
     description: Optional[str] = None
+    lead_field_type_code: str
 
 
 class ValidationRuleTypeCreate(ValidationRuleTypeBase, BaseCreate):

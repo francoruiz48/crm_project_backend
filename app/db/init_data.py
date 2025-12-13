@@ -1,7 +1,6 @@
 from app.db.session import SessionLocal
 from app.models.lead_field_type import LeadFieldType
 from app.models.validation_rule_type import ValidationRuleType
-from app.models.validation_rule_type_compatibility import ValidationRuleTypeCompatibility
 
 def seed_generic(
     db,
@@ -59,8 +58,6 @@ def run_seeds():
         db.commit()
         seed_validation_rule_types(db)
         db.commit()
-        seed_validation_rule_type_compatibilities(db)
-        db.commit()
     except Exception:
         db.rollback()
         raise
@@ -82,39 +79,14 @@ def seed_lead_field_types(db):
 
 def seed_validation_rule_types(db):
     datos = [
-        {"code": "MAX_LENGTH","description": "La longitud máxima del campo"},
-        {"code": "MIN_LENGTH","description": "La longitud mínima del campo"},
-        {"code": "NUMBER_MIN","description": "El valor numérico mínimo permitido"},
-        {"code": "NUMBER_MAX","description": "El valor numérico máximo permitido"},
-        {"code": "DATE_LESS_THAN_FIELD","description": "Fecha menor que otra fecha en otro campo"},
-        {"code": "DATE_GREATER_THAN_FIELD","description": "Fecha mayor que otra fecha en otro campo"},
-        {"code": "STRING_REGEX","description": "El texto debe coincidir con una expresión regular"},
-        {"code": "REQUIRED_IF_FIELD_EQUALS","description": "El campo es obligatorio si otro campo tiene un valor específico"}
+        {"code": "MAX_LENGTH","description": "La longitud máxima del campo", "lead_field_type_code": "STRING"},
+        {"code": "MIN_LENGTH","description": "La longitud mínima del campo", "lead_field_type_code": "STRING"},
+        {"code": "NUMBER_MIN","description": "El valor numérico mínimo permitido", "lead_field_type_code": "NUMBER"},
+        {"code": "NUMBER_MAX","description": "El valor numérico máximo permitido", "lead_field_type_code": "NUMBER"},
+        {"code": "DATE_LESS_THAN_FIELD","description": "Fecha menor que otra fecha en otro campo", "lead_field_type_code": "DATE"},
+        {"code": "DATE_GREATER_THAN_FIELD","description": "Fecha mayor que otra fecha en otro campo", "lead_field_type_code": "DATE"},
+        {"code": "STRING_REGEX","description": "El texto debe coincidir con una expresión regular", "lead_field_type_code": "STRING"},
+        {"code": "REQUIRED_IF_FIELD_EQUALS","description": "El campo es obligatorio si otro campo tiene un valor específico", "lead_field_type_code": "STRING"},
     ]
 
     seed_generic(db, model = ValidationRuleType, items = datos, unique_by=["code"])
-
-def seed_validation_rule_type_compatibilities(db):
-    datos = [
-        {"validation_rule_type_code": "MAX_LENGTH", "lead_field_type_code": "STRING"},
-        {"validation_rule_type_code": "MIN_LENGTH", "lead_field_type_code": "STRING"},
-        {"validation_rule_type_code": "NUMBER_MIN", "lead_field_type_code": "INT"},
-        {"validation_rule_type_code": "NUMBER_MAX", "lead_field_type_code": "INT"},
-        {"validation_rule_type_code": "NUMBER_MIN", "lead_field_type_code": "NUMBER"},
-        {"validation_rule_type_code": "NUMBER_MAX", "lead_field_type_code": "NUMBER"},
-        {"validation_rule_type_code": "DATE_LESS_THAN_FIELD", "lead_field_type_code": "DATE"},
-        {"validation_rule_type_code": "DATE_GREATER_THAN_FIELD", "lead_field_type_code": "DATE"},
-        {"validation_rule_type_code": "STRING_REGEX", "lead_field_type_code": "STRING"},
-        {"validation_rule_type_code": "REQUIRED_IF_FIELD_EQUALS", "lead_field_type_code": "STRING"},
-    ]
-
-    seed_generic(
-        db,
-        model=ValidationRuleTypeCompatibility,
-        items=datos,
-        unique_by=["validation_rule_type_code", "lead_field_type_code"],
-        resolve_fk={
-            "validation_rule_type_code": (ValidationRuleType, "code"),
-            "lead_field_type_code": (LeadFieldType, "code"),
-        },
-    )

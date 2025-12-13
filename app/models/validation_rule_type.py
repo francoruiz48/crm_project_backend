@@ -7,4 +7,6 @@ class ValidationRuleType(BaseModelDB):
     __tablename__ = "validation_rule_type"
     code = Column(String, unique=True, nullable=False)
     description = Column(String, nullable=True)
-    validation_rule_compatibilities = relationship("ValidationRuleTypeCompatibility", back_populates="validation_rule_type", cascade="all, delete-orphan")
+    lead_field_type_code = Column(String, ForeignKey("lead_field_type.code"), nullable=False)
+
+    lead_field_type = relationship("LeadFieldType", foreign_keys=[lead_field_type_code])
