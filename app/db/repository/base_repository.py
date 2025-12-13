@@ -1,4 +1,5 @@
-from typing import Iterable
+from typing  import Dict
+from typing import Any, Iterable
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload, Load
 from app.core.exceptions import AppException, NotFoundException
@@ -20,6 +21,14 @@ class BaseRepository:
                 option = option.selectinload(rel)
             query = query.options(option)
         return query
+    
+    @staticmethod
+    def _normalize_data(obj_data) -> Dict[str, Any]:
+        if obj_data is None:
+            return {}
+        if hasattr(obj_data, "dict"):
+            return obj_data.dict(exclude_unset=True)
+        return dict(obj_data)
 
     @classmethod
     def get_all(cls, only_active: bool = True):
@@ -95,42 +104,35 @@ class BaseRepository:
             db.commit()
 
     @classmethod
-    def create(cls, obj_data):
+    def create(cls, obj_data=None):
         try:
+            data = cls._normalize_data(obj_data)
+
             with SessionLocal() as db:
-                obj = cls.model(**obj_data.dict())
+                obj = cls.model(**data)
                 db.add(obj)
                 db.commit()
                 db.refresh(obj)
+
                 query = db.query(cls.model)
-                query = with_all_relationships(query, cls.model)
-                result = query.filter(cls.model.id == obj.id).first()
-                return cls.schema_out.model_validate(result) if cls.schema_out else result
+                query = cls._apply_relationships(query)
+                obj = query.filter(cls.model.id == obj.id).first()
+
+                return cls.schema_out.model_validate(obj) if cls.schema_out else obj
+
         except SQLAlchemyError as e:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
-    @classmethod
-    def create_empty(cls):
-        with SessionLocal() as db:
-            obj = cls.model()
-            db.add(obj)
-            db.commit()
-            db.refresh(obj)
-            return cls.schema_out.model_validate(obj) if cls.schema_out else obj
 
     @classmethod
-    def update(cls, obj_id, obj_data):
+    def update(cls, obj_id: int, obj_data):
         try:
+            data = cls._normalize_data(obj_data)
+
             with SessionLocal() as db:
                 obj = db.get(cls.model, obj_id)
                 if not obj:
                     return None
-
-                data = (
-                    obj_data.dict()
-                    if hasattr(obj_data, "dict")
-                    else obj_data
-                )
 
                 for key, value in data.items():
                     setattr(obj, key, value)
@@ -139,17 +141,17 @@ class BaseRepository:
                 db.refresh(obj)
 
                 query = db.query(cls.model)
-                query = with_all_relationships(query, cls.model)
-                result = query.filter(cls.model.id == obj.id).first()
+                query = cls._apply_relationships(query)
+                obj = query.filter(cls.model.id == obj_id).first()
 
-                return cls.schema_out.model_validate(result) if cls.schema_out else result
+                return cls.schema_out.model_validate(obj) if cls.schema_out else obj
 
         except SQLAlchemyError as e:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
 
     @classmethod
-    def delete(cls, obj_id):
+    def delete(cls, obj_id: int) -> bool:
         try:
             with SessionLocal() as db:
                 obj = db.get(cls.model, obj_id)
@@ -158,5 +160,6 @@ class BaseRepository:
                 db.delete(obj)
                 db.commit()
                 return True
+
         except SQLAlchemyError as e:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))

@@ -7,13 +7,8 @@ class LeadService(BaseService):
     repository = LeadRepository
 
     @classmethod
-    def create_empty_lead(cls):
-        lead = cls.repository.create_empty()
-        return lead
-
-    @classmethod
     def create(cls, obj_in):
-        lead = cls.create_empty_lead()
+        lead = cls.repository.create()
         cls.repository.upsert_values(lead.id, obj_in.values)
         return cls.get_by_id(lead.id)
     
