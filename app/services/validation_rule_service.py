@@ -6,6 +6,7 @@ from app.services.base_service import BaseService
 
 class ValidationRuleService(BaseService):
     repository = ValidationRuleRepository
+    
 
     # Helper privado para reutilizar la lógica de validación dentro del UoW
     @classmethod
@@ -18,20 +19,32 @@ class ValidationRuleService(BaseService):
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"La regla '{rule_type_code}' no es compatible con el campo ID {field_id}."
             )
+        
+    @classmethod
+    def _validate_uniqueness(cls, session, field_id: int, rule_type_code: str, exclude_id: int = None):
+        """
+        Valida que no exista duplicidad de reglas.
+        """
+        if cls.repository.exists_rule_for_field(session, field_id, rule_type_code, exclude_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"El campo ya tiene asignada una regla de tipo '{rule_type_code}'. Modifica la existente en lugar de crear una nueva."
+            )
 
     @classmethod
     def create(cls, obj_data):
         # Definimos la función que se ejecutará DENTRO de la transacción (UnitOfWork)
         def do_create(uow):
-            # 1. Extraer datos (asumiendo que obj_data es un Pydantic schema o dict)
-            # Usamos getattr para seguridad si es objeto, o acceso directo si es dict
             r_code = getattr(obj_data, "rule_type_code", None) or obj_data.get("rule_type_code")
             f_id = getattr(obj_data, "field_id", None) or obj_data.get("field_id")
 
-            # 2. Validar usando la sesión actual del UoW
+            # 1. Validar compatibilidad (Tipos de datos)
             cls._validate_applicability(uow.session, r_code, f_id)
 
-            # 3. Crear usando el método del padre/repositorio
+            # 2. Validar Unicidad (NUEVO)
+            cls._validate_uniqueness(uow.session, f_id, r_code)
+
+            # 3. Crear
             return cls.repository.create(uow.session, obj_data)
 
         # Ejecutamos usando el wrapper del BaseService
@@ -48,7 +61,6 @@ class ValidationRuleService(BaseService):
             r_code = getattr(obj_data, "rule_type_code", None) or (obj_data.get("rule_type_code") if isinstance(obj_data, dict) else None)
             f_id = getattr(obj_data, "field_id", None) or (obj_data.get("field_id") if isinstance(obj_data, dict) else None)
 
-            # Lógica extra para UPDATE:
             # Si en el update cambian el tipo de regla o el campo, debemos re-validar.
             # Si solo cambian el "value" (ej: cambiar el maximo de 10 a 20), no hace falta revalidar tipos,
             # PERO si envían uno de los dos, necesitamos el otro para validar la paridad.
@@ -64,7 +76,11 @@ class ValidationRuleService(BaseService):
                 code_to_check = r_code if r_code else current_obj.rule_type_code
                 id_to_check = f_id if f_id else current_obj.field_id
                 
+                # 1. Validar compatibilidad
                 cls._validate_applicability(uow.session, code_to_check, id_to_check)
+                
+                # 2. Validar Unicidad (Pasamos el ID actual para excluirlo de la búsqueda)
+                cls._validate_uniqueness(uow.session, id_to_check, code_to_check, exclude_id=obj_id)
 
             # 2. Proceder al update normal
             return cls.repository.update(uow.session, obj_id, obj_data)
