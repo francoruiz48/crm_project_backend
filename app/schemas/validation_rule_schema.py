@@ -5,9 +5,10 @@ from app.schemas.base_schema import BaseResponse, BaseCreate
 
 
 class ValidationRuleBase(BaseModel):
-    value: Optional[str] = None
-    rule_type_code : str
-    field_id : int
+    name: str
+    expression: str
+    error_message: str
+    field_id : Optional[int] = None
     related_field_id: Optional[int] = None
 
 

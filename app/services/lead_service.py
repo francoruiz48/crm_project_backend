@@ -57,7 +57,7 @@ class LeadService(BaseService):
             try:
                 LeadValidationLogic.validate_field(
                     field=field,
-                    value=value_to_validate,
+                    raw_value=value_to_validate,
                     all_values=full_context
                 )
 

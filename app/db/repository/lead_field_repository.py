@@ -23,5 +23,5 @@ class LeadFieldRepository(BaseRepository):
         return session.query(cls.model).options(
             # 1. Cargamos la relación 'validation_rules' desde LeadField
             # 2. Anidamos la carga de 'rule_type' usando la clase ValidationRule explícita
-            joinedload(cls.model.validation_rules).joinedload(ValidationRule.rule_type)
+            joinedload(cls.model.validation_rules)
         ).filter(cls.model.active == True).all()
