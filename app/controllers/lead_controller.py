@@ -8,6 +8,6 @@ class LeadController(BaseController):
     service = LeadService
     schema_in = LeadCreate
     schema_out = LeadResponse
-    enabled_methods = {"GET_ALL", "GET_ONE", "POST"}
+    enabled_methods = READ_WRITE
 
 router = LeadController.get_router()

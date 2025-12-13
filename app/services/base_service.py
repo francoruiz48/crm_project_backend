@@ -9,64 +9,101 @@ from sqlalchemy.exc import SQLAlchemyError
 class BaseService:
     repository = None  # Subclases deben definirlo
 
+    # ---------- helpers internos ----------
     @classmethod
-    def get_all(cls):
-        model_name = cls.repository.model.__name__
+    def _model_name(cls):
+        return cls.repository.model.__name__
+
+    @classmethod
+    def _not_found(cls, obj_id):
+        raise NotFoundException(
+            detail=ERROR_NOT_FOUND.format(model=cls._model_name(), id=obj_id)
+        )
+
+    @classmethod
+    def _execute(
+        cls,
+        *,
+        action: str,
+        func,
+        obj_id: int | None = None,
+        success_msg: str | None = None
+    ):
+        model_name = cls._model_name()
         try:
-            return cls.repository.get_all()
+            prefix = f"{model_name}({obj_id})" if obj_id else model_name
+            logger.info(f"{action} {prefix}...")
+
+            result = func()
+
+            if result is None or result is False:
+                if obj_id:
+                    cls._not_found(obj_id)
+
+            if success_msg:
+                logger.info(success_msg.format(model=model_name, id=obj_id))
+
+            return result
+
         except SQLAlchemyError as e:
-            logger.error(ERROR_DATABASE.format(error=str(e)))
+            logger.error(f"{action} {model_name} falló. Detalle: {str(e)}")
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
     @classmethod
+    def get_all(cls, only_active: bool = True):
+        return cls._execute(
+            action="Obteniendo",
+            func=lambda: cls.repository.get_all(only_active)
+        )
+
+    @classmethod
     def get_by_id(cls, obj_id: int):
-        model_name = cls.repository.model.__name__
-        result = cls.repository.get_by_id(obj_id)
-        if not result:
-            message = ERROR_NOT_FOUND.format(model=model_name, id=obj_id)
-            logger.warning(message)
-            raise NotFoundException(detail=message)
-        return result
+        return cls._execute(
+            action="Obteniendo",
+            obj_id=obj_id,
+            func=lambda: cls.repository.get_by_id(obj_id)
+        )
 
     @classmethod
     def create(cls, obj_data):
-        model_name = cls.repository.model.__name__
-        try:
-            logger.info(f"Creando {model_name}...")
-            obj = cls.repository.create(obj_data)
-            logger.info(SUCCESS_CREATE.format(model=model_name, id=getattr(obj, 'id', '?')))
-            return obj
-        except SQLAlchemyError as e:
-            message = ERROR_CREATE.format(model=model_name)
-            logger.error(f"{message} Detalle: {str(e)}")
-            raise AppException(detail=message)
+        return cls._execute(
+            action="Creando",
+            func=lambda: cls.repository.create(obj_data),
+            success_msg=SUCCESS_CREATE
+        )
 
     @classmethod
-    def update(cls, obj_id, obj_data):
-        model_name = cls.repository.model.__name__
-        try:
-            logger.info(f"Actualizando {model_name}({obj_id})...")
-            updated = cls.repository.update(obj_id, obj_data)
-            if not updated:
-                raise NotFoundException(detail=ERROR_NOT_FOUND.format(model=model_name, id=obj_id))
-            logger.info(SUCCESS_UPDATE.format(model=model_name, id=obj_id))
-            return updated
-        except SQLAlchemyError as e:
-            message = ERROR_UPDATE.format(model=model_name, id=obj_id)
-            logger.error(f"{message} Detalle: {str(e)}")
-            raise AppException(detail=message)
+    def update(cls, obj_id: int, obj_data):
+        return cls._execute(
+            action="Actualizando",
+            obj_id=obj_id,
+            func=lambda: cls.repository.update(obj_id, obj_data),
+            success_msg=SUCCESS_UPDATE
+        )
 
     @classmethod
-    def delete(cls, obj_id):
-        model_name = cls.repository.model.__name__
-        try:
-            logger.info(f"Eliminando {model_name}({obj_id})...")
-            deleted = cls.repository.delete(obj_id)
-            if not deleted:
-                raise NotFoundException(detail=ERROR_NOT_FOUND.format(model=model_name, id=obj_id))
-            logger.info(SUCCESS_DELETE.format(model=model_name, id=obj_id))
-            return {"deleted": True}
-        except SQLAlchemyError as e:
-            message = ERROR_DELETE.format(model=model_name, id=obj_id)
-            logger.error(f"{message} Detalle: {str(e)}")
-            raise AppException(detail=message)
+    def set_disable(cls, obj_id: int):
+        return cls._execute(
+            action="Desactivando",
+            obj_id=obj_id,
+            func=lambda: cls.repository.update(obj_id, {"active": False}),
+            success_msg=SUCCESS_UPDATE
+        )
+    
+    @classmethod
+    def set_active(cls, obj_id: int):
+        return cls._execute(
+            action="Activando",
+            obj_id=obj_id,
+            func=lambda: cls.repository.update(obj_id, {"active": True}),
+            success_msg=SUCCESS_UPDATE
+        )
+
+    @classmethod
+    def delete(cls, obj_id: int):
+        return cls._execute(
+            action="Eliminando",
+            obj_id=obj_id,
+            func=lambda: cls.repository.delete(obj_id),
+            success_msg=SUCCESS_DELETE
+        )

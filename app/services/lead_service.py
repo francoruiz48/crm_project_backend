@@ -8,14 +8,16 @@ class LeadService(BaseService):
 
     @classmethod
     def create_empty_lead(cls):
-        """Crea un lead sin valores asociados (solo ID y timestamps)."""
-        lead_data = {}  # sin campos dinámicos
-        lead = cls.repository.create_empty(lead_data)
+        lead = cls.repository.create_empty()
         return lead
 
     @classmethod
     def create(cls, obj_in):
         lead = cls.create_empty_lead()
-        values = obj_in.values if isinstance(obj_in.values, list) else [obj_in.values]
-        LeadFieldValueService.create_for_lead(lead.id, values)
+        cls.repository.upsert_values(lead.id, obj_in.values)
         return cls.get_by_id(lead.id)
+    
+    @classmethod
+    def update(cls, obj_id: int, obj_in):
+        cls.repository.upsert_values(obj_id, obj_in.values)
+        return cls.get_by_id(obj_id)

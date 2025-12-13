@@ -6,7 +6,6 @@ from datetime import datetime
 
 class ValidationRule(BaseModelDB):
     __tablename__ = "validation_rule"
-    name = Column(String, nullable=False)
     static_value = Column(String, nullable=True)
     min_value = Column(Float, nullable=True)
     max_value = Column(Float, nullable=True)

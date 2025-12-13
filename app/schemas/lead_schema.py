@@ -1,6 +1,6 @@
 
 from app.schemas.base_schema import BaseResponse, BaseCreate
-from pydantic import BaseModel, computed_field, PrivateAttr
+from pydantic import BaseModel, computed_field, Field
 from typing import List, Dict, Any
 from app.schemas.lead_field_value_schema import LeadFieldValueCreate, LeadFieldValueResponse
 
@@ -14,16 +14,19 @@ class LeadCreate(LeadBase, BaseCreate):
 
 
 class LeadResponse(LeadBase, BaseResponse):
-    _field_values: List[LeadFieldValueResponse] = PrivateAttr(default=[])
+    field_values: List[LeadFieldValueResponse] = Field(
+        default_factory=list,
+        exclude=True
+    )
 
     @computed_field
     def fields(self) -> List[Dict[str, Any]]:
-        result = []
-        for fv in self._field_values:
-            result.append({
+        return [
+            {
                 "name": fv.field.name,
                 "value": fv.value,
                 "required": fv.field.required
-            })
-        return result
+            }
+            for fv in self.field_values
+        ]
 
