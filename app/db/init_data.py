@@ -74,3 +74,5 @@ def seed_lead_field_types(db):
     seed_generic(db, model = LeadFieldType, items = datos, unique_by=["code"])
 
 
+
+

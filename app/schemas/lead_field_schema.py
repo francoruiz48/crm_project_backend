@@ -19,5 +19,4 @@ class LeadFieldCreate(LeadFieldBase, BaseCreate):
 
 class LeadFieldResponse(LeadFieldBase, BaseResponse):
     validation_rules: List[ValidationRuleResponse] = []
-    validation_rules_related: List[ValidationRuleResponse] = []
     

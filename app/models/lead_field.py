@@ -40,11 +40,3 @@ class LeadField(BaseModelDB):
         foreign_keys=lambda: [ValidationRule.field_id],
         cascade="all, delete-orphan"
     )
-
-    # LISTA DE VALIDACIONES donde este campo es campo RELACIONADO
-    validation_rules_related = relationship(
-        "ValidationRule",
-        back_populates="related_field",
-        foreign_keys=lambda: [ValidationRule.related_field_id],
-        cascade="all, delete-orphan"
-    )

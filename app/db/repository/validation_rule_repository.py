@@ -8,19 +8,4 @@ class ValidationRuleRepository(BaseRepository):
     model = ValidationRule
     schema_out = ValidationRuleResponse
 
-    @classmethod
-    def exists_rule_for_field(cls, session, field_id: int, rule_type_code: str, exclude_id: int = None) -> bool:
-        """
-        Verifica si ya existe una regla del mismo tipo para el mismo campo.
-        exclude_id: Se usa en updates para excluir la regla actual de la búsqueda.
-        """
-        query = session.query(cls.model).filter(
-            cls.model.field_id == field_id,
-            cls.model.rule_type_code == rule_type_code
-        )
-        
-        if exclude_id:
-            query = query.filter(cls.model.id != exclude_id)
-            
-        return session.query(query.exists()).scalar()
 
