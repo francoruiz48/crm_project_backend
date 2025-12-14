@@ -11,7 +11,6 @@ class LeadFieldRepository(BaseRepository):
     relationships = [
         (LeadField.field_type,),
         (LeadField.validation_rules,),
-        (LeadField.validation_rules_related,),
     ]
 
     @classmethod

@@ -23,42 +23,32 @@ class LeadService(BaseService):
 
     @classmethod
     def _validate_data(cls, session, values_in, current_lead_id=None):
-        """
-        Orquesta la validación:
-        1. Obtiene definiciones de campos y reglas.
-        2. Construye el contexto completo de datos (Incoming + Existing).
-        3. Ejecuta el LeadValidationLogic.
-        """
-        # 1. Obtener definiciones de campos (metadata)
-        field_defs = cls.field_repository.get_all_active_with_rules(session)
+        # 1. Obtener definiciones (Lista)
+        field_defs_list = cls.field_repository.get_all_active_with_rules(session)
+        
+        # Esto nos permite buscar rápido qué tipo de dato es el campo 5, el 8, etc.
+        all_fields_defs = {f.id: f for f in field_defs_list}
+        # ------------------------------------------------------------
 
-        # 2. Preparar los datos entrantes en formato dict
         incoming_data = cls._prepare_context_dict(values_in)
         
-        # 3. Construir el contexto completo (Contexto = Datos BD + Datos Entrantes)
         full_context = incoming_data.copy()
         if current_lead_id:
-            # Si es un UPDATE, necesitamos los valores actuales de la BD para 
-            # validar reglas cruzadas (ej: si cambio fecha_fin, necesito saber la fecha_inicio actual)
             current_lead = cls.repository.get_by_id(session, current_lead_id)
             if current_lead:
-                # Mezclamos: Primero los de BD, luego sobrescribimos con los nuevos
                 db_values = {v.field_id: v.value for v in current_lead.field_values}
                 full_context = {**db_values, **incoming_data}
 
         # 4. Iterar y Validar
-        for field in field_defs:
-            # Obtenemos el valor "final" que tendrá este campo
+        for field in field_defs_list: # Iteramos sobre la lista original para mantener orden si importa
             value_to_validate = full_context.get(field.id)
             
-            # Nota: Si es un UPDATE parcial y el campo no viene en el payload,
-            # value_to_validate será el valor viejo (o None). 
-            # La lógica de validación debe manejar esto.
             try:
                 LeadValidationLogic.validate_field(
-                    field=field,
+                    current_field=field,
                     raw_value=value_to_validate,
-                    all_values=full_context
+                    all_values=full_context,
+                    all_fields_defs=all_fields_defs # <--- PASAMOS EL DICCIONARIO
                 )
 
             except ValueError as e:

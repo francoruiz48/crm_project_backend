@@ -1,5 +1,7 @@
+import re
 from fastapi import HTTPException, status
 from app.core.error_messages import SUCCESS_CREATE, SUCCESS_UPDATE
+from app.core.templates.rule_templates import STANDARD_RULES
 from app.db.repository.validation_rule_repository import ValidationRuleRepository
 from app.services.base_service import BaseService
 from simpleeval import SimpleEval
@@ -7,49 +9,124 @@ from datetime import datetime
 
 class ValidationRuleService(BaseService):
     repository = ValidationRuleRepository
-        
+    
     @classmethod
     def _validate_expression_syntax(cls, expression: str):
-        """
-        Prueba si la expresión es sintácticamente válida para el motor SimpleEval.
-        """
         if not expression:
             raise HTTPException(400, "La expresión no puede estar vacía.")
 
-        # Contexto dummy para probar que la fórmula 'compile'
-        dummy_context = {
-            "value": 1,           # Asumimos número por defecto (lo más común)
-            "related": 1,         # Dummy por si usa comparaciones
-            "today": datetime.now(), 
+        # Variables dummy para probar la compilación
+        dummy_names = {
+            "value": 1,
+            "related": 1,
+            "today": datetime.now(),
             "now": datetime.now(),
+        }
+
+        def regex_match_helper(pattern, text):
+            if text is None: return False
+            return bool(re.search(pattern, str(text)))
+
+        # Funciones dummy
+        dummy_functions = {
             "len": len,
+            "sum": sum,
+            "abs": abs,
+            "str": str,
+            "regex_match": regex_match_helper
         }
         
         try:
-            # Solo evaluamos sintaxis. No nos importa el resultado (True/False) aquí.
-            SimpleEval(names=dummy_context).eval(expression)
+            SimpleEval(names=dummy_names, functions=dummy_functions).eval(expression)
         except SyntaxError:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, 
                 detail="Error de sintaxis en la expresión. Verifica paréntesis y operadores."
             )
         except Exception:
-            # Si falla por TypeError (ej: len(1)), es aceptable en esta etapa 
-            # porque en runtime 'value' podría ser un string.
-            # Lo importante es que SimpleEval no haya lanzado error de parseo.
+            # Errores de tipo (ej: len(int)) son aceptables en validación estática
             pass
 
     @classmethod
+    def _build_expression_from_template(cls, code: str, params: dict) -> str:
+        """
+        Convierte (TEMPLATE, PARAMS) -> EXPRESSION STRING
+        """
+        template = STANDARD_RULES.get(code)
+        if not template:
+            raise HTTPException(400, f"El código de plantilla '{code}' no existe.")
+        
+        # Validar que vengan todos los parámetros necesarios
+        for p in template.params:
+            if p not in params:
+                raise HTTPException(400, f"Falta el parámetro '{p}' para la plantilla '{code}'.")
+        
+        try:
+            # Rellenamos el string. Ej: "value >= {limit}" -> "value >= 18"
+            return template.expression_fmt.format(**params)
+        except Exception as e:
+            raise HTTPException(400, f"Error al generar expresión de plantilla: {str(e)}")
+
+    @classmethod
+    def create_within_session(cls, session, obj_data):
+        """
+        Lógica pura de negocio. 
+        Toma los datos de entrada, aplica la plantilla si existe, y prepara el objeto final.
+        """
+        # --- HELPERS (Para soportar tanto Dict como Pydantic Model) ---
+        def get(k):
+            if isinstance(obj_data, dict): return obj_data.get(k)
+            return getattr(obj_data, k, None)
+
+        def set_val(k, v):
+            if isinstance(obj_data, dict): obj_data[k] = v
+            else: setattr(obj_data, k, v)
+        # -------------------------------------------------------------
+
+        expr = get("expression")
+        tmpl_code = get("template_code")
+        tmpl_params = get("template_params") or {}
+
+        # 1. SI SE USA PLANTILLA: Generar los datos derivados
+        if tmpl_code:
+            template = STANDARD_RULES.get(tmpl_code)
+            if not template:
+                 raise HTTPException(400, f"El template '{tmpl_code}' no existe.")
+
+            # A. Autocompletar NOMBRE (si no viene definido por el usuario)
+            if not get("name"):
+                set_val("name", template.name)
+            
+            # B. Autocompletar MENSAJE DE ERROR (si no viene definido)
+            if not get("error_message"):
+                # Obtenemos el mensaje base del template
+                base_msg = getattr(template, "error_message", None) or f"Error de validación ({template.name})"
+                try:
+                    # Intentamos inyectar los parámetros en el mensaje (ej: "Mínimo {min}")
+                    formatted_msg = base_msg.format(**tmpl_params)
+                    set_val("error_message", formatted_msg)
+                except Exception:
+                    # Si falla el formato (ej: params incompletos en el mensaje), usamos el base
+                    set_val("error_message", base_msg)
+
+            # C. Generar la EXPRESIÓN MATEMÁTICA (si no viene manual)
+            if not expr:
+                generated_expr = cls._build_expression_from_template(tmpl_code, tmpl_params)
+                set_val("expression", generated_expr)
+                # Actualizamos la variable local para la validación siguiente
+                expr = generated_expr
+
+        # 2. VALIDAR SINTAXIS (Siempre, sea manual o generada)
+        cls._validate_expression_syntax(expr)
+
+        # 3. CREAR EN BD (Usando la sesión compartida)
+        return cls.repository.create(session, obj_data)
+
+    @classmethod
     def create(cls, obj_data):
+        # Wrapper público que inicia la transacción
         def do_create(uow):
-            # 1. Extraer la expresión
-            expr = getattr(obj_data, "expression", None) or obj_data.get("expression")
-
-            # 2. Validar sintaxis (Obligatorio)
-            cls._validate_expression_syntax(expr)
-
-            # 3. Crear (Ya no hay validaciones de tipos ni unicidad compleja)
-            return cls.repository.create(uow.session, obj_data)
+            return cls.create_within_session(uow.session, obj_data)
 
         return cls._execute(
             action="Creando Regla",
@@ -60,18 +137,50 @@ class ValidationRuleService(BaseService):
     @classmethod
     def update(cls, obj_id: int, obj_data):
         def do_update(uow):
-            # Extracción segura
-            get = lambda k: getattr(obj_data, k, None) or (obj_data.get(k) if isinstance(obj_data, dict) else None)
+            # 1. Obtener estado previo
+            current_obj = cls.repository.get_by_id(uow.session, obj_id)
+            if not current_obj:
+                cls._not_found(obj_id)
+
+            # Helpers de acceso
+            get = lambda k: getattr(obj_data, k, None) or (isinstance(obj_data, dict) and obj_data.get(k))
             
+            # Helper para modificar el obj_data entrante
+            def set_val(k, v):
+                if isinstance(obj_data, dict): obj_data[k] = v
+                else: setattr(obj_data, k, v)
+
+            # Datos entrantes
             new_expr = get("expression")
+            new_tmpl_code = get("template_code")
+            new_tmpl_params = get("template_params")
 
-            # 1. Si están intentando cambiar la fórmula, validamos la nueva sintaxis
-            if new_expr is not None:
-                 cls._validate_expression_syntax(new_expr)
+            # --- ESCENARIO A: Actualización de Parámetros del Template ---
+            # (El usuario cambia el 'min' de 18 a 21, pero sigue usando el template)
+            if new_tmpl_code or new_tmpl_params:
+                final_code = new_tmpl_code if new_tmpl_code is not None else current_obj.template_code
+                final_params = new_tmpl_params if new_tmpl_params is not None else current_obj.template_params or {}
 
-            # 2. Actualizar directo
-            # Nota: Ya no necesitamos chequear field_id vs rule_type_code porque
-            # la lógica de negocio ahora es puramente dinámica.
+                if final_code:
+                    # Regeneramos la expresión basada en los nuevos params
+                    generated_expr = cls._build_expression_from_template(final_code, final_params)
+                    set_val("expression", generated_expr)
+            
+            # --- ESCENARIO B: Edición Manual de la Expresión ("Eject") ---
+            # (El usuario escribe una fórmula a mano, rompiendo el vínculo con el template)
+            elif new_expr is not None:
+                # Borramos la referencia al template para evitar confusión en el UI
+                set_val("template_code", None)
+                set_val("template_params", None)
+
+            # -----------------------------------------------------------
+
+            # 2. Validar sintaxis final
+            final_expr = get("expression")
+            if final_expr:
+                cls._validate_expression_syntax(final_expr)
+
+            # 3. Guardar cambios
             return cls.repository.update(uow.session, obj_id, obj_data)
 
         return cls._execute(
