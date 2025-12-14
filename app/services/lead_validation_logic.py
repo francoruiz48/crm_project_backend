@@ -1,9 +1,11 @@
 from datetime import datetime
+import re
 from typing import Any, Dict, List
 from simpleeval import SimpleEval, NameNotDefined
 from app.models.lead_field import LeadField
 
 class LeadValidationLogic:
+
 
     @classmethod
     def validate_field(
@@ -27,14 +29,17 @@ class LeadValidationLogic:
             else:
                 typed_fields[f_id] = f_val
 
-        # --- CORRECCIÓN AQUÍ ---
+        def regex_match_helper(pattern, text):
+            if text is None: return False
+            return bool(re.search(pattern, str(text)))
         
         # Definimos las FUNCIONES permitidas
         allowed_functions = {
             "len": len,
             "sum": sum,
             "abs": abs,
-            "str": str, # Útil para convertir a string dentro de reglas
+            "str": str,
+            "regex_match": regex_match_helper
         }
 
         for rule in current_field.validation_rules:
