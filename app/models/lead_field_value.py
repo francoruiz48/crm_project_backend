@@ -10,3 +10,6 @@ class LeadFieldValue(BaseModelDB):
 
     lead = relationship("Lead", back_populates="field_values")
     field = relationship("LeadField", back_populates="field_values")
+
+    nomenclator_item_id = Column(Integer, ForeignKey("nomenclator_item.id"), nullable=True)
+    nomenclator_item = relationship("NomenclatorItem", foreign_keys=[nomenclator_item_id])

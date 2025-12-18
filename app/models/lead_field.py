@@ -13,6 +13,8 @@ class LeadField(BaseModelDB):
     required = Column(Boolean, default=False)
     default_value = Column(String, nullable=True)
     is_primary = Column(Boolean, default=False)
+    campaign_id = Column(Integer, ForeignKey("campaign.id"), nullable=False)
+    nomenclator_id = Column(Integer, ForeignKey("nomenclator.id"), nullable=True)
     field_template_code = Column(String, nullable=True)
     field_type_code = Column(String, ForeignKey("lead_field_type.code"), nullable=False)
     field_type = relationship("LeadFieldType", back_populates="fields", foreign_keys=[field_type_code])
@@ -20,3 +22,7 @@ class LeadField(BaseModelDB):
     field_values = relationship("LeadFieldValue", back_populates="field", cascade="all, delete-orphan")
 
     validation_rules = relationship("ValidationRule", back_populates="field", foreign_keys=lambda: [ValidationRule.field_id], cascade="all, delete-orphan")
+
+    campaign = relationship("Campaign", foreign_keys=[campaign_id])
+
+    nomenclator = relationship("Nomenclator", foreign_keys=[nomenclator_id])

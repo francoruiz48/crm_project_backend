@@ -1,11 +1,14 @@
+from app.models.nomenclator import Nomenclator
 from app.services.base_service import BaseService
 from app.core.templates.field_templates import STANDARD_FIELD_TEMPLATES
+from app.services.nomenclator_service import NomenclatorService
 from app.services.validation_rule_service import ValidationRuleService
 from app.db.repository.lead_field_repository import LeadFieldRepository
 from fastapi import HTTPException
 
 class LeadFieldService(BaseService):
     repository = LeadFieldRepository
+    nomenclatorService = NomenclatorService
     
     @classmethod
     def create(cls, obj_in):
@@ -14,6 +17,7 @@ class LeadFieldService(BaseService):
             data = obj_in.dict(exclude_unset=True)
             
             template_code = data.get("field_template_code")
+            nomenclator_id = data.get("nomenclator_id")
             rules_to_create = []
 
             # -------------------------------------------------------
@@ -34,6 +38,21 @@ class LeadFieldService(BaseService):
 
                 # Preparamos las reglas para crearlas después
                 rules_to_create = template.rules
+
+            elif nomenclator_id:
+                # Usamos uow.session para la consulta directa (Más eficiente y seguro)
+                nomenclator = uow.session.query(Nomenclator).get(nomenclator_id)
+                
+                if not nomenclator:
+                    raise HTTPException(404, f"El Nomenclador con ID {nomenclator_id} no existe.")
+
+                # Autocompletado
+                if not data.get("name"):
+                    data["name"] = nomenclator.name
+                
+                # Los nomencladores siempre se guardan como referencias de texto o códigos
+                if not data.get("field_type_code"):
+                    data["field_type_code"] = "STRING"
 
             # -------------------------------------------------------
             # 2. VALIDACIONES DE INTEGRIDAD

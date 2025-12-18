@@ -53,18 +53,18 @@ class BaseService:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
     @classmethod
-    def get_all(cls, only_active: bool = True):
+    def get_all(cls, only_active: bool = True, detailed: bool = False):
         return cls._execute(
             action="Obteniendo",
-            func=lambda uow: cls.repository.get_all(uow.session, only_active)
+            func=lambda uow: cls.repository.get_all(uow.session, only_active, detailed)
         )
 
     @classmethod
-    def get_by_id(cls, obj_id: int):
+    def get_by_id(cls, obj_id: int, detailed: bool = False):
         return cls._execute(
             action="Obteniendo",
             obj_id=obj_id,
-            func=lambda uow: cls.repository.get_by_id(uow.session, obj_id)
+            func=lambda uow: cls.repository.get_by_id(uow.session, obj_id, detailed)
         )
 
     @classmethod

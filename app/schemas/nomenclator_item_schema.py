@@ -16,5 +16,7 @@ class NomenclatorItemCreate(NomenclatorItemBase, BaseCreate):
 
 
 class NomenclatorItemResponse(NomenclatorItemBase, BaseResponse):
-    sub_items: List["NomenclatorItemResponse"] = Field(default_factory=list)
+    pass
 
+class NomenclatorItemDetailResponse(NomenclatorItemResponse):
+    sub_items: List["NomenclatorItemResponse"] = Field(default_factory=list)
