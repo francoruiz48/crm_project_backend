@@ -15,18 +15,7 @@ class LeadCreate(LeadBase, BaseCreate):
 
 class LeadResponse(LeadBase, BaseResponse):
     field_values: List[LeadFieldValueResponse] = Field(
-        default_factory=list,
-        exclude=True
+        default_factory=list
     )
 
-    @computed_field
-    def fields(self) -> List[Dict[str, Any]]:
-        return [
-            {
-                "name": fv.field.name,
-                "value": fv.value,
-                "required": fv.field.required
-            }
-            for fv in self.field_values
-        ]
 

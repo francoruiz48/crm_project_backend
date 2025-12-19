@@ -1,12 +1,14 @@
+import re
 from typing import Dict, Any, Iterable
 from sqlalchemy.orm import selectinload
 from app.core.exceptions import AppException, NotFoundException
 from app.core.error_messages import ERROR_DATABASE, ERROR_NOT_FOUND
-
+from sqlalchemy.exc import IntegrityError
 
 class BaseRepository:
     model = None
     schema_out = None
+    schema_out_detail = None
     relationships: list = []
 
     # ----------------- Helpers internos -----------------
@@ -28,36 +30,86 @@ class BaseRepository:
         if hasattr(obj_data, "dict"):
             return obj_data.dict(exclude_unset=True)
         return dict(obj_data)
+    
+    @staticmethod
+    def _handle_integrity_error(e: IntegrityError):
+        """
+        Parsea el error de base de datos para dar un mensaje legible.
+        Ej original: Key (campaign_id)=(99) is not present in table "campaign".
+        """
+        error_msg = str(e.orig) # Obtenemos el error original del driver (psycopg2)
+        
+        # Buscamos el patrón: Key (nombre_campo)=(valor)
+        # Esto funciona estándar en Postgres
+        match = re.search(r'Key \((.*?)\)=\((.*?)\)', error_msg)
+        
+        if match and "is not present in table" in error_msg:
+            field_name = match.group(1)
+            value = match.group(2)
+            detail = f"El valor '{value}' para el campo '{field_name}' no existe en la base de datos relacionada."
+        elif match and "already exists" in error_msg:
+            field_name = match.group(1)
+            detail = f"Ya existe un registro con el campo '{field_name}' igual a los datos proporcionados."
+        else:
+            detail = "Error de integridad de datos (posible ID inválido o duplicado)."
+
+        raise AppException(detail=detail)
 
     # ----------------- CRUD Genérico -----------------
     @classmethod
-    def get_all(cls, session, only_active: bool = True):
+    def get_all(cls, session, only_active: bool = True, detailed: bool = False):
         """Trae todos los objetos, opcionalmente solo activos"""
         try:
             query = session.query(cls.model)
-            query = cls._apply_relationships(query)
+            
+            # 1. Aplicar relaciones si es detailed
+            if detailed and cls.relationships and cls.schema_out_detail:
+                query = cls._apply_relationships(query)
 
             if only_active and hasattr(cls.model, "active"):
                 query = query.filter(cls.model.active.is_(True))
 
             result = query.all()
-            return [cls.schema_out.model_validate(obj) for obj in result] if cls.schema_out else result
+
+            # 2. Seleccionar el esquema correcto
+            selected_schema = (
+                cls.schema_out_detail 
+                if detailed and cls.schema_out_detail 
+                else cls.schema_out
+            )
+
+            return [selected_schema.model_validate(obj) for obj in result] if selected_schema else result
 
         except Exception as e:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
     @classmethod
-    def get_by_id(cls, session, obj_id: int, only_active: bool = True):
-        """Trae un objeto por id"""
+    def get_by_id(cls, session, obj_id: int, only_active: bool = True, detailed: bool = False):
+        """
+        Trae un objeto por id. 
+        Si detailed=True, carga relaciones y usa schema_out_detail.
+        """
         try:
             query = session.query(cls.model)
-            query = cls._apply_relationships(query)
 
+            if detailed and cls.relationships:
+                query = cls._apply_relationships(query)
+            
             if only_active and hasattr(cls.model, "active"):
                 query = query.filter(cls.model.active.is_(True))
 
             obj = query.filter(cls.model.id == obj_id).first()
-            return cls.schema_out.model_validate(obj) if obj and cls.schema_out else obj
+
+            if not obj:
+                return None
+            
+            selected_schema = (
+                cls.schema_out_detail 
+                if detailed and cls.schema_out_detail 
+                else cls.schema_out
+            )
+
+            return selected_schema.model_validate(obj) if selected_schema else obj
 
         except Exception as e:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
@@ -73,7 +125,12 @@ class BaseRepository:
             session.refresh(obj)
             return cls.schema_out.model_validate(obj) if cls.schema_out else obj
 
+        except IntegrityError as e:
+            session.rollback()
+            cls._handle_integrity_error(e)
+            
         except Exception as e:
+            session.rollback()
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
     @classmethod
@@ -92,7 +149,12 @@ class BaseRepository:
             session.refresh(obj)
             return cls.schema_out.model_validate(obj) if cls.schema_out else obj
 
+        except IntegrityError as e:
+            session.rollback()
+            cls._handle_integrity_error(e)
+            
         except Exception as e:
+            session.rollback()
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
     @classmethod
@@ -125,26 +187,41 @@ class BaseRepository:
         Upsert genérico sobre relaciones one-to-many.
         create_fn: lambda item -> instancia ORM
         """
-        parent = session.get(parent_model, parent_id)
-        if not parent:
-            raise NotFoundException(
-                detail=ERROR_NOT_FOUND.format(
-                    model=parent_model.__name__, id=parent_id
+        try:
+            parent = session.get(parent_model, parent_id)
+            if not parent:
+                raise NotFoundException(
+                    detail=ERROR_NOT_FOUND.format(
+                        model=parent_model.__name__, id=parent_id
+                    )
                 )
-            )
 
-        children = getattr(parent, relation_name)
-        existing = {getattr(c, key_attr): c for c in children}
+            children = getattr(parent, relation_name)
+            existing = {getattr(c, key_attr): c for c in children}
 
-        for item in items:
-            key = getattr(item, key_attr)
-            if key in existing:
-                for attr, value in item.dict().items():
-                    setattr(existing[key], attr, value)
-            else:
-                child = create_fn(item)
-                children.append(child)
-                session.flush()
-                session.refresh(child)
+            for item in items:
+                key = getattr(item, key_attr)
+                if key in existing:
+                    for attr, value in item.dict().items():
+                        setattr(existing[key], attr, value)
+                else:
+                    child = create_fn(item)
+                    children.append(child)
+                    session.flush()
+                    session.refresh(child)
 
-        session.refresh(parent)
+            session.refresh(parent)
+        
+        except IntegrityError as e:
+            session.rollback()
+            # Esto usará tu nueva lógica para decir: 
+            # "El valor '1' para el campo 'field_id' no existe..."
+            cls._handle_integrity_error(e)
+
+        except Exception as e:
+            session.rollback()
+            # Si ya es una AppException (ej: NotFoundException), la dejamos pasar
+            if isinstance(e, AppException):
+                raise e
+            # Si es otro error desconocido, lanzamos el genérico
+            raise AppException(detail=ERROR_DATABASE.format(error=str(e)))

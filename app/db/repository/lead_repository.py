@@ -25,8 +25,9 @@ class LeadRepository(BaseRepository):
             relation_name="field_values",
             items=values,
             key_attr="field_id",
+            # CORRECCIÓN AQUÍ:
             create_fn=lambda item: LeadFieldValue(
-                field_id=item.field_id,
-                value=item.value
+                lead_id=lead_id, 
+                **item.dict()     
             )
         )

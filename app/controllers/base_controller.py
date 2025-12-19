@@ -1,27 +1,58 @@
-from fastapi import APIRouter, Body, HTTPException
+from typing import List, Union
+from fastapi import APIRouter, Body, HTTPException, Query
 
 class BaseController:
     router_prefix = ""
     service = None
     schema_in = None
     schema_out = None
+    schema_out_detail = None
     enabled_methods = {"GET_ALL", "GET_ONE", "POST", "PUT", "DELETE"}
 
     @classmethod
     def get_router(cls):
         router = APIRouter(prefix=cls.router_prefix)
 
+        if cls.schema_out_detail:
+            ResponseModel = Union[cls.schema_out_detail, cls.schema_out]
+            ResponseModelList = List[Union[cls.schema_out_detail, cls.schema_out]]
+        else:
+            ResponseModel = cls.schema_out
+            ResponseModelList = List[cls.schema_out]
+
         if "GET_ALL" in cls.enabled_methods:
-            @router.get("/", response_model=list[cls.schema_out])
-            def get_all(only_active: bool = True):
-                return cls.service.get_all(only_active)
+            # Usamos la lista dinámica
+            @router.get("/", response_model=ResponseModelList)
+            def get_all(
+                only_active: bool = True, 
+                detailed: bool = Query(False, description="Si es True, incluye relaciones.")
+            ):
+                data = cls.service.get_all(only_active, detailed=detailed)
+                
+                # Conversión manual para asegurar el tipo correcto
+                if not detailed:
+                    return [cls.schema_out.model_validate(item, from_attributes=True) for item in data]
+                elif detailed and cls.schema_out_detail:
+                    return [cls.schema_out_detail.model_validate(item, from_attributes=True) for item in data]
+                
+                return data
 
         if "GET_ONE" in cls.enabled_methods:
-            @router.get("/{obj_id}", response_model=cls.schema_out)
-            def get_one(obj_id: int):
-                obj = cls.service.get_by_id(obj_id)
+            # Usamos el modelo dinámico
+            @router.get("/{obj_id}", response_model=ResponseModel)
+            def get_one(
+                obj_id: int, 
+                detailed: bool = Query(False)
+            ):
+                obj = cls.service.get_by_id(obj_id, detailed=detailed)
                 if not obj:
                     raise HTTPException(status_code=404, detail="No encontrado")
+                
+                if not detailed:
+                    return cls.schema_out.model_validate(obj, from_attributes=True)
+                elif detailed and cls.schema_out_detail:
+                    return cls.schema_out_detail.model_validate(obj, from_attributes=True)
+                
                 return obj
 
         if "POST" in cls.enabled_methods:

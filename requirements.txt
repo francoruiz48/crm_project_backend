@@ -10,3 +10,4 @@ pytest
 pytest-asyncio
 httpx
 simpleeval
+requests
