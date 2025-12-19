@@ -6,7 +6,7 @@ from app.schemas.lead_field_value_schema import LeadFieldValueCreate, LeadFieldV
 
 
 class LeadBase(BaseModel):
-    pass
+    campaign_id: int
 
 
 class LeadCreate(LeadBase, BaseCreate):

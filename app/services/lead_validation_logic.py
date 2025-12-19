@@ -1,31 +1,36 @@
 from datetime import datetime
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict
 from simpleeval import SimpleEval, NameNotDefined
 from app.models.lead_field import LeadField
 
 class LeadValidationLogic:
 
-
     @classmethod
-    def validate_field(
+    def validate_rules(
         cls, 
         current_field: LeadField, 
         raw_value: Any, 
         all_values: Dict[int, Any], 
         all_fields_defs: Dict[int, LeadField]
     ):
-        # ... (código previo de validación 'required' y casting igual que antes) ...
-        
-        # 1. Casteamos el valor actual
-        value = cls._cast_value(raw_value, current_field.field_type.code)
+        """
+        Ejecuta SOLAMENTE las reglas dinámicas (validation_rules) usando SimpleEval.
+        Asume que 'raw_value' ya pasó las validaciones básicas de tipo y requerimiento.
+        """
+        # Si no hay reglas, salimos rápido
+        if not current_field.validation_rules:
+            return
 
-        # 2. PREPARACIÓN DE CONTEXTO
+        # 1. Casteamos el valor actual para que las reglas funcionen (ej: value > 10)
+        value = cls._cast_value_for_rules(raw_value, current_field.field_type.code)
+
+        # 2. PREPARACIÓN DE CONTEXTO (Variables disponibles para las reglas)
         typed_fields = {}
         for f_id, f_val in all_values.items():
             f_def = all_fields_defs.get(f_id)
             if f_def:
-                typed_fields[f_id] = cls._cast_value(f_val, f_def.field_type.code)
+                typed_fields[f_id] = cls._cast_value_for_rules(f_val, f_def.field_type.code)
             else:
                 typed_fields[f_id] = f_val
 
@@ -33,7 +38,7 @@ class LeadValidationLogic:
             if text is None: return False
             return bool(re.search(pattern, str(text)))
         
-        # Definimos las FUNCIONES permitidas
+        # Funciones permitidas en las reglas
         allowed_functions = {
             "len": len,
             "sum": sum,
@@ -42,37 +47,46 @@ class LeadValidationLogic:
             "regex_match": regex_match_helper
         }
 
+        # Variables disponibles
+        context_names = {
+            "value": value,          
+            "fields": typed_fields, 
+            "today": datetime.now().replace(hour=0, minute=0, second=0, microsecond=0),
+            "now": datetime.now(),
+        }
+
+        # 3. EJECUCIÓN DE REGLAS
         for rule in current_field.validation_rules:
-            # Definimos las VARIABLES (Datos)
-            context_names = {
-                "value": value,          
-                "fields": typed_fields, 
-                "today": datetime.now().replace(hour=0, minute=0, second=0, microsecond=0),
-                "now": datetime.now(),
-            }
-
             try:
-                if value is None and "required" not in rule.expression.lower():
-                    continue
+                # Si el valor es nulo y la regla no menciona "required", solemos saltarla.
+                # Pero como la validación de 'required' ya se hizo en el Service, 
+                # aquí evaluamos todo o decidimos saltar si value es None.
+                if value is None:
+                    continue 
 
-                # EVALUACIÓN: Pasamos 'names' y 'functions' por separado
                 is_valid = SimpleEval(
                     names=context_names, 
                     functions=allowed_functions
                 ).eval(rule.expression)
 
                 if not is_valid:
-                    raise ValueError(rule.error_message)
+                    raise ValueError(rule.error_message or "Error de validación personalizada.")
 
             except NameNotDefined as e:
-                # ... (resto de tus excepts igual) ...
-                raise ValueError(f"Variable desconocida en regla: {e}")
+                raise ValueError(f"Regla inválida: Variable desconocida {e}")
             except Exception as e:
-                 raise ValueError(f"Error en regla '{rule.name}': {str(e)}")
+                # Si ya es ValueError lo dejamos pasar, sino lo envolvemos
+                if isinstance(e, ValueError):
+                    raise e
+                raise ValueError(f"Error técnico en regla '{rule.name}': {str(e)}")
 
     @staticmethod
-    def _cast_value(value, type_code):
-        """Convierte inputs a tipos Python reales."""
+    def _cast_value_for_rules(value, type_code):
+        """
+        Intenta convertir el valor al tipo correcto para que las comparaciones
+        matemáticas funcionen en SimpleEval. Si falla, devuelve el original 
+        (para no romper, aunque la regla podría fallar después).
+        """
         if value is None or value == "":
             return None
         try:
@@ -81,10 +95,10 @@ class LeadValidationLogic:
             elif type_code == "NUMBER":
                 return float(value)
             elif type_code == "BOOL":
-                return str(value).lower() == "true"
+                return str(value).lower() in ("true", "1")
             elif type_code == "DATE":
-                # Asegúrate que el formato coincida con tu frontend
+                # Asumiendo ISO
                 return datetime.strptime(str(value), "%Y-%m-%d")
         except:
-            return str(value) # Fallback
-        return str(value)
+            return value 
+        return value
