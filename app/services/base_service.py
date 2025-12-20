@@ -68,10 +68,10 @@ class BaseService:
         )
 
     @classmethod
-    def create(cls, obj_data):
+    def create(cls, obj_data, created_by=None):
         return cls._execute(
             action="Creando",
-            func=lambda uow: cls.repository.create(uow.session, obj_data),
+            func=lambda uow: cls.repository.create(uow.session, obj_data, created_by=created_by),
             success_msg=SUCCESS_CREATE
         )
 

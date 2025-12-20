@@ -68,7 +68,7 @@ class ValidationRuleService(BaseService):
             raise HTTPException(400, f"Error al generar expresión de plantilla: {str(e)}")
 
     @classmethod
-    def create_within_session(cls, session, obj_data):
+    def create_within_session(cls, session, obj_data, created_by=None):
         """
         Lógica pura de negocio. 
         Toma los datos de entrada, aplica la plantilla si existe, y prepara el objeto final.
@@ -120,13 +120,13 @@ class ValidationRuleService(BaseService):
         cls._validate_expression_syntax(expr)
 
         # 3. CREAR EN BD (Usando la sesión compartida)
-        return cls.repository.create(session, obj_data)
+        return cls.repository.create(session, obj_data, created_by)
 
     @classmethod
-    def create(cls, obj_data):
+    def create(cls, obj_data, created_by=None):
         # Wrapper público que inicia la transacción
         def do_create(uow):
-            return cls.create_within_session(uow.session, obj_data)
+            return cls.create_within_session(uow.session, obj_data, created_by)
 
         return cls._execute(
             action="Creando Regla",

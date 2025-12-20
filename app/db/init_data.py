@@ -4,7 +4,11 @@ from app.db.session import SessionLocal
 from app.models.lead_field_type import LeadFieldType
 from app.models.nomenclator import Nomenclator
 from app.models.nomenclator_item import NomenclatorItem
+from app.models.security_models import Permission, Role, User
 
+# -----------------------------------------------------------------------------
+# HELPER GENÉRICO
+# -----------------------------------------------------------------------------
 def seed_generic(
     db,
     model,
@@ -13,21 +17,18 @@ def seed_generic(
     resolve_fk: dict[str, tuple] = None,
 ):
     """
-    model: Modelo SQLAlchemy destino
-    items: lista de diccionarios con datos
-    unique_by: campos que identifican un registro existente
-    resolve_fk: { "campo_fk": (ModeloFK, "campo_lookup") }
+    Inserta datos solo si no existen previamente.
     """
-
     resolve_fk = resolve_fk or {}
+    created_count = 0
 
     for item in items:
         data = item.copy()
 
         # 1. Resolver foreign keys
+        should_skip = False
         for fk_field, (fk_model, lookup_field) in resolve_fk.items():
             lookup_value = item.get(fk_field)
-
             if lookup_value is None:
                 continue
 
@@ -36,39 +37,70 @@ def seed_generic(
             ).first()
 
             if not fk_obj:
-                raise ValueError(
-                    f"[Seeder] No existe {fk_model.__name__}.{lookup_field} = {lookup_value}"
-                )
+                print(f"⚠️ [Seeder] Saltando registro. No existe {fk_model.__name__}.{lookup_field} = {lookup_value}")
+                should_skip = True
+                break
 
             data[fk_field] = lookup_value
+        
+        if should_skip:
+            continue
 
         # 2. Verificar existencia por clave única múltiple
-        filters = {field: data[field] for field in unique_by}
+        filters = {field: data[field] for field in unique_by if field in data}
+        
+        # Si filters está vacío, es peligroso filtrar, mejor saltar
+        if not filters:
+            continue
 
         exists = db.query(model).filter_by(**filters).first()
         if exists:
+            # Ya existe, no hacemos nada
             continue
 
         # 3. Insertar
         db.add(model(**data))
+        created_count += 1
+    
+    if created_count > 0:
+        print(f"   ✅ Se crearon {created_count} registros en {model.__name__}")
 
 
-
+# -----------------------------------------------------------------------------
+# EXECUTOR PRINCIPAL
+# -----------------------------------------------------------------------------
 def run_seeds():
     db = SessionLocal()
     try:
+        print("🌱 Iniciando Seeders...")
+        
+        # 1. RBAC (Usuarios, Roles, Permisos)
+        seed_rbac(db)
+        db.commit() # Commit por bloques para asegurar integridad
+
+        # 2. Tipos de Campos
         seed_lead_field_types(db)
         db.commit()
+
+        # 3. Geografía
         seed_geography_separated(db)
         db.commit()
-    except Exception:
+        
+        print("🚀 Seeders finalizados correctamente.")
+
+    except Exception as e:
+        print(f"🔥 Error crítico en Seeders: {e}")
         db.rollback()
         raise
     finally:
         db.close()
 
 
+# -----------------------------------------------------------------------------
+# 1. SEED LEAD FIELD TYPES
+# -----------------------------------------------------------------------------
 def seed_lead_field_types(db):
+    print("🔹 Procesando LeadFieldTypes...")
     datos = [
         {"code": "STRING", "description": "Texto"},
         {"code": "INT", "description": "Número entero"},
@@ -76,36 +108,101 @@ def seed_lead_field_types(db):
         {"code": "DATE", "description": "Fecha"},
         {"code": "BOOL", "description": "Valor verdadero/falso"},
     ]
+    seed_generic(db, model=LeadFieldType, items=datos, unique_by=["code"])
 
-    seed_generic(db, model = LeadFieldType, items = datos, unique_by=["code"])
+
+# -----------------------------------------------------------------------------
+# 2. SEED RBAC (Corregido con validaciones)
+# -----------------------------------------------------------------------------
+def seed_rbac(db):
+    print("🔹 Procesando RBAC (Permisos, Roles, Usuarios)...")
+
+    # --- A. Permisos ---
+    # Helper local para verificar existencia
+    def _get_or_create_permission(name, codename):
+        perm = db.query(Permission).filter_by(codename=codename).first()
+        if not perm:
+            perm = Permission(name=name, codename=codename)
+            db.add(perm)
+            db.flush() # Flush para tener ID disponible si fuera necesario
+        return perm
+
+    p1 = _get_or_create_permission("Crear Lead", "lead:create")
+    p2 = _get_or_create_permission("Ver Leads", "lead:view")
+    p3 = _get_or_create_permission("Ver TODOS los Leads", "lead:view_all")
+    p4 = _get_or_create_permission("Editar Lead", "lead:update")
+
+    # --- B. Roles ---
+    def _get_or_create_role(name, code, perms_list):
+        role = db.query(Role).filter_by(code=code).first()
+        if not role:
+            role = Role(name=name, code=code)
+            # Asignamos la relación Many-to-Many
+            role.permissions = perms_list
+            db.add(role)
+            db.flush()
+        return role
+
+    r_admin = _get_or_create_role("Admin", "admin", [p1, p2, p3, p4])
+    r_agent = _get_or_create_role("Vendedor", "agent", [p1, p2]) # Vendedor solo crea y ve lo suyo
+
+    # --- C. Usuarios ---
+    def _get_or_create_user(email, role_obj):
+        user = db.query(User).filter_by(email=email).first()
+        if not user:
+            user = User(email=email, role_id=role_obj.id)
+            db.add(user)
+            db.flush()
+        return user
+
+    _get_or_create_user("admin@crm.com", r_admin)
+    _get_or_create_user("vendedor@crm.com", r_agent)
 
 
+# -----------------------------------------------------------------------------
+# 3. SEED GEOGRAFÍA
+# -----------------------------------------------------------------------------
 def seed_geography_separated(db):
-    """
-    Crea 3 Nomencladores independientes: 'Países', 'Provincias' y 'Ciudades'.
-    Los items de Provincias tienen como padre a items de Países.
-    """
-    print("🌍 Iniciando Seed de Geografía (Estructura Separada)...")
+    print("🌍 Iniciando Seed de Geografía...")
 
-    # --- PASO 1: Crear los 3 Nomencladores ---
-    # Usamos un diccionario para guardar los objetos y sus IDs
-    noms = {
-        "PAIS": _get_or_create_nomenclator(db, "Países"),
-        "PROV": _get_or_create_nomenclator(db, "Provincias"),
-        "CIUD": _get_or_create_nomenclator(db, "Ciudades")
-    }
-    
-    # --- CONFIGURACIÓN API ---
+    # Helpers específicos para geografía
+    def _get_or_create_nom(name):
+        nom = db.query(Nomenclator).filter_by(name=name).first()
+        if not nom:
+            nom = Nomenclator(name=name)
+            db.add(nom)
+            db.flush()
+        return nom
+
+    def _get_or_create_item(nomenclator_id, code, value, parent_id):
+        item = db.query(NomenclatorItem).filter_by(code=code, nomenclator_id=nomenclator_id).first()
+        if not item:
+            item = NomenclatorItem(
+                code=code,
+                value=value,
+                nomenclator_id=nomenclator_id,
+                parent_item_id=parent_id
+            )
+            db.add(item)
+            db.flush()
+        return item
+
+    # 1. Nomencladores Base
+    nom_pais = _get_or_create_nom("Países")
+    nom_prov = _get_or_create_nom("Provincias")
+    # nom_ciud = _get_or_create_nom("Ciudades") # Opcional
+
+    # 2. Datos Externos
     TARGET_COUNTRIES = ["AR", "CL", "BR", "ES", "US"] 
     API_BASE = "https://countriesnow.space/api/v0.1/countries"
     
     try:
-        # Traemos Países + Estados
+        # Petición HTTP
         resp = requests.get(f"{API_BASE}/states")
         data = resp.json()
         
         if data.get("error"):
-            print("❌ Error en API externa")
+            print("❌ Error en API externa de geografía")
             return
 
         all_countries = data.get("data", [])
@@ -116,93 +213,28 @@ def seed_geography_separated(db):
             c_iso = country['iso2']
             c_states = country['states']
 
-            print(f"   📍 Procesando: {c_name}...")
-
-            # --- PASO 2: Crear Item en Nomenclador PAÍSES ---
-            # Este item no tiene padre (parent_id=None)
+            # País
             country_item = _get_or_create_item(
-                db, 
-                nomenclator_id=noms["PAIS"].id, 
+                nomenclator_id=nom_pais.id, 
                 code=c_iso, 
                 value=c_name, 
                 parent_id=None 
             )
 
-            # --- PASO 3: Crear Items en Nomenclador PROVINCIAS ---
+            # Provincias / Estados
             for state in c_states:
                 s_name = state['name']
-                # Código único: AR-Mendoza
+                # Generación de código seguro
                 s_code_suffix = state.get('state_code') or re.sub(r'[^a-zA-Z0-9]', '', s_name)[:3].upper()
                 s_full_code = f"{c_iso}-{s_code_suffix}"
 
-                # AQUÍ ESTÁ LA CLAVE: 
-                # El nomenclator_id es PROVINCIAS, pero el parent_id es del PAÍS
-                state_item = _get_or_create_item(
-                    db,
-                    nomenclator_id=noms["PROV"].id,
+                _get_or_create_item(
+                    nomenclator_id=nom_prov.id,
                     code=s_full_code,
                     value=s_name,
                     parent_id=country_item.id 
                 )
 
-                # --- PASO 4 (Opcional): Ciudades ---
-                # Si descomentas esto, recuerda que tardará mucho por las peticiones HTTP
-                # _seed_cities_for_state_separated(db, noms["CIUD"].id, country_item.value, state_item)
-
-            db.commit() 
-
     except Exception as e:
-        print(f"🔥 Error procesando geografía: {e}")
-        db.rollback()
-
-# --- HELPERS ---
-
-def _get_or_create_nomenclator(db, name):
-    nom = db.query(Nomenclator).filter_by(name=name).first()
-    if not nom:
-        nom = Nomenclator(name=name)
-        db.add(nom)
-        db.commit() # Commit inmediato para tener ID
-        db.refresh(nom)
-    return nom
-
-def _get_or_create_item(db, nomenclator_id, code, value, parent_id):
-    """Busca por código dentro del mismo nomenclador"""
-    item = db.query(NomenclatorItem).filter_by(code=code, nomenclator_id=nomenclator_id).first()
-    
-    if not item:
-        item = NomenclatorItem(
-            code=code,
-            value=value,
-            nomenclator_id=nomenclator_id,
-            parent_item_id=parent_id # Aquí vinculamos con el padre (que puede ser de otro nomenclador)
-        )
-        db.add(item)
-        db.flush() # Flush para obtener el ID sin cerrar la transacción
-        
-    return item
-
-def _seed_cities_for_state_separated(db, cities_nomenclator_id, country_name, state_item):
-    """Lógica para cargar ciudades en el nomenclador de Ciudades"""
-    url = "https://countriesnow.space/api/v0.1/countries/state/cities"
-    payload = { "country": country_name, "state": state_item.value }
-    
-    try:
-        resp = requests.post(url, json=payload)
-        res_json = resp.json()
-        if not res_json.get("error"):
-            cities = res_json.get("data", [])
-            for city_name in cities[:20]: # Limitado a 20 para pruebas
-                clean_city = re.sub(r'[^a-zA-Z0-9]', '', city_name)
-                # Código: AR-M-GodoyCruz
-                city_code = f"{state_item.code}-{clean_city}"[:50]
-
-                _get_or_create_item(
-                    db,
-                    nomenclator_id=cities_nomenclator_id, # ID del nomenclador CIUDADES
-                    code=city_code,
-                    value=city_name,
-                    parent_id=state_item.id # ID del item PROVINCIA
-                )
-    except Exception:
-        pass
+        print(f"⚠️ Error procesando geografía (puede ser conexión): {e}")
+        # No hacemos rollback aquí para no matar los seeds anteriores, solo geografía fallará

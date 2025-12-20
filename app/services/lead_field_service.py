@@ -13,7 +13,7 @@ class LeadFieldService(BaseService):
     nomenclatorService = NomenclatorService
     
     @classmethod
-    def create(cls, obj_in):
+    def create(cls, obj_in, created_by=None):
         def do_create(uow):
             # Convertimos a dict excluyendo nulos
             data = obj_in.dict(exclude_unset=True)
@@ -91,7 +91,7 @@ class LeadFieldService(BaseService):
             # -------------------------------------------------------
             # 4. CREAR EL LEAD FIELD
             # -------------------------------------------------------
-            new_field = cls.repository.create(uow.session, data)
+            new_field = cls.repository.create(uow.session, data, created_by)
             
             # Flush para obtener el ID del nuevo campo necesario para el backfill y reglas
             uow.session.flush() 
@@ -118,7 +118,7 @@ class LeadFieldService(BaseService):
             for rule_cfg in rules_to_create:
                 rule_payload = rule_cfg.copy()
                 rule_payload["field_id"] = new_field.id
-                ValidationRuleService.create_within_session(uow.session, rule_payload)
+                ValidationRuleService.create_within_session(uow.session, rule_payload, created_by)
 
             return new_field
 
