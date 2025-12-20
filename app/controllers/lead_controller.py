@@ -12,8 +12,7 @@ class LeadController(BaseController):
     schema_in = LeadCreate
     schema_out = LeadResponse
     
-    # 1. IMPORTANTE: Quitamos "GET_ALL" de aquí para que BaseController NO genere el default
-    #    y nosotros podamos generar el nuestro personalizado abajo.
+    # Quitamos "GET_ALL" de aquí para que BaseController NO genere el default
     enabled_methods = {"GET_ONE", "POST", "PUT", "DELETE"} 
 
     @classmethod
@@ -32,7 +31,7 @@ class LeadController(BaseController):
         def get_all(
             only_active: bool = True,
             detailed: bool = Query(False, description="Incluir relaciones"),
-            campaign_id: Optional[int] = Query(None, description="Filtrar por ID de campaña") # <--- Param Nuevo
+            campaign_id: Optional[int] = Query(None, description="Filtrar por ID de campaña")
         ):
             # Llamamos al servicio pasando el filtro
             data = cls.service.get_all(

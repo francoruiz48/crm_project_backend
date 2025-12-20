@@ -1,4 +1,5 @@
 from datetime import datetime
+import re
 from fastapi import HTTPException, status
 from app.services.base_service import BaseService
 from app.db.repository.lead_repository import LeadRepository
@@ -89,6 +90,44 @@ class LeadService(BaseService):
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Ya existe un Lead en esta campaña con los mismos datos identificatorios."
             )
+        
+    # ---------------------------------------------------------
+    # HELPER DE MÁSCARAS
+    # ---------------------------------------------------------
+    @classmethod
+    def _validate_mask(cls, value: str, mask: str, field_name: str):
+        """
+        Convierte una máscara simple en Regex y valida el valor.
+        Convención típica:
+        # -> Número (\d)
+        A -> Letra ([a-zA-Z])
+        * -> Alfanumérico ([a-zA-Z0-9])
+        Cualquier otro caracter se trata como literal (ej: -, (, ), .)
+        """
+        if not mask or value is None:
+            return
+
+        # 1. Construir la Regex a partir de la máscara
+        regex_pattern = "^"
+        for char in mask:
+            if char == "#":
+                regex_pattern += r"\d"       # Un dígito
+            elif char == "A":
+                regex_pattern += r"[a-zA-Z]" # Una letra
+            elif char == "*":
+                regex_pattern += r"[a-zA-Z0-9]" # Alfanumérico
+            else:
+                # Escapamos caracteres especiales de regex (., (, ), etc.)
+                regex_pattern += re.escape(char)
+        regex_pattern += "$"
+
+        # 2. Validar
+        # Convertimos value a string por seguridad
+        val_str = str(value)
+        if not re.match(regex_pattern, val_str):
+            raise ValueError(
+                f"El campo '{field_name}' no cumple con el formato requerido: {mask}"
+            )
 
     # -------------------------------------------------------------------------
     # VALIDACIÓN DE DEFINICIÓN (Requerido y Tipos)
@@ -107,6 +146,11 @@ class LeadService(BaseService):
             if is_mandatory:
                 raise ValueError(f"El campo '{field.name}' es obligatorio.")
             return # Si está vacío y no es obligatorio, no validamos tipo (se guarda null)
+
+        # VALIDACIÓN: MÁSCARA
+        if field.input_mask:
+            # Solo aplicamos máscaras a campos de tipo STRING o similar.
+            cls._validate_mask(value, field.input_mask, field.name)
 
         # 2. Validar Integridad de Tipos (Basic Type Check)
         type_code = field.field_type.code
@@ -229,9 +273,38 @@ class LeadService(BaseService):
     @classmethod
     def update(cls, obj_id: int, obj_in):
         with UnitOfWork() as uow:
-            if not cls.repository.get_by_id(uow.session, obj_id): cls._not_found(obj_id)
+            # 1. Verificar existencia del Lead
+            if not cls.repository.get_by_id(uow.session, obj_id):
+                cls._not_found(obj_id)
+            
+            # 2. Obtener definiciones de campos
             field_defs = cls.field_repository.get_all_active_with_rules(uow.session)
             
+            # ---------------------------------------------------------
+            # NUEVA VALIDACIÓN (Igual que en Create)
+            # ---------------------------------------------------------
+            defs_map = {f.id: f for f in field_defs}
+            incoming_field_ids = [v.get('field_id') if isinstance(v, dict) else v.field_id for v in obj_in.values]
+            
+            for fid in incoming_field_ids:
+                field_def = defs_map.get(fid)
+                # Caso A: El campo no existe
+                if not field_def:
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST, 
+                        f"El campo con ID {fid} no existe o no está activo."
+                    )
+                
+                # Caso B: El campo es de otra campaña (Opcional pero recomendado)
+                current_lead = cls.repository.get_by_id(uow.session, obj_id)
+                if field_def.campaign_id != current_lead.campaign_id:
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST, 
+                        f"El campo con ID {fid} pertenece a otra campaña."
+                    )
+            # ---------------------------------------------------------
+
+            # 3. Preparar datos
             incoming_data = cls._prepare_context_dict(obj_in.values)
             
             current_lead = cls.repository.get_by_id(uow.session, obj_id)
@@ -240,14 +313,16 @@ class LeadService(BaseService):
                 val = v.nomenclator_item_id if v.nomenclator_item_id is not None else v.value
                 db_values[v.field_id] = val
             
-            # En Update NO rellenamos campos faltantes con None, porque es una actualización parcial.
-            # Solo sobrescribimos lo que el usuario envía.
+            # Mezclar (Update parcial)
             full_context = {**db_values, **incoming_data}
             
+            # 4. Validar reglas
             cls._validate_processed_data(full_context, field_defs)
             
+            # 5. Guardar
             clean_values = cls._reconstruct_items_for_repo(incoming_data, field_defs)
             cls.repository.upsert_values(uow.session, obj_id, clean_values)
+            
             return cls.repository.get_by_id(uow.session, obj_id)
         
     @classmethod
