@@ -11,6 +11,7 @@ class LeadFieldBase(BaseModel):
     required: bool = False
     default_value: Optional[str] = None
     is_primary: bool = False
+    input_mask: Optional[str] = None
 
 class LeadFieldCreate(LeadFieldBase, BaseCreate):
     field_template_code: Optional[str] = None

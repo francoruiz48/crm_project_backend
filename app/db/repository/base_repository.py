@@ -13,6 +13,36 @@ class BaseRepository:
 
     # ----------------- Helpers internos -----------------
     @classmethod
+    def _execute_read_query(cls, query, detailed: bool = False):
+        """
+        Ejecuta una query de lectura aplicando:
+        1. Relaciones (si detailed=True)
+        2. Manejo de Errores (Try/Except genérico)
+        3. Conversión a Esquema Pydantic
+        """
+        try:
+            # A. Aplicar relaciones si es detailed
+            if detailed and cls.relationships:
+                query = cls._apply_relationships(query)
+
+            # B. Ejecutar
+            result = query.all()
+
+            # C. Seleccionar esquema
+            selected_schema = (
+                cls.schema_out_detail 
+                if detailed and cls.schema_out_detail 
+                else cls.schema_out
+            )
+
+            # D. Convertir
+            return [selected_schema.model_validate(obj) for obj in result] if selected_schema else result
+
+        except Exception as e:
+            # Aquí mantenemos la consistencia del manejo de errores
+            raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
+        
+    @classmethod
     def _apply_relationships(cls, query):
         """Aplica relaciones definidas en cls.relationships al query"""
         for chain in cls.relationships:
@@ -58,30 +88,15 @@ class BaseRepository:
     # ----------------- CRUD Genérico -----------------
     @classmethod
     def get_all(cls, session, only_active: bool = True, detailed: bool = False):
-        """Trae todos los objetos, opcionalmente solo activos"""
-        try:
-            query = session.query(cls.model)
-            
-            # 1. Aplicar relaciones si es detailed
-            if detailed and cls.relationships and cls.schema_out_detail:
-                query = cls._apply_relationships(query)
+        """Trae todos los objetos (Implementación Base)"""
+        # 1. Construcción básica
+        query = session.query(cls.model)
+        
+        if only_active and hasattr(cls.model, "active"):
+            query = query.filter(cls.model.active.is_(True))
 
-            if only_active and hasattr(cls.model, "active"):
-                query = query.filter(cls.model.active.is_(True))
-
-            result = query.all()
-
-            # 2. Seleccionar el esquema correcto
-            selected_schema = (
-                cls.schema_out_detail 
-                if detailed and cls.schema_out_detail 
-                else cls.schema_out
-            )
-
-            return [selected_schema.model_validate(obj) for obj in result] if selected_schema else result
-
-        except Exception as e:
-            raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
+        # 2. Delegar ejecución al helper protegido
+        return cls._execute_read_query(query, detailed)
 
     @classmethod
     def get_by_id(cls, session, obj_id: int, only_active: bool = True, detailed: bool = False):

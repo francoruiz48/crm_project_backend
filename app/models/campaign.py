@@ -10,3 +10,5 @@ class Campaign(BaseModelDB):
     description = Column(String, nullable=True)
 
     nomenclators = relationship("Nomenclator", back_populates="campaign", cascade="all, delete-orphan")
+
+    leads = relationship("Lead", back_populates="campaign", cascade="all, delete-orphan")
