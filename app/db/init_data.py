@@ -115,49 +115,116 @@ def seed_lead_field_types(db):
 # 2. SEED RBAC (Corregido con validaciones)
 # -----------------------------------------------------------------------------
 def seed_rbac(db):
-    print("🔹 Procesando RBAC (Permisos, Roles, Usuarios)...")
+    print("🔹 Procesando RBAC Automático...")
 
-    # --- A. Permisos ---
-    # Helper local para verificar existencia
-    def _get_or_create_permission(name, codename):
+    ENTITIES = [
+        "lead",
+        "lead_field",
+        "lead_field_type",
+        "validation_rule",
+        "campaign",
+        "nomenclator",
+        "nomenclator_item",
+        "user",
+        "role"
+    ]
+
+    # 2. Definimos las acciones estándar
+    ACTIONS = {
+        "create": "Crear",
+        "view": "Ver",
+        "update": "Editar",
+        "delete": "Eliminar"
+    }
+
+    # Helper get_or_create
+    def _get_or_create_permission(codename, name):
         perm = db.query(Permission).filter_by(codename=codename).first()
         if not perm:
             perm = Permission(name=name, codename=codename)
             db.add(perm)
-            db.flush() # Flush para tener ID disponible si fuera necesario
+            # No hacemos flush por cada uno para ir rápido, haremos commit al final
         return perm
 
-    p1 = _get_or_create_permission("Crear Lead", "lead:create")
-    p2 = _get_or_create_permission("Ver Leads", "lead:view")
-    p3 = _get_or_create_permission("Ver TODOS los Leads", "lead:view_all")
-    p4 = _get_or_create_permission("Editar Lead", "lead:update")
+    # --- Generación Masiva de Permisos ---
+    all_permissions = []
+    
+    for entity in ENTITIES:
+        # CRUD Básico: lead:create, lead:view, etc.
+        for action_code, action_label in ACTIONS.items():
+            codename = f"{entity}:{action_code}"
+            name = f"{action_label} {entity.capitalize()}"
+            
+            p = _get_or_create_permission(codename, name)
+            all_permissions.append(p)
+        
+        # Especial: view_all (para scopes como Leads)
+        # Lo creamos para todas por consistencia, o podrías filtrar solo 'lead'
+        p_all = _get_or_create_permission(
+            f"{entity}:view_all", 
+            f"Ver TODOS los {entity.capitalize()}"
+        )
+        all_permissions.append(p_all)
 
-    # --- B. Roles ---
-    def _get_or_create_role(name, code, perms_list):
+    db.flush() # Guardamos los permisos para tener IDs
+
+    # --- Roles ---
+    def _get_or_create_role(name, code):
         role = db.query(Role).filter_by(code=code).first()
         if not role:
             role = Role(name=name, code=code)
-            # Asignamos la relación Many-to-Many
-            role.permissions = perms_list
             db.add(role)
             db.flush()
         return role
 
-    r_admin = _get_or_create_role("Admin", "admin", [p1, p2, p3, p4])
-    r_agent = _get_or_create_role("Vendedor", "agent", [p1, p2]) # Vendedor solo crea y ve lo suyo
+    r_admin = _get_or_create_role("Admin", "admin")
+    r_agent = _get_or_create_role("Vendedor", "agent")
 
-    # --- C. Usuarios ---
-    def _get_or_create_user(email, role_obj):
+    # --- Asignación de Permisos ---
+    
+    # 1. Admin: Tiene TODO
+    all_db_perms = db.query(Permission).all()
+    r_admin.permissions = all_db_perms
+
+    # 2. Vendedor: Lógica específica (Solo Leads operativamente)
+    # Filtramos permisos que empiecen con 'lead:' pero NO 'delete' ni 'view_all'
+    agent_perms = [
+        p for p in all_db_perms 
+        if p.codename.startswith("lead:") 
+        and "delete" not in p.codename 
+        and "view_all" not in p.codename
+        and "field" not in p.codename # Que no toque lead_fields
+    ]
+    r_agent.permissions = agent_perms
+
+    # --- Usuarios ---
+    def _get_or_create_user(email, roles_list):
         user = db.query(User).filter_by(email=email).first()
         if not user:
-            user = User(email=email, role_id=role_obj.id)
+            user = User(email=email)
+            # Asignamos la lista de roles
+            user.roles = roles_list
             db.add(user)
             db.flush()
         return user
 
-    _get_or_create_user("admin@crm.com", r_admin)
-    _get_or_create_user("vendedor@crm.com", r_agent)
+    # Creamos un rol extra para probar la asignación múltiple
+    p_delete = next((p for p in all_db_perms if p.codename == "lead:delete"), None)
+    r_super = _get_or_create_role("Supervisor", "supervisor")
 
+    if p_delete:
+        r_super.permissions = [p_delete]
+
+    # Admin tiene Rol Admin
+    _get_or_create_user("admin@crm.com", [r_admin])
+    
+    # Vendedor tiene Rol Vendedor
+    _get_or_create_user("vendedor@crm.com", [r_agent])
+
+    # Ejemplo Multi-Rol: Un "Jefe de Ventas" que es Vendedor + Supervisor
+    _get_or_create_user("jefe@crm.com", [r_agent, r_super])
+    
+    db.commit() # Guardamos todo al final
 
 # -----------------------------------------------------------------------------
 # 3. SEED GEOGRAFÍA

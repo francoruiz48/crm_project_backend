@@ -10,6 +10,13 @@ role_permissions = Table(
     Column('permission_id', Integer, ForeignKey('permission.id'), primary_key=True)
 )
 
+user_roles = Table(
+    'user_roles',
+    BaseModelDB.metadata,
+    Column('user_id', Integer, ForeignKey('user.id'), primary_key=True),
+    Column('role_id', Integer, ForeignKey('role.id'), primary_key=True)
+)
+
 class Permission(BaseModelDB):
     __tablename__ = "permission"
     # Ej: name="Crear Lead", codename="lead:create"
@@ -31,11 +38,17 @@ class User(BaseModelDB):
     email = Column(String, unique=True, index=True, nullable=False)
     # ... otros campos (password, etc) ...
     
-    role_id = Column(Integer, ForeignKey("role.id"), nullable=True)
-    role = relationship("Role", backref="users", foreign_keys=[role_id])
+    roles = relationship("Role", secondary=user_roles, backref="users")
 
     @property
     def permission_codenames(self):
-        if not self.role:
+        if not self.roles:
             return []
-        return [p.codename for p in self.role.permissions]
+        
+        # Usamos un set para evitar duplicados si dos roles tienen el mismo permiso
+        perms = set()
+        for role in self.roles:
+            for perm in role.permissions:
+                perms.add(perm.codename)
+                
+        return list(perms)

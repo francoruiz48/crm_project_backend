@@ -10,15 +10,6 @@ class LeadController(BaseController):
     service = LeadService
     schema_in = LeadCreate
     schema_out = LeadResponse
-
-    required_permissions = {
-        "create": "lead:create",
-        "read": "lead:view",
-        "update": "lead:update",
-        "delete": "lead:delete",
-        "active": "lead:update",
-        "disable": "lead:update"
-    }
     
     # Quitamos "GET_ALL" de aquí para que BaseController NO genere el default
     enabled_methods = {"GET_ONE", "POST", "PUT", "DELETE"} 

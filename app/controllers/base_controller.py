@@ -28,12 +28,38 @@ class BaseController:
 
     @classmethod
     def _get_deps(cls, action: str):
-        """Helper para generar la lista de dependencias de seguridad basada en la acción"""
-        deps = []
-        perm = cls.required_permissions.get(action)
-        if perm:
-            deps.append(Depends(PermissionChecker(perm)))
-        return deps
+        """
+        Genera dependencia de seguridad automática.
+        1. Busca en required_permissions manual.
+        2. Si no está, infiere del modelo: "{tablename}:{action}".
+        """
+        perm_codename = cls.required_permissions.get(action)
+        
+        # --- LÓGICA AUTOMÁTICA ---
+        if not perm_codename and cls.service and cls.service.repository:
+            # Obtenemos el nombre de la tabla (ej: 'lead', 'campaign')
+            table_name = cls.service.repository.model.__tablename__
+            
+            # Mapeo de acciones del Controller a acciones del Permiso
+            # Controller Action -> Permission Suffix
+            action_map = {
+                "create": "create",
+                "read": "view",
+                "update": "update",
+                "delete": "delete",
+                "disable": "update", # Desactivar suele ser un update
+                "active": "update"
+            }
+            
+            suffix = action_map.get(action)
+            if suffix:
+                perm_codename = f"{table_name}:{suffix}"
+        # -------------------------
+
+        if perm_codename:
+            return [Depends(PermissionChecker(perm_codename))]
+        
+        return [] # Si no se pudo determinar, el endpoint queda público (o podrías forzar error)
 
     @classmethod
     def get_router(cls):
