@@ -1,7 +1,9 @@
 from typing import List, Union, Optional
-from fastapi import Depends, Query
+from fastapi import Body, Depends, Query
 from app.controllers.base_controller import BaseController
 from app.core.security import PermissionChecker, get_current_user
+from app.schemas.filter_schema import LeadSearchRequest
+from app.schemas.pagination_schema import PaginatedResponse
 from app.services.lead_service import LeadService
 from app.schemas.lead_schema import LeadCreate, LeadResponse
 
@@ -21,26 +23,68 @@ class LeadController(BaseController):
 
         # Preparamos el modelo de respuesta (para Swagger)
         if cls.schema_out_detail:
-            ResponseModelList = List[Union[cls.schema_out_detail, cls.schema_out]]
+            ResponseModelItem = Union[cls.schema_out_detail, cls.schema_out]
         else:
-            ResponseModelList = List[cls.schema_out]
+            ResponseModelItem = cls.schema_out
+            
+        ResponseModelPaginated = PaginatedResponse[ResponseModelItem]
 
-        # 2. Definimos nuestro GET_ALL personalizado
-        @router.get("/", response_model=ResponseModelList,
-                dependencies=cls._get_deps("read"))
-        def get_all(
-            only_active: bool = True,
-            detailed: bool = Query(False, description="Incluir relaciones"),
-            campaign_id: Optional[int] = Query(None, description="Filtrar por ID de campaña")
+        @router.post("/search", 
+            response_model=List[cls.schema_out],
+            dependencies=cls._get_deps("read")
+        )
+        def search_leads(
+            search_req: LeadSearchRequest = Body(...),
+            detailed: bool = Query(False),
+            current_user = Depends(get_current_user)
         ):
-            data = cls.service.get_all(
-                only_active=only_active, 
+            filter_owner = None
+            # Nota: usa current_user.permission_codenames (tu propiedad de lista de strings)
+            if "lead:view_all" not in current_user.permission_codenames:
+                 filter_owner = current_user.id
+
+            # service.search devuelve (total, items)
+            total, items_pydantic = cls.service.search(
+                search_req=search_req, 
                 detailed=detailed, 
-                campaign_id=campaign_id
+                owner_id=filter_owner
             )
             
-            # 3. Usamos el helper DRY del padre para serializar
-            return cls._serialize_list(data, detailed)
+            
+            # Retornamos estructura paginada
+            return PaginatedResponse.create(
+                items=items_pydantic,
+                total=total,
+                page=search_req.page,
+                page_size=search_req.page_size
+            )
+
+
+        @router.get("/", response_model=ResponseModelPaginated,
+                dependencies=cls._get_deps("read"))
+        def get_all(
+            page: int = Query(1, ge=1, description="Número de página"),
+            page_size: int = Query(20, ge=1, le=100, description="Registros por página"),
+            only_active: bool = True, 
+            detailed: bool = Query(False),
+            campaign_id: Optional[int] = Query(None, description="Filtrar por ID de campaña")
+        ):
+
+            total, items_pydantic = cls.service.get_all(
+                    page=page, 
+                    page_size=page_size, 
+                    only_active=only_active,
+                    detailed=detailed,
+                    campaign_id=campaign_id
+                )
+
+            return PaginatedResponse.create(
+                items=items_pydantic,
+                total=total,
+                page=page,
+                page_size=page_size
+            )
+   
 
         return router
 

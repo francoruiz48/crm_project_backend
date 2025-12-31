@@ -326,13 +326,28 @@ class LeadService(BaseService):
             return cls.repository.get_by_id(uow.session, obj_id)
         
     @classmethod
-    def get_all(cls, only_active: bool = True, detailed: bool = False, campaign_id: int = None):
+    def get_all(cls, page: int = 1, page_size: int = 100, only_active: bool = True, detailed: bool = False, campaign_id: int = None):
         return cls._execute(
             action="Obteniendo Leads",
             func=lambda uow: cls.repository.get_all(
                 session=uow.session, 
+                page=page,
+                page_size=page_size,
                 only_active=only_active, 
                 detailed=detailed, 
                 campaign_id=campaign_id
+            )
+        )
+    
+
+    @classmethod
+    def search(cls, search_req, detailed: bool = False, owner_id: int = None):
+        return cls._execute(
+            action="Buscando Leads",
+            func=lambda uow: cls.repository.search(
+                session=uow.session,
+                search_params=search_req,
+                detailed=detailed,
+                owner_id=owner_id
             )
         )

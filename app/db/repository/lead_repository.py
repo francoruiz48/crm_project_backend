@@ -1,11 +1,10 @@
-from app.core.error_messages import ERROR_NOT_FOUND
-from app.core.exceptions import NotFoundException
+from sqlalchemy.orm import aliased
+from sqlalchemy import cast, Float
 from app.db.repository.base_repository import BaseRepository
 from app.models.lead import Lead
 from app.schemas.lead_schema import LeadResponse
 from app.models.lead_field_value import LeadFieldValue
 from app.models.lead_field import LeadField
-from app.db.session import SessionLocal
 from sqlalchemy import and_
 
 class LeadRepository(BaseRepository):
@@ -17,21 +16,83 @@ class LeadRepository(BaseRepository):
     ]
 
     @classmethod
-    def get_all(cls, session, only_active: bool = True, detailed: bool = False, campaign_id: int = None):
-        # 1. Construcción Personalizada de la Query
+    def search(cls, session, search_params, detailed: bool = False, owner_id: int = None):
         query = session.query(cls.model)
 
-        # --- Tu Lógica Especial ---
+        for f in search_params.filters:
+            lv_alias = aliased(LeadFieldValue)
+            query = query.join(lv_alias, cls.model.field_values)
+            
+            conditions = [lv_alias.field_id == f.field_id]
+
+            db_val = lv_alias.value 
+            val = f.value          
+
+            if f.operator == "between":
+                if not isinstance(val, list) or len(val) != 2:
+                    continue 
+                
+                #  Intenta cast numérico
+                try:
+                    # Rango Numérico
+                    float(val[0])
+                    db_val_num = cast(db_val, Float)
+                    conditions.append(db_val_num >= float(val[0]))
+                    conditions.append(db_val_num <= float(val[1]))
+                except (ValueError, TypeError):
+                    # Rango Texto/Fecha (String compare)
+                    conditions.append(db_val >= str(val[0]))
+                    conditions.append(db_val <= str(val[1]))
+
+            # B. Operador IN (Lista)
+            elif f.operator == "in":
+                if isinstance(val, list):
+                    # Convertimos todo a string para comparar con DB
+                    val_strs = [str(v) for v in val]
+                    conditions.append(db_val.in_(val_strs))
+
+            # C. Operadores Numéricos (> < >= <=)
+            elif f.operator in ["gt", "lt", "gte", "lte"]:
+                db_val_num = cast(db_val, Float)
+                if f.operator == "gt": conditions.append(db_val_num > float(val))
+                elif f.operator == "lt": conditions.append(db_val_num < float(val))
+                elif f.operator == "gte": conditions.append(db_val_num >= float(val))
+                elif f.operator == "lte": conditions.append(db_val_num <= float(val))
+
+            # D. Operadores Texto (Eq, Like, etc)
+            elif f.operator == "eq": conditions.append(db_val == str(val))
+            elif f.operator == "neq": conditions.append(db_val != str(val))
+            elif f.operator == "like": conditions.append(db_val.contains(str(val)))
+            elif f.operator == "ilike": conditions.append(db_val.ilike(f"%{val}%"))
+
+            # Aplicamos todas las condiciones de ESTE filtro (AND dentro del JOIN)
+            query = query.filter(and_(*conditions))
+
+        # 3. Orden y Paginación
+        query = query.order_by(cls.model.id.desc())
+        
+        offset = (search_params.page - 1) * search_params.page_size
+        query = query.offset(offset).limit(search_params.page_size)
+
+        return cls._execute_read_query(query, detailed)
+
+    @classmethod
+    def get_all(cls, session, page: int = 1, page_size: int = 100, 
+                only_active: bool = True, detailed: bool = False, 
+                campaign_id: int = None):
+
+        query = session.query(cls.model)
+
         if campaign_id is not None:
             query = query.filter(cls.model.campaign_id == campaign_id)
         # --------------------------
 
-        # Lógica estándar de 'active'
         if only_active and hasattr(cls.model, "active"):
             query = query.filter(cls.model.active.is_(True))
 
-        # 2. Ejecución Consistente (Reutilizando la lógica del padre)
-        return cls._execute_read_query(query, detailed)
+        total, query = cls._paginate(query, page, page_size)
+        
+        return total, cls._execute_read_query(query, detailed)
 
     @classmethod
     def find_duplicate(cls, session, campaign_id: int, primary_values: dict) -> bool:

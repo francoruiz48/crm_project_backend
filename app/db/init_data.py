@@ -126,7 +126,8 @@ def seed_rbac(db):
         "nomenclator",
         "nomenclator_item",
         "user",
-        "role"
+        "role",
+        "permission"
     ]
 
     # 2. Definimos las acciones estándar

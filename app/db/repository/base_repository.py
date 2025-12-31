@@ -1,5 +1,5 @@
 import re
-from typing import Dict, Any, Iterable
+from typing import Dict, Any
 from sqlalchemy.orm import selectinload
 from app.core.exceptions import AppException, NotFoundException
 from app.core.error_messages import ERROR_DATABASE, ERROR_NOT_FOUND
@@ -12,6 +12,26 @@ class BaseRepository:
     relationships: list = []
 
     # ----------------- Helpers internos -----------------
+    @classmethod
+    def _paginate(cls, query, page: int = 0, page_size: int = 0):
+        """
+        Aplica paginación y devuelve (total, query_paginada).
+        Si page o page_size son 0/None, devuelve (total, query_original).
+        """
+        # Siempre contamos primero (requerido para el frontend)
+        total = query.count()
+
+        # Ordenamiento por defecto (si no tiene order_by previo)
+        # Esto evita resultados aleatorios en Postgres
+        if hasattr(cls.model, "id") and not query._order_by_clauses:
+            query = query.order_by(cls.model.id.desc())
+
+        if page and page > 0 and page_size and page_size > 0:
+            offset = (page - 1) * page_size
+            query = query.offset(offset).limit(page_size)
+        
+        return total, query
+    
     @classmethod
     def _execute_read_query(cls, query, detailed: bool = False):
         """
@@ -44,12 +64,29 @@ class BaseRepository:
         
     @classmethod
     def _apply_relationships(cls, query):
-        """Aplica relaciones definidas en cls.relationships al query"""
-        for chain in cls.relationships:
-            option = selectinload(chain[0])
-            for rel in chain[1:]:
-                option = option.selectinload(rel)
-            query = query.options(option)
+        """
+        Aplica relaciones al query. Soporta dos formatos en cls.relationships:
+        1. Listas/Tuplas: [User.roles, Role.permissions] -> Genera selectinload en cadena.
+        2. SQLAlchemy Options: selectinload(User.roles).selectinload(Role.permissions) -> Se aplica directo.
+        """
+        for item in cls.relationships:
+            # CASO 1: Es una lista o tupla (Tu lógica original "automática")
+            if isinstance(item, (list, tuple)):
+                if not item:
+                    continue
+                # Iniciamos la cadena con el primer elemento
+                option = selectinload(item[0])
+                # Encadenamos el resto
+                for rel in item[1:]:
+                    option = option.selectinload(rel)
+                query = query.options(option)
+            
+            # CASO 2: Es una opción directa de SQLAlchemy (Estrategia Avanzada)
+            # Esto permite pasar 'selectinload(User.roles).selectinload(Role.permissions)'
+            # o incluso 'joinedload(User.profile)'
+            else:
+                query = query.options(item)
+                
         return query
 
     @staticmethod
@@ -87,16 +124,24 @@ class BaseRepository:
 
     # ----------------- CRUD Genérico -----------------
     @classmethod
-    def get_all(cls, session, only_active: bool = True, detailed: bool = False):
+    def get_all(cls, session, only_active: bool = True, detailed: bool = False, **kwargs):
         """Trae todos los objetos (Implementación Base)"""
-        # 1. Construcción básica
         query = session.query(cls.model)
-        
+            
         if only_active and hasattr(cls.model, "active"):
             query = query.filter(cls.model.active.is_(True))
 
-        # 2. Delegar ejecución al helper protegido
-        return cls._execute_read_query(query, detailed)
+        
+        page = kwargs.get('page', 0)
+        page_size = kwargs.get('page_size', 0)
+        
+        total, query = cls._paginate(query, page, page_size)
+        
+        items = cls._execute_read_query(query, detailed)
+        
+        if page:
+            return total, items
+        return items
 
     @classmethod
     def get_by_id(cls, session, obj_id: int, only_active: bool = True, detailed: bool = False):

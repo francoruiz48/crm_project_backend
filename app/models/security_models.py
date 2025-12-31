@@ -2,7 +2,6 @@ from sqlalchemy import Column, Integer, String, ForeignKey, Table
 from sqlalchemy.orm import relationship
 from app.models.base_model import BaseModelDB
 
-# Tabla intermedia: Muchos Roles tienen Muchos Permisos
 role_permissions = Table(
     'role_permissions',
     BaseModelDB.metadata,
@@ -19,29 +18,25 @@ user_roles = Table(
 
 class Permission(BaseModelDB):
     __tablename__ = "permission"
-    # Ej: name="Crear Lead", codename="lead:create"
     name = Column(String, nullable=False)
     codename = Column(String, unique=True, nullable=False)
 
 class Role(BaseModelDB):
     __tablename__ = "role"
-    # Ej: name="Vendedor", code="sales_agent"
     name = Column(String, nullable=False)
     code = Column(String, unique=True, nullable=False)
     
-    # Relación M2M con Permisos
     permissions = relationship("Permission", secondary=role_permissions, backref="roles")
 
 class User(BaseModelDB):
     __tablename__ = "user"
     
     email = Column(String, unique=True, index=True, nullable=False)
-    # ... otros campos (password, etc) ...
     
     roles = relationship("Role", secondary=user_roles, backref="users")
 
     @property
-    def permission_codenames(self):
+    def permissions(self):
         if not self.roles:
             return []
         
@@ -52,3 +47,27 @@ class User(BaseModelDB):
                 perms.add(perm.codename)
                 
         return list(perms)
+    
+    @property
+    def permission_objects(self):
+        """
+        Devuelve la lista de OBJETOS Permission.
+        """
+        print(f"DEBUG: Accediendo a permission_objects para User {self.id}")
+        
+        if not self.roles:
+            print("DEBUG: No hay roles cargados en self.roles")
+            return []
+        
+        print(f"DEBUG: Roles encontrados: {[r.code for r in self.roles]}")
+        
+        unique_perms = {}
+        for role in self.roles:
+            # Imprimimos cuántos permisos tiene cada rol en memoria
+            print(f"DEBUG: Rol {role.code} tiene {len(role.permissions)} permisos")
+            for perm in role.permissions:
+                unique_perms[perm.codename] = perm
+                
+        results = list(unique_perms.values())
+        print(f"DEBUG: Total permisos únicos encontrados: {len(results)}")
+        return results
