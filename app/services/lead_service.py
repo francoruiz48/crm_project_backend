@@ -227,7 +227,7 @@ class LeadService(BaseService):
     # ---------------------------------------------------------
 
     @classmethod
-    def create(cls, obj_in):
+    def create(cls, obj_in, created_by=None):
         campaign_id = obj_in.campaign_id
         with UnitOfWork() as uow:
             # 1. Obtener definiciones de la campaña
@@ -265,7 +265,7 @@ class LeadService(BaseService):
             clean_values = cls._reconstruct_items_for_repo(context_data, current_campaign_defs)
             
             # 8. Guardar
-            lead = cls.repository.create(uow.session, {'campaign_id': campaign_id})
+            lead = cls.repository.create(uow.session, {'campaign_id': campaign_id}, created_by=created_by)
             cls.repository.upsert_values(uow.session, lead.id, clean_values)
             
             return cls.repository.get_by_id(uow.session, lead.id)

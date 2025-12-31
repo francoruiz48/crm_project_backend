@@ -130,10 +130,14 @@ class BaseRepository:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
     @classmethod
-    def create(cls, session, obj_data=None):
+    def create(cls, session, obj_data=None, created_by=None):
         """Crea un objeto"""
         try:
             data = cls._normalize_data(obj_data)
+            
+            if created_by is not None and hasattr(cls.model, "created_by"):
+                data["created_by"] = created_by
+
             obj = cls.model(**data)
             session.add(obj)
             session.flush()  # flush para obtener ID antes de commit
