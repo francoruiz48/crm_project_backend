@@ -1,4 +1,5 @@
 from typing import Optional
+from app.core.constans import DEFAULT_PAGE_SIZE
 from app.services.base_service import BaseService
 from app.db.repository.nomenclator_repository import NomenclatorRepository
 
@@ -7,7 +8,7 @@ class NomenclatorService(BaseService):
     repository = NomenclatorRepository
 
     @classmethod
-    def get_all(cls, page: int = 1, page_size: int = 20, only_active: bool = True, detailed: bool = False, campaign_id: int = None, global_nomenclator: Optional[bool] = None):
+    def get_all(cls, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, only_active: bool = True, detailed: bool = False, campaign_id: int = None, global_nomenclator: Optional[bool] = None):
         return cls._execute(
             action="Obteniendo Nomencladores",
             func=lambda uow: cls.repository.get_all(

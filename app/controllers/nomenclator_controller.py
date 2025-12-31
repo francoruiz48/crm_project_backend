@@ -1,4 +1,5 @@
 from app.controllers.base_controller import BaseController
+from app.core.constans import DEFAULT_PAGE_SIZE, PAGE_SIZE_LIMIT
 from app.schemas.pagination_schema import PaginatedResponse
 from app.services.nomenclator_service import NomenclatorService
 from app.schemas.nomenclator_schema import NomenclatorCreate, NomenclatorResponse, NomenclatorDetailResponse
@@ -30,7 +31,7 @@ class NomenclatorController(BaseController):
         @router.get("/", response_model=ResponseModelPaginated)
         def get_all(
             page: int = Query(1, ge=1),
-            page_size: int = Query(20, ge=1, le=100),
+            page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=PAGE_SIZE_LIMIT),
             only_active: bool = True,
             detailed: bool = Query(False, description="Incluir relaciones"),
             campaign_id: Optional[int] = Query(None, description="Filtrar por ID de Campaña"),

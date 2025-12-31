@@ -1,5 +1,6 @@
 from sqlalchemy.orm import aliased
 from sqlalchemy import cast, Float
+from app.core.constans import DEFAULT_PAGE_SIZE
 from app.db.repository.base_repository import BaseRepository
 from app.models.lead import Lead
 from app.schemas.lead_schema import LeadResponse
@@ -16,7 +17,7 @@ class LeadRepository(BaseRepository):
     ]
 
     @classmethod
-    def search(cls, session, search_params, detailed: bool = False, owner_id: int = None):
+    def search(cls, session, search_params, detailed: bool = False, page: int = 0, page_size: int = 0):
         query = session.query(cls.model)
 
         for f in search_params.filters:
@@ -68,16 +69,12 @@ class LeadRepository(BaseRepository):
             # Aplicamos todas las condiciones de ESTE filtro (AND dentro del JOIN)
             query = query.filter(and_(*conditions))
 
-        # 3. Orden y Paginación
-        query = query.order_by(cls.model.id.desc())
-        
-        offset = (search_params.page - 1) * search_params.page_size
-        query = query.offset(offset).limit(search_params.page_size)
+        total, query = cls._paginate(query, page, page_size)
 
         return cls._execute_read_query(query, detailed)
 
     @classmethod
-    def get_all(cls, session, page: int = 1, page_size: int = 100, 
+    def get_all(cls, session, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, 
                 only_active: bool = True, detailed: bool = False, 
                 campaign_id: int = None):
 

@@ -12,3 +12,6 @@ class Campaign(BaseModelDB):
     nomenclators = relationship("Nomenclator", back_populates="campaign", cascade="all, delete-orphan")
 
     leads = relationship("Lead", back_populates="campaign", cascade="all, delete-orphan")
+
+    workspace_id = Column(Integer, ForeignKey("workspace.id"), nullable=False)
+    workspace = relationship("Workspace", back_populates="campaigns")

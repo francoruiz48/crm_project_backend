@@ -1,3 +1,4 @@
+from app.core.constans import DEFAULT_PAGE_SIZE
 from app.core.logger import logger
 from app.core.exceptions import AppException, NotFoundException
 from app.core.error_messages import (
@@ -53,7 +54,7 @@ class BaseService:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
     @classmethod
-    def get_all(cls, page: int = 1, page_size: int = 100, only_active: bool = True, detailed: bool = False):
+    def get_all(cls, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, only_active: bool = True, detailed: bool = False):
         return cls._execute(
             action="Obteniendo listado paginado",
             # Ahora repo.get_all devuelve una tupla (total, items)

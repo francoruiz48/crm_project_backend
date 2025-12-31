@@ -1,6 +1,7 @@
 from typing import List, Union, Optional
 from fastapi import Body, Depends, Query
 from app.controllers.base_controller import BaseController
+from app.core.constans import DEFAULT_PAGE_SIZE, PAGE_SIZE_LIMIT
 from app.core.security import PermissionChecker, get_current_user
 from app.schemas.filter_schema import LeadSearchRequest
 from app.schemas.pagination_schema import PaginatedResponse
@@ -63,8 +64,8 @@ class LeadController(BaseController):
         @router.get("/", response_model=ResponseModelPaginated,
                 dependencies=cls._get_deps("read"))
         def get_all(
-            page: int = Query(1, ge=1, description="Número de página"),
-            page_size: int = Query(20, ge=1, le=100, description="Registros por página"),
+            page: int = Query(1, ge=1),
+            page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=PAGE_SIZE_LIMIT),
             only_active: bool = True, 
             detailed: bool = Query(False),
             campaign_id: Optional[int] = Query(None, description="Filtrar por ID de campaña")

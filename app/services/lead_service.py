@@ -1,6 +1,7 @@
 from datetime import datetime
 import re
 from fastapi import HTTPException, status
+from app.core.constans import DEFAULT_PAGE_SIZE
 from app.services.base_service import BaseService
 from app.db.repository.lead_repository import LeadRepository
 from app.db.repository.lead_field_repository import LeadFieldRepository
@@ -326,7 +327,7 @@ class LeadService(BaseService):
             return cls.repository.get_by_id(uow.session, obj_id)
         
     @classmethod
-    def get_all(cls, page: int = 1, page_size: int = 100, only_active: bool = True, detailed: bool = False, campaign_id: int = None):
+    def get_all(cls, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, only_active: bool = True, detailed: bool = False, campaign_id: int = None):
         return cls._execute(
             action="Obteniendo Leads",
             func=lambda uow: cls.repository.get_all(
