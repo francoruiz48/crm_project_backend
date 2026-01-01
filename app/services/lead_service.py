@@ -1,6 +1,7 @@
 from datetime import datetime
 import re
 from fastapi import HTTPException, status
+from app.core.constans import DEFAULT_PAGE_SIZE
 from app.services.base_service import BaseService
 from app.db.repository.lead_repository import LeadRepository
 from app.db.repository.lead_field_repository import LeadFieldRepository
@@ -22,7 +23,10 @@ class LeadService(BaseService):
         
         def dict(self, **kwargs):
             return self._data
-
+        
+        # Agregamos __getitem__ por si acaso alguna librería intenta acceder como dict
+        def __getitem__(self, item):
+            return self._data[item]
     # ---------------------------------------------------------
     # Helpers de Lógica de Negocio
     # ---------------------------------------------------------
@@ -272,67 +276,80 @@ class LeadService(BaseService):
 
     @classmethod
     def update(cls, obj_id: int, obj_in):
+        # 1. Usamos UOW para la escritura
         with UnitOfWork() as uow:
-            # 1. Verificar existencia del Lead
-            if not cls.repository.get_by_id(uow.session, obj_id):
+            # A. Obtener Lead
+            current_lead = cls.repository.get_by_id(uow.session, obj_id)
+            if not current_lead:
                 cls._not_found(obj_id)
             
-            # 2. Obtener definiciones de campos
-            field_defs = cls.field_repository.get_all_active_with_rules(uow.session)
-            
-            # ---------------------------------------------------------
-            # NUEVA VALIDACIÓN (Igual que en Create)
-            # ---------------------------------------------------------
-            defs_map = {f.id: f for f in field_defs}
-            incoming_field_ids = [v.get('field_id') if isinstance(v, dict) else v.field_id for v in obj_in.values]
-            
-            for fid in incoming_field_ids:
-                field_def = defs_map.get(fid)
-                # Caso A: El campo no existe
-                if not field_def:
-                    raise HTTPException(
-                        status.HTTP_400_BAD_REQUEST, 
-                        f"El campo con ID {fid} no existe o no está activo."
-                    )
-                
-                # Caso B: El campo es de otra campaña (Opcional pero recomendado)
-                current_lead = cls.repository.get_by_id(uow.session, obj_id)
-                if field_def.campaign_id != current_lead.campaign_id:
-                    raise HTTPException(
-                        status.HTTP_400_BAD_REQUEST, 
-                        f"El campo con ID {fid} pertenece a otra campaña."
-                    )
-            # ---------------------------------------------------------
+            # B. Update Campos Base (active, campaign_id)
+            lead_data = obj_in.dict(exclude_unset=True, exclude={"values"})
+            if lead_data:
+                cls.repository.update(uow.session, obj_id, lead_data)
 
-            # 3. Preparar datos
-            incoming_data = cls._prepare_context_dict(obj_in.values)
+            # C. Update Valores Dinámicos
+            if obj_in.values is not None:
+                # 1. Definiciones
+                field_defs = cls.field_repository.get_all_active_with_rules(uow.session)
+                defs_map = {f.id: f for f in field_defs}
+                
+                # 2. Validación rápida de existencia
+                incoming_ids = [v.get('field_id') if isinstance(v, dict) else v.field_id for v in obj_in.values]
+                for fid in incoming_ids:
+                    if fid not in defs_map: raise HTTPException(400, f"Campo {fid} no existe")
+                    if defs_map[fid].campaign_id != current_lead.campaign_id: raise HTTPException(400, f"Campo {fid} campaña incorrecta")
+
+                # 3. Merge de datos (DB + Nuevos)
+                incoming_data = cls._prepare_context_dict(obj_in.values)
+                
+                db_values = {}
+                for v in current_lead.field_values:
+                    val = v.nomenclator_item_id if v.nomenclator_item_id is not None else v.value
+                    db_values[v.field_id] = val
+                
+                full_context = {**db_values, **incoming_data}
+                
+                # 4. Validar Reglas
+                cls._validate_processed_data(full_context, field_defs)
+                
+                # 5. Preparar items para upsert (Solo lo nuevo/modificado)
+                clean_values = cls._reconstruct_items_for_repo(incoming_data, field_defs)
+                
+                # 6. Ejecutar Upsert
+                cls.repository.upsert_values(uow.session, obj_id, clean_values)
             
-            current_lead = cls.repository.get_by_id(uow.session, obj_id)
-            db_values = {}
-            for v in current_lead.field_values:
-                val = v.nomenclator_item_id if v.nomenclator_item_id is not None else v.value
-                db_values[v.field_id] = val
-            
-            # Mezclar (Update parcial)
-            full_context = {**db_values, **incoming_data}
-            
-            # 4. Validar reglas
-            cls._validate_processed_data(full_context, field_defs)
-            
-            # 5. Guardar
-            clean_values = cls._reconstruct_items_for_repo(incoming_data, field_defs)
-            cls.repository.upsert_values(uow.session, obj_id, clean_values)
-            
-            return cls.repository.get_by_id(uow.session, obj_id)
+            # COMMIT AUTOMÁTICO AL SALIR DEL WITH
+
+        # 2. Usamos UN NUEVO UOW para leer el resultado fresco desde la BD
+        # Esto es vital para asegurar que devolvemos lo que realmente se guardó
+        with UnitOfWork() as uow_read:
+            return cls.repository.get_by_id(uow_read.session, obj_id, detailed=True)
         
     @classmethod
-    def get_all(cls, only_active: bool = True, detailed: bool = False, campaign_id: int = None):
+    def get_all(cls, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, only_active: bool = True, detailed: bool = False, campaign_id: int = None):
         return cls._execute(
             action="Obteniendo Leads",
             func=lambda uow: cls.repository.get_all(
                 session=uow.session, 
+                page=page,
+                page_size=page_size,
                 only_active=only_active, 
                 detailed=detailed, 
                 campaign_id=campaign_id
+            )
+        )
+    
+
+    @classmethod
+    def search(cls, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, detailed: bool = False, search_req=None):
+        return cls._execute(
+            action="Buscando Leads",
+            func=lambda uow: cls.repository.search(
+                session=uow.session,
+                page=page,
+                page_size=page_size,
+                search_params=search_req,
+                detailed=detailed
             )
         )

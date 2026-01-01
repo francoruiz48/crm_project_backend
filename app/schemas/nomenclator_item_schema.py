@@ -1,5 +1,5 @@
 
-from app.schemas.base_schema import BaseResponse, BaseCreate
+from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
 from pydantic import BaseModel, computed_field, Field
 from typing import List, Dict, Any, Optional
 
@@ -18,5 +18,5 @@ class NomenclatorItemCreate(NomenclatorItemBase, BaseCreate):
 class NomenclatorItemResponse(NomenclatorItemBase, BaseResponse):
     pass
 
-class NomenclatorItemDetailResponse(NomenclatorItemResponse):
+class NomenclatorItemDetailResponse(NomenclatorItemBase, BaseDetailResponse):
     sub_items: List["NomenclatorItemResponse"] = Field(default_factory=list)

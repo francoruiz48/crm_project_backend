@@ -33,7 +33,7 @@ class PermissionChecker:
             )
 
         # 2. Obtenemos la lista combinada de permisos (gracias al helper actualizado)
-        user_permissions = user.permission_codenames
+        user_permissions = user.permissions
 
         if self.required_permission not in user_permissions:
             raise HTTPException(

@@ -1,7 +1,7 @@
 import datetime
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, model_validator
-from app.schemas.base_schema import BaseResponse, BaseCreate
+from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
 
 
 class ValidationRuleBase(BaseModel):
@@ -47,3 +47,6 @@ class ValidationRuleCreate(ValidationRuleBase, BaseCreate):
 
 class ValidationRuleResponse(ValidationRuleBase, BaseResponse):
     pass
+
+class ValidationRuleDetailedResponse(ValidationRuleBase, BaseDetailResponse):
+    pass    

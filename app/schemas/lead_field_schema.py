@@ -1,4 +1,4 @@
-from app.schemas.base_schema import BaseCreate, BaseResponse
+from app.schemas.base_schema import BaseCreate, BaseDetailResponse, BaseResponse
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from app.schemas.campaign_schema import CampaignResponse
@@ -12,6 +12,7 @@ class LeadFieldBase(BaseModel):
     default_value: Optional[str] = None
     is_primary: bool = False
     input_mask: Optional[str] = None
+    field_template_code: Optional[str] = None
 
 class LeadFieldCreate(LeadFieldBase, BaseCreate):
     field_template_code: Optional[str] = None
@@ -19,8 +20,10 @@ class LeadFieldCreate(LeadFieldBase, BaseCreate):
     campaign_id: int
 
 class LeadFieldResponse(LeadFieldBase, BaseResponse):
-    name: str
-    field_type_code: str
+    nomenclator_id: Optional[int] = None
+    campaign_id: int
+
+class LeadFieldDetailedResponse(LeadFieldBase, BaseDetailResponse):
     validation_rules: List[ValidationRuleResponse] = []
     nomenclator: Optional[NomenclatorResponse]
     campaign: CampaignResponse

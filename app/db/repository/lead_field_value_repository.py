@@ -1,11 +1,12 @@
 from sqlalchemy import text
 from app.db.repository.base_repository import BaseRepository
 from app.models.lead_field_value import LeadFieldValue
-from app.schemas.lead_field_value_schema import LeadFieldValueResponse
+from app.schemas.lead_field_value_schema import LeadFieldValueDetailedResponse, LeadFieldValueResponse
 
 class LeadFieldValueRepository(BaseRepository):
     model = LeadFieldValue
     schema_out = LeadFieldValueResponse
+    schema_out_detail = LeadFieldValueDetailedResponse
 
 
     @classmethod

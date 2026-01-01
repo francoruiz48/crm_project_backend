@@ -1,5 +1,5 @@
-from app.schemas.base_schema import BaseResponse, BaseCreate
-from app.schemas.lead_field_schema import LeadFieldResponse
+from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
+from app.schemas.lead_field_schema import LeadFieldDetailedResponse, LeadFieldResponse
 from pydantic import BaseModel
 from typing import Optional
 from app.schemas.nomenclator_item_schema import NomenclatorItemResponse
@@ -20,3 +20,8 @@ class LeadFieldValueResponse(LeadFieldValueBase, BaseResponse):
     field: Optional[LeadFieldResponse] = None
     nomenclator_item: Optional[NomenclatorItemResponse] = None
 
+
+class LeadFieldValueDetailedResponse(LeadFieldValueBase, BaseDetailResponse):
+    lead_id: int
+    field: Optional[LeadFieldDetailedResponse] = None
+    nomenclator_item: Optional[NomenclatorItemResponse] = None

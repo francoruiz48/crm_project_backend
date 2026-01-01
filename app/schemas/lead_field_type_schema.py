@@ -1,4 +1,4 @@
-from app.schemas.base_schema import BaseResponse, BaseCreate
+from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
 from pydantic import BaseModel
 
 class LeadFieldTypeBase(BaseModel):
@@ -11,4 +11,7 @@ class LeadFieldTypeCreate(LeadFieldTypeBase, BaseCreate):
 
 
 class LeadFieldTypeResponse(LeadFieldTypeBase, BaseResponse):
+    pass
+
+class LeadFieldTypeDetailedResponse(LeadFieldTypeBase, BaseDetailResponse):
     pass
