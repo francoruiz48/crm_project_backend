@@ -1,6 +1,6 @@
 from typing import List, Optional, Any
 from pydantic import BaseModel, field_validator
-from app.schemas.base_schema import BaseCreate, BaseResponse
+from app.schemas.base_schema import BaseCreate, BaseDetailResponse
 from app.schemas.security_schemas.permission_schema import PermissionResponse
 from app.schemas.security_schemas.role_schema import RoleDetailResponse, RoleResponse
 
@@ -8,7 +8,7 @@ class UserBase(BaseModel):
     email: str
     active: bool = True
 
-class UserResponse(UserBase, BaseResponse):
+class UserResponse(UserBase, BaseDetailResponse):
     roles: Optional[list[RoleResponse]] = []
 
 class UserDetailResponse(UserResponse):

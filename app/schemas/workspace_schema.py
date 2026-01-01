@@ -1,5 +1,5 @@
 
-from app.schemas.base_schema import BaseResponse, BaseCreate
+from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 
@@ -14,6 +14,9 @@ class WorkspaceCreate(WorkspaceBase, BaseCreate):
     pass
 
 class WorkspaceResponse(WorkspaceBase, BaseResponse):
+    pass
+
+class WorkspaceDetailedResponse(WorkspaceBase, BaseDetailResponse):
     campaigns: List[CampaignResponse] = []
 
 

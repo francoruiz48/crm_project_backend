@@ -1,11 +1,12 @@
 from app.db.repository.base_repository import BaseRepository
 from app.models.lead_field import LeadField
-from app.schemas.lead_field_schema import LeadFieldResponse
+from app.schemas.lead_field_schema import LeadFieldDetailedResponse, LeadFieldResponse
 from sqlalchemy.orm import joinedload
 
 class LeadFieldRepository(BaseRepository):
     model = LeadField
     schema_out = LeadFieldResponse
+    schema_out_detail = LeadFieldDetailedResponse
 
     relationships = [
         (LeadField.field_type,),

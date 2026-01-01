@@ -73,7 +73,7 @@ class BaseController:
         if "GET_ONE" in cls.enabled_methods:
             @router.get("/{obj_id}", 
                 # USAMOS EL UNION AQUÍ. FastAPI usará el esquema que coincida con el objeto retornado.
-                response_model=ResponseModelItem, 
+                response_model=cls.schema_out_detail, 
                 dependencies=cls._get_deps("read"))
             def get_one(obj_id: int, detailed: bool = Query(False)):
                 # El repositorio ya devuelve un objeto Pydantic (Detail o Simple)

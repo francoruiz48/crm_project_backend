@@ -1,5 +1,5 @@
 
-from app.schemas.base_schema import BaseResponse, BaseCreate
+from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
 from pydantic import BaseModel, computed_field, Field
 from typing import Optional
 
@@ -16,4 +16,8 @@ class CampaignCreate(CampaignBase, BaseCreate):
 
 class CampaignResponse(CampaignBase, BaseResponse):
     pass
+
+class CampaignDetailedResponse(CampaignBase, BaseDetailResponse):
+    pass
+
 

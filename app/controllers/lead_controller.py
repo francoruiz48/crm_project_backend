@@ -6,13 +6,14 @@ from app.core.security import PermissionChecker, get_current_user
 from app.schemas.filter_schema import LeadSearchRequest
 from app.schemas.pagination_schema import PaginatedResponse
 from app.services.lead_service import LeadService
-from app.schemas.lead_schema import LeadCreate, LeadResponse
+from app.schemas.lead_schema import LeadCreate, LeadDetailedResponse, LeadResponse
 
 class LeadController(BaseController):
     router_prefix = "/leads"
     service = LeadService
     schema_in = LeadCreate
     schema_out = LeadResponse
+    schema_out_detail = LeadDetailedResponse
     
     # Quitamos "GET_ALL" de aquí para que BaseController NO genere el default
     enabled_methods = {"GET_ONE", "POST", "PUT", "DELETE"} 

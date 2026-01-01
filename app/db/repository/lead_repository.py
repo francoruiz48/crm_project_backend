@@ -3,7 +3,7 @@ from sqlalchemy import cast, Float
 from app.core.constans import DEFAULT_PAGE_SIZE
 from app.db.repository.base_repository import BaseRepository
 from app.models.lead import Lead
-from app.schemas.lead_schema import LeadResponse
+from app.schemas.lead_schema import LeadDetailedResponse, LeadResponse
 from app.models.lead_field_value import LeadFieldValue
 from app.models.lead_field import LeadField
 from sqlalchemy import and_
@@ -11,7 +11,8 @@ from sqlalchemy import and_
 class LeadRepository(BaseRepository):
     model = Lead
     schema_out = LeadResponse
-
+    schema_out_detail = LeadDetailedResponse
+    
     relationships = [
         (Lead.field_values, LeadFieldValue.field, LeadField.field_type),
     ]
@@ -27,50 +28,75 @@ class LeadRepository(BaseRepository):
             conditions = [lv_alias.field_id == f.field_id]
 
             db_val = lv_alias.value 
-            val = f.value          
+            val = f.value           
 
+            # ---------------------------------------------------------
+            # 1. Operador BETWEEN (Rango)
+            # ---------------------------------------------------------
             if f.operator == "between":
                 if not isinstance(val, list) or len(val) != 2:
                     continue 
                 
-                #  Intenta cast numérico
                 try:
-                    # Rango Numérico
-                    float(val[0])
+                    # Intento: ¿Es un rango numérico?
+                    val_min = float(val[0])
+                    val_max = float(val[1])
                     db_val_num = cast(db_val, Float)
-                    conditions.append(db_val_num >= float(val[0]))
-                    conditions.append(db_val_num <= float(val[1]))
+                    
+                    conditions.append(db_val_num >= val_min)
+                    conditions.append(db_val_num <= val_max)
                 except (ValueError, TypeError):
-                    # Rango Texto/Fecha (String compare)
+                    # Fallback: Rango de Fechas o Texto (Comparación String directa)
+                    # "2024-01-01" >= "2023-01-01" funciona en SQL estándar
                     conditions.append(db_val >= str(val[0]))
                     conditions.append(db_val <= str(val[1]))
 
-            # B. Operador IN (Lista)
+            # ---------------------------------------------------------
+            # 2. Operador IN (Lista)
+            # ---------------------------------------------------------
             elif f.operator == "in":
                 if isinstance(val, list):
-                    # Convertimos todo a string para comparar con DB
                     val_strs = [str(v) for v in val]
                     conditions.append(db_val.in_(val_strs))
 
-            # C. Operadores Numéricos (> < >= <=)
+            # ---------------------------------------------------------
+            # 3. Operadores de Comparación (GT, LT, GTE, LTE)
+            # ---------------------------------------------------------
             elif f.operator in ["gt", "lt", "gte", "lte"]:
-                db_val_num = cast(db_val, Float)
-                if f.operator == "gt": conditions.append(db_val_num > float(val))
-                elif f.operator == "lt": conditions.append(db_val_num < float(val))
-                elif f.operator == "gte": conditions.append(db_val_num >= float(val))
-                elif f.operator == "lte": conditions.append(db_val_num <= float(val))
+                try:
+                    # A. INTENTO NUMÉRICO
+                    val_float = float(val)
+                    db_val_num = cast(db_val, Float)
+                    
+                    if f.operator == "gt": conditions.append(db_val_num > val_float)
+                    elif f.operator == "lt": conditions.append(db_val_num < val_float)
+                    elif f.operator == "gte": conditions.append(db_val_num >= val_float)
+                    elif f.operator == "lte": conditions.append(db_val_num <= val_float)
+                
+                except (ValueError, TypeError):
+                    # B. FALLBACK TEXTO / FECHA
+                    # Si 'val' es "2024-01-01", entra aquí.
+                    # Comparamos columna string vs valor string.
+                    val_str = str(val)
+                    
+                    if f.operator == "gt": conditions.append(db_val > val_str)
+                    elif f.operator == "lt": conditions.append(db_val < val_str)
+                    elif f.operator == "gte": conditions.append(db_val >= val_str)
+                    elif f.operator == "lte": conditions.append(db_val <= val_str)
 
-            # D. Operadores Texto (Eq, Like, etc)
+            # ---------------------------------------------------------
+            # 4. Operadores de Texto (EQ, NEQ, LIKE)
+            # ---------------------------------------------------------
             elif f.operator == "eq": conditions.append(db_val == str(val))
             elif f.operator == "neq": conditions.append(db_val != str(val))
             elif f.operator == "like": conditions.append(db_val.contains(str(val)))
             elif f.operator == "ilike": conditions.append(db_val.ilike(f"%{val}%"))
 
-            # Aplicamos todas las condiciones de ESTE filtro (AND dentro del JOIN)
+            # Aplicamos los filtros de esta iteración
             query = query.filter(and_(*conditions))
 
+        # Paginación y Ejecución
         total, query = cls._paginate(query, page, page_size)
-        
         items = cls._execute_read_query(query, detailed)
         
         return total, items

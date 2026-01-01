@@ -162,14 +162,8 @@ class BaseRepository:
 
             if not obj:
                 return None
-            
-            selected_schema = (
-                cls.schema_out_detail 
-                if detailed and cls.schema_out_detail 
-                else cls.schema_out
-            )
 
-            return selected_schema.model_validate(obj) if selected_schema else obj
+            return cls.schema_out_detail.model_validate(obj)
 
         except Exception as e:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))

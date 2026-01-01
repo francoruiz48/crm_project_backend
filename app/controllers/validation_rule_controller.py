@@ -1,7 +1,7 @@
 from app.controllers.base_controller import BaseController
 from app.core.templates.rule_templates import STANDARD_RULES
 from app.services.validation_rule_service import ValidationRuleService
-from app.schemas.validation_rule_schema import ValidationRuleCreate, ValidationRuleResponse, ValidationTemplateResponse
+from app.schemas.validation_rule_schema import ValidationRuleCreate, ValidationRuleDetailedResponse, ValidationRuleResponse, ValidationTemplateResponse
 from app.core.constans import READ_WRITE
 
 class ValidationRuleController(BaseController):
@@ -9,6 +9,7 @@ class ValidationRuleController(BaseController):
     service = ValidationRuleService
     schema_in = ValidationRuleCreate
     schema_out = ValidationRuleResponse
+    schema_out_detail = ValidationRuleDetailedResponse
     enabled_methods = READ_WRITE
 
 router = ValidationRuleController.get_router()
