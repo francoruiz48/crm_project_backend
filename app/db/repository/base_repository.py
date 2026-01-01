@@ -261,31 +261,42 @@ class BaseRepository:
                 )
 
             children = getattr(parent, relation_name)
-            existing = {getattr(c, key_attr): c for c in children}
+            
+            # Mapa de existentes: { 2: ObjetoORM, 5: ObjetoORM }
+            # Convertimos la clave a string para evitar problemas de tipos (2 vs "2")
+            existing = {str(getattr(c, key_attr)): c for c in children}
 
             for item in items:
-                key = getattr(item, key_attr)
+                # Obtenemos la clave del item entrante y la convertimos a string
+                raw_key = getattr(item, key_attr)
+                key = str(raw_key)
+                
                 if key in existing:
+                    # UPDATE: El hijo ya existe
+                    child_obj = existing[key]
                     for attr, value in item.dict().items():
-                        setattr(existing[key], attr, value)
+                        setattr(child_obj, attr, value)
+                    
+                    # [FIX CRITICO]: Forzamos a la sesión a ver el cambio
+                    session.add(child_obj)
                 else:
+                    # CREATE: Es nuevo
                     child = create_fn(item)
                     children.append(child)
-                    session.flush()
-                    session.refresh(child)
-
+                    session.add(child) # Aseguramos agregar
+            
+            # Flush para enviar cambios a la DB
+            session.flush()
+            
+            # Refrescamos el padre para ver los cambios reflejados
             session.refresh(parent)
         
         except IntegrityError as e:
             session.rollback()
-            # Esto usará tu nueva lógica para decir: 
-            # "El valor '1' para el campo 'field_id' no existe..."
             cls._handle_integrity_error(e)
 
         except Exception as e:
             session.rollback()
-            # Si ya es una AppException (ej: NotFoundException), la dejamos pasar
             if isinstance(e, AppException):
                 raise e
-            # Si es otro error desconocido, lanzamos el genérico
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))

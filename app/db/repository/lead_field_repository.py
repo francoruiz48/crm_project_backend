@@ -13,14 +13,7 @@ class LeadFieldRepository(BaseRepository):
     ]
 
     @classmethod
-    def get_all_active_with_rules(cls, session, page: int = 0, page_size: int = 0):
-
-        query = session.query(cls.model).options(
+    def get_all_active_with_rules(cls, session):
+        return session.query(cls.model).options(
             joinedload(cls.model.validation_rules)
-        ).filter(cls.model.active == True)
-        
-
-        total, query = cls._paginate(query, page, page_size)
-        
-
-        return total, query.all()
+        ).filter(cls.model.active == True).all()

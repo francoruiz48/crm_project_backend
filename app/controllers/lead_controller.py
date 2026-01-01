@@ -31,33 +31,28 @@ class LeadController(BaseController):
         ResponseModelPaginated = PaginatedResponse[ResponseModelItem]
 
         @router.post("/search", 
-            response_model=List[cls.schema_out],
+            response_model=ResponseModelPaginated,
             dependencies=cls._get_deps("read")
         )
         def search_leads(
+            page: int = Query(1, ge=1),
+            page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=PAGE_SIZE_LIMIT),
             search_req: LeadSearchRequest = Body(...),
-            detailed: bool = Query(False),
-            current_user = Depends(get_current_user)
+            detailed: bool = Query(False)
         ):
-            filter_owner = None
-            # Nota: usa current_user.permission_codenames (tu propiedad de lista de strings)
-            if "lead:view_all" not in current_user.permission_codenames:
-                 filter_owner = current_user.id
 
-            # service.search devuelve (total, items)
             total, items_pydantic = cls.service.search(
+                page=page,
+                page_size=page_size,
                 search_req=search_req, 
-                detailed=detailed, 
-                owner_id=filter_owner
+                detailed=detailed
             )
             
-            
-            # Retornamos estructura paginada
             return PaginatedResponse.create(
                 items=items_pydantic,
                 total=total,
-                page=search_req.page,
-                page_size=search_req.page_size
+                page=page,
+                page_size=page_size
             )
 
 

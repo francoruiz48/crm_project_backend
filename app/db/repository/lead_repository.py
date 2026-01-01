@@ -70,8 +70,10 @@ class LeadRepository(BaseRepository):
             query = query.filter(and_(*conditions))
 
         total, query = cls._paginate(query, page, page_size)
-
-        return cls._execute_read_query(query, detailed)
+        
+        items = cls._execute_read_query(query, detailed)
+        
+        return total, items
 
     @classmethod
     def get_all(cls, session, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, 
