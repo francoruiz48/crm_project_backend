@@ -97,7 +97,6 @@ class LeadValidationLogic:
             elif type_code == "BOOL":
                 return str(value).lower() in ("true", "1")
             elif type_code == "DATE":
-                # Asumiendo ISO
                 return datetime.strptime(str(value), "%Y-%m-%d")
         except:
             return value 

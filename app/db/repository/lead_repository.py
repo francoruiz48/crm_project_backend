@@ -7,6 +7,7 @@ from app.schemas.lead_schema import LeadDetailedResponse, LeadResponse
 from app.models.lead_field_value import LeadFieldValue
 from app.models.lead_field import LeadField
 from sqlalchemy import and_
+from sqlalchemy import func
 
 class LeadRepository(BaseRepository):
     model = Lead
@@ -15,6 +16,7 @@ class LeadRepository(BaseRepository):
     
     relationships = [
         (Lead.field_values, LeadFieldValue.field, LeadField.field_type),
+        (Lead.field_values, LeadFieldValue.field, LeadField.campaign),
     ]
 
     @classmethod
@@ -38,7 +40,7 @@ class LeadRepository(BaseRepository):
                     continue 
                 
                 try:
-                    # Intento: ¿Es un rango numérico?
+                    # Intento Numérico (Se mantiene igual)
                     val_min = float(val[0])
                     val_max = float(val[1])
                     db_val_num = cast(db_val, Float)
@@ -46,25 +48,31 @@ class LeadRepository(BaseRepository):
                     conditions.append(db_val_num >= val_min)
                     conditions.append(db_val_num <= val_max)
                 except (ValueError, TypeError):
-                    # Fallback: Rango de Fechas o Texto (Comparación String directa)
-                    # "2024-01-01" >= "2023-01-01" funciona en SQL estándar
-                    conditions.append(db_val >= str(val[0]))
-                    conditions.append(db_val <= str(val[1]))
+                    # Fallback Texto: APLICAMOS LOWER()
+                    # Convertimos inputs a minúsculas
+                    v_min = str(val[0]).lower()
+                    v_max = str(val[1]).lower()
+                    
+                    # Comparamos contra la columna en minúsculas
+                    conditions.append(func.lower(db_val) >= v_min)
+                    conditions.append(func.lower(db_val) <= v_max)
 
             # ---------------------------------------------------------
             # 2. Operador IN (Lista)
             # ---------------------------------------------------------
             elif f.operator == "in":
                 if isinstance(val, list):
-                    val_strs = [str(v) for v in val]
-                    conditions.append(db_val.in_(val_strs))
+                    # Convertimos toda la lista de inputs a minúsculas
+                    val_strs = [str(v).lower() for v in val]
+                    # Comparamos contra la columna en minúsculas
+                    conditions.append(func.lower(db_val).in_(val_strs))
 
             # ---------------------------------------------------------
             # 3. Operadores de Comparación (GT, LT, GTE, LTE)
             # ---------------------------------------------------------
             elif f.operator in ["gt", "lt", "gte", "lte"]:
                 try:
-                    # A. INTENTO NUMÉRICO
+                    # Intento Numérico (Se mantiene igual)
                     val_float = float(val)
                     db_val_num = cast(db_val, Float)
                     
@@ -74,23 +82,33 @@ class LeadRepository(BaseRepository):
                     elif f.operator == "lte": conditions.append(db_val_num <= val_float)
                 
                 except (ValueError, TypeError):
-                    # B. FALLBACK TEXTO / FECHA
-                    # Si 'val' es "2024-01-01", entra aquí.
-                    # Comparamos columna string vs valor string.
-                    val_str = str(val)
+                    # Fallback Texto: APLICAMOS LOWER()
+                    val_str = str(val).lower()
+                    db_val_lower = func.lower(db_val)
                     
-                    if f.operator == "gt": conditions.append(db_val > val_str)
-                    elif f.operator == "lt": conditions.append(db_val < val_str)
-                    elif f.operator == "gte": conditions.append(db_val >= val_str)
-                    elif f.operator == "lte": conditions.append(db_val <= val_str)
+                    if f.operator == "gt": conditions.append(db_val_lower > val_str)
+                    elif f.operator == "lt": conditions.append(db_val_lower < val_str)
+                    elif f.operator == "gte": conditions.append(db_val_lower >= val_str)
+                    elif f.operator == "lte": conditions.append(db_val_lower <= val_str)
 
             # ---------------------------------------------------------
             # 4. Operadores de Texto (EQ, NEQ, LIKE)
             # ---------------------------------------------------------
-            elif f.operator == "eq": conditions.append(db_val == str(val))
-            elif f.operator == "neq": conditions.append(db_val != str(val))
-            elif f.operator == "like": conditions.append(db_val.contains(str(val)))
-            elif f.operator == "ilike": conditions.append(db_val.ilike(f"%{val}%"))
+            elif f.operator == "eq": 
+                # Ahora "Juan" es igual a "juan"
+                conditions.append(func.lower(db_val) == str(val).lower())
+            
+            elif f.operator == "neq": 
+                conditions.append(func.lower(db_val) != str(val).lower())
+            
+            elif f.operator == "like": 
+                # 'like' estándar es case-sensitive en muchos DBs, forzamos lower
+                # Ojo: ILIKE hace esto nativo, pero esto asegura compatibilidad
+                conditions.append(func.lower(db_val).contains(str(val).lower()))
+            
+            elif f.operator == "ilike": 
+                # ILIKE ya es case-insensitive por definición en Postgres
+                conditions.append(db_val.ilike(f"%{val}%"))
 
             # Aplicamos los filtros de esta iteración
             query = query.filter(and_(*conditions))

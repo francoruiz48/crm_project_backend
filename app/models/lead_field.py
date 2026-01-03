@@ -13,6 +13,7 @@ class LeadField(BaseModelDB):
     default_value = Column(String, nullable=True)
     is_primary = Column(Boolean, default=False)
     input_mask = Column(String, nullable=True)
+    order = Column(Integer, nullable=False)
 
     #relations
     campaign_id = Column(Integer, ForeignKey("campaign.id"), nullable=False)

@@ -1,10 +1,13 @@
 import requests
 import re
 from app.db.session import SessionLocal
+from app.models.campaign import Campaign
+from app.models.lead_field import LeadField
 from app.models.lead_field_type import LeadFieldType
 from app.models.nomenclator import Nomenclator
 from app.models.nomenclator_item import NomenclatorItem
 from app.models.security_models import Permission, Role, User
+from app.models.workspace import Workspace
 
 # -----------------------------------------------------------------------------
 # HELPER GENÉRICO
@@ -84,6 +87,9 @@ def run_seeds():
 
         # 3. Geografía
         seed_geography_separated(db)
+        db.commit()
+
+        seed_data_test(db)
         db.commit()
         
         print("🚀 Seeders finalizados correctamente.")
@@ -308,3 +314,26 @@ def seed_geography_separated(db):
     except Exception as e:
         print(f"⚠️ Error procesando geografía (puede ser conexión): {e}")
         # No hacemos rollback aquí para no matar los seeds anteriores, solo geografía fallará
+
+
+# -----------------------------------------------------------------------------
+# SEEDS DE DATOS DE PRUEBA
+# -----------------------------------------------------------------------------
+
+def seed_data_test(db):
+    print("🔹 Procesando Datos de Prueba...")
+    datos = [
+        {"name": "Recursos_Humanos", "description": "Entidad de prueba"},
+    ]
+    seed_generic(db, model=Workspace, items=datos, unique_by=["name"])
+
+    datos = [
+        {"name": "Leads Campaña 2023", "description": "Entidad de prueba", "workspace_id": 1},
+    ]
+    seed_generic(db, model=Campaign, items=datos, unique_by=["name"])
+
+
+
+
+
+
