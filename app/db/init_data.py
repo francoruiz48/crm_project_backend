@@ -107,6 +107,7 @@ def seed_lead_field_types(db):
         {"code": "NUMBER", "description": "Número decimal"},
         {"code": "DATE", "description": "Fecha"},
         {"code": "BOOL", "description": "Valor verdadero/falso"},
+        {"code": "FILE", "description": "Archivo"},
     ]
     seed_generic(db, model=LeadFieldType, items=datos, unique_by=["code"])
 

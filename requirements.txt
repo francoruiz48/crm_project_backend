@@ -11,3 +11,5 @@ pytest-asyncio
 httpx
 simpleeval
 requests
+supabase
+python-multipart

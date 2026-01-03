@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     POSTGRES_HOST: str
     POSTGRES_PORT: str
     POSTGRES_TIMEZONE: str = "UTC"
+    SUPABASE_URL: str
+    SUPABASE_KEY: str
+    SUPABASE_BUCKET: str
 
     class Config:
         env_file = ".env"
