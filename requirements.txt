@@ -13,3 +13,4 @@ simpleeval
 requests
 supabase
 python-multipart
+faker

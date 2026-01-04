@@ -89,9 +89,6 @@ def run_seeds():
         seed_geography_separated(db)
         db.commit()
 
-        seed_data_test(db)
-        db.commit()
-        
         print("🚀 Seeders finalizados correctamente.")
 
     except Exception as e:
@@ -316,21 +313,6 @@ def seed_geography_separated(db):
         # No hacemos rollback aquí para no matar los seeds anteriores, solo geografía fallará
 
 
-# -----------------------------------------------------------------------------
-# SEEDS DE DATOS DE PRUEBA
-# -----------------------------------------------------------------------------
-
-def seed_data_test(db):
-    print("🔹 Procesando Datos de Prueba...")
-    datos = [
-        {"name": "Recursos_Humanos", "description": "Entidad de prueba"},
-    ]
-    seed_generic(db, model=Workspace, items=datos, unique_by=["name"])
-
-    datos = [
-        {"name": "Leads Campaña 2023", "description": "Entidad de prueba", "workspace_id": 1},
-    ]
-    seed_generic(db, model=Campaign, items=datos, unique_by=["name"])
 
 
 
