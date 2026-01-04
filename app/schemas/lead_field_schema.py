@@ -13,20 +13,20 @@ class LeadFieldBase(BaseModel):
     is_primary: bool = False
     input_mask: Optional[str] = None
     field_template_code: Optional[str] = None
+    order: int
+    campaign_id: int
 
 class LeadFieldCreate(LeadFieldBase, BaseCreate):
     field_template_code: Optional[str] = None
     nomenclator_id: Optional[int] = None
-    campaign_id: int
 
 class LeadFieldResponse(LeadFieldBase, BaseResponse):
     nomenclator_id: Optional[int] = None
-    campaign_id: int
+    
 
 class LeadFieldDetailedResponse(LeadFieldBase, BaseDetailResponse):
     validation_rules: List[ValidationRuleResponse] = []
     nomenclator: Optional[NomenclatorResponse]
-    campaign: CampaignResponse
 
 
 class LeadFieldTemplateResponse(BaseModel):

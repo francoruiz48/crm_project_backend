@@ -10,7 +10,7 @@ from app.controllers.security_controllers.user_controller import router as user_
 from app.controllers.security_controllers.role_controller import router as role_router
 from app.controllers.security_controllers.permission_controller import router as permission_router
 from app.controllers.workspace_controller import router as workspace_router
-
+from app.controllers.storage_controller import router as storage_router
 
 router = APIRouter()
 
@@ -25,3 +25,4 @@ router.include_router(user_router)
 router.include_router(role_router)
 router.include_router(permission_router)
 router.include_router(workspace_router)
+router.include_router(storage_router)

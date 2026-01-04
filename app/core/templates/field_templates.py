@@ -85,6 +85,15 @@ STANDARD_FIELD_TEMPLATES = {
             }
         ]
     ),
+    "AGE": FieldTemplate(
+        code="AGE",
+        name="Edad",
+        field_type_code="INT",
+        rules=[
+            { "template_code": "MIN_VALUE", "template_params": {"limit": 0} },
+            { "template_code": "MAX_VALUE", "template_params": {"limit": 120} }
+        ]
+    ),
     "FULL_NAME": FieldTemplate(
         code="FULL_NAME",
         name="Nombre Completo",
@@ -235,6 +244,18 @@ STANDARD_FIELD_TEMPLATES = {
     # =========================================================================
     # 4. FECHAS Y EDADES
     # =========================================================================
+    "BIRTH_DATE": FieldTemplate(
+        code="BIRTH_DATE",
+        name="Fecha de Nacimiento",
+        field_type_code="DATE",
+        rules=[
+            {
+                "template_code": "DATE_PAST",
+                "template_params": {},
+                "error_message": "La fecha debe ser en el pasado."
+            }
+        ]
+    ),
     "BIRTH_DATE_ADULT": FieldTemplate(
         code="BIRTH_DATE_ADULT",
         name="Fecha de Nacimiento (+18)",

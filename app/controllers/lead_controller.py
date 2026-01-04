@@ -3,6 +3,9 @@ from fastapi import Body, Depends, Query
 from app.controllers.base_controller import BaseController
 from app.core.constans import DEFAULT_PAGE_SIZE, PAGE_SIZE_LIMIT
 from app.core.security import PermissionChecker, get_current_user
+from app.models.lead import Lead
+from app.models.lead_field import LeadField
+from app.models.lead_field_value import LeadFieldValue
 from app.schemas.filter_schema import LeadSearchRequest
 from app.schemas.pagination_schema import PaginatedResponse
 from app.services.lead_service import LeadService
@@ -14,6 +17,11 @@ class LeadController(BaseController):
     schema_in = LeadCreate
     schema_out = LeadResponse
     schema_out_detail = LeadDetailedResponse
+
+    relationships = [
+        (Lead.field_values, LeadFieldValue.field, LeadField.field_type),
+        (Lead.field_values, LeadFieldValue.field, LeadField.campaign)
+    ]
     
     # Quitamos "GET_ALL" de aquí para que BaseController NO genere el default
     enabled_methods = {"GET_ONE", "POST", "PUT", "DELETE"} 

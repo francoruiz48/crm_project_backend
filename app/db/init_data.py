@@ -1,10 +1,13 @@
 import requests
 import re
 from app.db.session import SessionLocal
+from app.models.campaign import Campaign
+from app.models.lead_field import LeadField
 from app.models.lead_field_type import LeadFieldType
 from app.models.nomenclator import Nomenclator
 from app.models.nomenclator_item import NomenclatorItem
 from app.models.security_models import Permission, Role, User
+from app.models.workspace import Workspace
 
 # -----------------------------------------------------------------------------
 # HELPER GENÉRICO
@@ -85,7 +88,7 @@ def run_seeds():
         # 3. Geografía
         seed_geography_separated(db)
         db.commit()
-        
+
         print("🚀 Seeders finalizados correctamente.")
 
     except Exception as e:
@@ -107,6 +110,7 @@ def seed_lead_field_types(db):
         {"code": "NUMBER", "description": "Número decimal"},
         {"code": "DATE", "description": "Fecha"},
         {"code": "BOOL", "description": "Valor verdadero/falso"},
+        {"code": "FILE", "description": "Archivo"},
     ]
     seed_generic(db, model=LeadFieldType, items=datos, unique_by=["code"])
 
@@ -307,3 +311,11 @@ def seed_geography_separated(db):
     except Exception as e:
         print(f"⚠️ Error procesando geografía (puede ser conexión): {e}")
         # No hacemos rollback aquí para no matar los seeds anteriores, solo geografía fallará
+
+
+
+
+
+
+
+
