@@ -132,7 +132,8 @@ def seed_rbac(db):
         "user",
         "role",
         "permission",
-        "workspace"
+        "workspace",
+        "lead_field_section"
     ]
 
     # 2. Definimos las acciones estándar
