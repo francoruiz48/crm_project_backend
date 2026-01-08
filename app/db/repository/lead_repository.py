@@ -1,8 +1,9 @@
 from sqlalchemy.orm import aliased
-from sqlalchemy import cast, Float
+from sqlalchemy import cast, Float, or_
 from app.core.constans import DEFAULT_PAGE_SIZE
 from app.db.repository.base_repository import BaseRepository
 from app.models.lead import Lead
+from app.models.nomenclator_item import NomenclatorItem
 from app.schemas.lead_schema import LeadDetailedResponse, LeadResponse
 from app.models.lead_field_value import LeadFieldValue
 from app.models.lead_field import LeadField
@@ -17,6 +18,7 @@ class LeadRepository(BaseRepository):
     relationships = [
         (Lead.field_values, LeadFieldValue.field, LeadField.field_type),
         (Lead.field_values, LeadFieldValue.field, LeadField.campaign),
+        (Lead.field_values, LeadFieldValue.nomenclator_items) 
     ]
 
     @classmethod
@@ -27,20 +29,25 @@ class LeadRepository(BaseRepository):
             lv_alias = aliased(LeadFieldValue)
             query = query.join(lv_alias, cls.model.field_values)
             
-            conditions = [lv_alias.field_id == f.field_id]
+            # Condición base: El valor debe pertenecer al campo correcto
+            field_condition = lv_alias.field_id == f.field_id
+            
+            # Acumulador de condiciones para este filtro (AND interno)
+            # Empezamos solo con el field_id, luego agregamos la condición de valor
+            conditions = [field_condition]
 
             db_val = lv_alias.value 
             val = f.value           
 
             # ---------------------------------------------------------
-            # 1. Operador BETWEEN (Rango)
+            # 1. Operador BETWEEN (Rango) - Generalmente solo para Text/Number/Date
             # ---------------------------------------------------------
             if f.operator == "between":
                 if not isinstance(val, list) or len(val) != 2:
                     continue 
                 
                 try:
-                    # Intento Numérico (Se mantiene igual)
+                    # Intento Numérico
                     val_min = float(val[0])
                     val_max = float(val[1])
                     db_val_num = cast(db_val, Float)
@@ -48,31 +55,34 @@ class LeadRepository(BaseRepository):
                     conditions.append(db_val_num >= val_min)
                     conditions.append(db_val_num <= val_max)
                 except (ValueError, TypeError):
-                    # Fallback Texto: APLICAMOS LOWER()
-                    # Convertimos inputs a minúsculas
+                    # Fallback Texto / Fechas
                     v_min = str(val[0]).lower()
                     v_max = str(val[1]).lower()
                     
-                    # Comparamos contra la columna en minúsculas
                     conditions.append(func.lower(db_val) >= v_min)
                     conditions.append(func.lower(db_val) <= v_max)
 
             # ---------------------------------------------------------
-            # 2. Operador IN (Lista)
+            # 2. Operador IN (Lista) - AQUI CAMBIA PARA SOPORTAR MULTIPLES
             # ---------------------------------------------------------
             elif f.operator == "in":
                 if isinstance(val, list):
-                    # Convertimos toda la lista de inputs a minúsculas
+                    # A. Búsqueda en Texto (Normalizamos a string minúsculas)
                     val_strs = [str(v).lower() for v in val]
-                    # Comparamos contra la columna en minúsculas
-                    conditions.append(func.lower(db_val).in_(val_strs))
+                    cond_text = func.lower(db_val).in_(val_strs)
+
+                    # B. Búsqueda en Relación Nomenclador (Many-to-Many)
+                    # "Existe algún item en la lista del lead cuyo ID esté en la lista de búsqueda"
+                    cond_relation = lv_alias.nomenclator_items.any(NomenclatorItem.id.in_(val))
+
+                    # Aplicamos OR: O está en el texto O está en la relación
+                    conditions.append(or_(cond_text, cond_relation))
 
             # ---------------------------------------------------------
             # 3. Operadores de Comparación (GT, LT, GTE, LTE)
             # ---------------------------------------------------------
             elif f.operator in ["gt", "lt", "gte", "lte"]:
                 try:
-                    # Intento Numérico (Se mantiene igual)
                     val_float = float(val)
                     db_val_num = cast(db_val, Float)
                     
@@ -82,7 +92,6 @@ class LeadRepository(BaseRepository):
                     elif f.operator == "lte": conditions.append(db_val_num <= val_float)
                 
                 except (ValueError, TypeError):
-                    # Fallback Texto: APLICAMOS LOWER()
                     val_str = str(val).lower()
                     db_val_lower = func.lower(db_val)
                     
@@ -92,25 +101,38 @@ class LeadRepository(BaseRepository):
                     elif f.operator == "lte": conditions.append(db_val_lower <= val_str)
 
             # ---------------------------------------------------------
-            # 4. Operadores de Texto (EQ, NEQ, LIKE)
+            # 4. Operadores de Igualdad (EQ, NEQ) - CAMBIA PARA SOPORTAR ID UNICO
             # ---------------------------------------------------------
             elif f.operator == "eq": 
-                # Ahora "Juan" es igual a "juan"
-                conditions.append(func.lower(db_val) == str(val).lower())
+                # A. Texto exacto
+                cond_text = func.lower(db_val) == str(val).lower()
+                
+                # B. Relación (El Lead tiene este ID seleccionado en su lista)
+                cond_relation = lv_alias.nomenclator_items.any(NomenclatorItem.id == val)
+                
+                conditions.append(or_(cond_text, cond_relation))
             
             elif f.operator == "neq": 
-                conditions.append(func.lower(db_val) != str(val).lower())
+                # A. Distinto texto
+                cond_text = func.lower(db_val) != str(val).lower()
+                
+                # B. Relación (No tiene este ID)
+                # Nota: Negar .any() es "no tiene ninguno que coincida"
+                cond_relation = ~lv_alias.nomenclator_items.any(NomenclatorItem.id == val)
+                
+                conditions.append(and_(cond_text, cond_relation))
             
+            # ---------------------------------------------------------
+            # 5. Operadores de Texto Parcial (LIKE, ILIKE)
+            # ---------------------------------------------------------
             elif f.operator == "like": 
-                # 'like' estándar es case-sensitive en muchos DBs, forzamos lower
-                # Ojo: ILIKE hace esto nativo, pero esto asegura compatibilidad
+                # Solo aplica a columna valor texto
                 conditions.append(func.lower(db_val).contains(str(val).lower()))
             
             elif f.operator == "ilike": 
-                # ILIKE ya es case-insensitive por definición en Postgres
                 conditions.append(db_val.ilike(f"%{val}%"))
 
-            # Aplicamos los filtros de esta iteración
+            # Aplicamos los filtros de esta iteración (AND con los joins anteriores)
             query = query.filter(and_(*conditions))
 
         # Paginación y Ejecución
@@ -167,19 +189,42 @@ class LeadRepository(BaseRepository):
 
     @classmethod
     def upsert_values(cls, session, lead_id: int, values: list):
-        cls.upsert_children(
-            session=session,
-            parent_model=Lead,
-            parent_id=lead_id,
-            relation_name="field_values",
-            items=values,
-            key_attr="field_id",
-            # CORRECCIÓN AQUÍ:
-            create_fn=lambda item: LeadFieldValue(
-                lead_id=lead_id, 
-                **item.dict()     
-            )
-        )
+        # 1. Obtener valores existentes
+        existing_values = session.query(LeadFieldValue).filter(LeadFieldValue.lead_id == lead_id).all()
+        existing_map = {v.field_id: v for v in existing_values}
+
+        for item_proxy in values:
+            field_id = item_proxy.field_id
+            new_val_str = item_proxy.value
+            
+            # Obtenemos la lista de IDs (puede venir vacía)
+            new_ids_list = getattr(item_proxy, 'nomenclator_ids_list', [])
+
+            if field_id in existing_map:
+                # --- UPDATE ---
+                field_val_obj = existing_map[field_id]
+                field_val_obj.value = new_val_str
+                
+                # Si es un campo de nomenclador (la lista no es None, aunque esté vacía)
+                if new_ids_list is not None:
+                    if new_ids_list:
+                        items_objs = session.query(NomenclatorItem).filter(NomenclatorItem.id.in_(new_ids_list)).all()
+                        field_val_obj.nomenclator_items = items_objs
+                    else:
+                        field_val_obj.nomenclator_items = [] # Limpiar selección
+                
+                session.add(field_val_obj)
+            else:
+                # --- CREATE ---
+                new_obj = LeadFieldValue(lead_id=lead_id, field_id=field_id, value=new_val_str)
+                
+                if new_ids_list:
+                    items_objs = session.query(NomenclatorItem).filter(NomenclatorItem.id.in_(new_ids_list)).all()
+                    new_obj.nomenclator_items = items_objs
+                
+                session.add(new_obj)
+        
+        session.flush()
 
     @classmethod
     def has_leads_in_campaign(cls, session, campaign_id: int) -> bool:

@@ -8,6 +8,7 @@ from app.schemas.lead_field_section_schema import LeadFieldSectionDetailedRespon
 class LeadFieldBase(BaseModel):
     name: Optional[str] = None
     field_type_code: Optional[str] = None
+    field_subtype_code: Optional[str] = None
     required: bool = False
     default_value: Optional[str] = None
     is_primary: bool = False

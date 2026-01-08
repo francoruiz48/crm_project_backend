@@ -24,9 +24,8 @@ class LeadService(BaseService):
         def dict(self, **kwargs):
             return self._data
         
-        # Agregamos __getitem__ por si acaso alguna librería intenta acceder como dict
         def __getitem__(self, item):
-            return self._data[item]
+            return self._data.get(item)
     # ---------------------------------------------------------
     # Helpers de Lógica de Negocio
     # ---------------------------------------------------------
@@ -192,7 +191,26 @@ class LeadService(BaseService):
         
         for field in field_defs_list:
             val = full_context.get(field.id)
+
             try:
+                if val is None:
+                    if field.required: raise ValueError(f"Campo '{field.name}' es obligatorio.")
+                    continue
+
+                if field.field_type_code == "NOMENCLATOR":
+                    if isinstance(val, list):
+                        items_ids = val
+                    else:
+                        items_ids = [val]
+                    
+                    if field.field_subtype_code == "NOMENCLATOR_SINGLE":
+                        if len(items_ids) > 1:
+                            raise ValueError(f"El campo '{field.name}' solo acepta una opción, recibidos: {len(items_ids)}")
+                    
+                    if not all(isinstance(x, int) for x in items_ids):
+                        raise ValueError(f"Campo '{field.name}': IDs inválidos.")
+
+            
                 # Paso 1: Validar definición básica
                 cls._check_field_definition(field, val)
 
@@ -206,6 +224,7 @@ class LeadService(BaseService):
 
             except ValueError as e:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e))
+            
 
     @classmethod
     def _reconstruct_items_for_repo(cls, processed_data: dict, field_defs_list: list):
@@ -216,12 +235,17 @@ class LeadService(BaseService):
             
             item_dict = {'field_id': fid}
             
-            if field_def.nomenclator_id is not None:
-                item_dict['nomenclator_item_id'] = val
+            if field_def.field_type_code == "NOMENCLATOR":
+                # Normalizamos a lista
+                ids_list = val if isinstance(val, list) else [val]
+                if not val: ids_list = [] # Manejo de None/Vacío
+                
+                # Pasamos la LISTA de IDs en una clave especial temporal para el repo
+                item_dict['nomenclator_ids_list'] = ids_list 
                 item_dict['value'] = None
             else:
-                item_dict['nomenclator_item_id'] = None
                 item_dict['value'] = val
+                item_dict['nomenclator_ids_list'] = [] # Vacío
             
             items_for_repo.append(cls.ItemProxy(item_dict))
         return items_for_repo

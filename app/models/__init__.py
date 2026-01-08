@@ -8,5 +8,6 @@ from app.models.nomenclator_item import NomenclatorItem
 from app.models.validation_rule import ValidationRule
 from app.models.workspace import Workspace
 from app.models.lead_field_section import LeadFieldSection
+from app.models.lead_field_subtype import LeadFieldSubtype
 
-__all__ = ["Lead", "LeadFieldType", "LeadField", "LeadFieldValue", "Campaign", "Nomenclator", "NomenclatorItem", "ValidationRule", "Workspace", "LeadFieldSection"]
+__all__ = ["Lead", "LeadFieldType", "LeadField", "LeadFieldValue", "Campaign", "Nomenclator", "NomenclatorItem", "ValidationRule", "Workspace", "LeadFieldSection", "LeadFieldSubtype"]
