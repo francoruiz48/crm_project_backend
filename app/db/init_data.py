@@ -137,7 +137,8 @@ def seed_lead_field_types(db):
         {"code": "NUMBER", "description": "Número decimal"},
         {"code": "DATE", "description": "Fecha"},
         {"code": "BOOL", "description": "Valor verdadero/falso"},
-        {"code": "NOMENCLATOR", "description": "Selector"},
+        {"code": "SELECTOR", "description": "Selector"},
+        {"code": "CHECKBOX", "description": "Casilla de verificación"},
         {"code": "FILE", "description": "Archivo"},
     ]
     seed_generic(db, model=LeadFieldType, items=datos, unique_by=["code"])
@@ -145,10 +146,12 @@ def seed_lead_field_types(db):
 def seed_lead_field_subtypes(db):
     print("🔹 Procesando LeadFieldSubTypes...")
     datos = [
-        {"code": "MULTIPLE", "description": "Multiple", "lead_field_type_code": "NOMENCLATOR"},
-        {"code": "SINGLE", "description": "Simple", "lead_field_type_code": "NOMENCLATOR"},
-        {"code": "IMAGE", "description": "Imagen", "lead_field_type_code": "FILE"},
-        {"code": "DOCUMENT", "description": "Documento", "lead_field_type_code": "FILE"},
+        {"code": "SELECTOR_MULTIPLE", "description": "Multiple", "lead_field_type_code": "SELECTOR"},
+        {"code": "SELECTOR_SIMPLE", "description": "Simple", "lead_field_type_code": "SELECTOR"},
+        {"code": "CHECKBOX_MULTIPLE", "description": "Multiple", "lead_field_type_code": "CHECKBOX"},
+        {"code": "CHECKBOX_SIMPLE", "description": "Simple", "lead_field_type_code": "CHECKBOX"},
+        {"code": "FILE_IMAGE", "description": "Imagen", "lead_field_type_code": "FILE"},
+        {"code": "FILE_DOCUMENT", "description": "Documento", "lead_field_type_code": "FILE"},
     ]
     seed_generic(db, model=LeadFieldSubtype, items=datos, unique_by=["code"],resolve_fk={"lead_field_type_code": (LeadFieldType, "code")}
     )

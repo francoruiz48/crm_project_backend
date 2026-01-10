@@ -12,7 +12,7 @@ role_permissions = Table(
 user_roles = Table(
     'user_roles',
     BaseModelDB.metadata,
-    Column('user_id', Integer, ForeignKey('user.id'), primary_key=True),
+    Column('users_id', Integer, ForeignKey('users.id'), primary_key=True),
     Column('role_id', Integer, ForeignKey('role.id'), primary_key=True)
 )
 
@@ -29,7 +29,7 @@ class Role(BaseModelDB):
     permissions = relationship("Permission", secondary=role_permissions, backref="roles")
 
 class User(BaseModelDB):
-    __tablename__ = "user"
+    __tablename__ = "users"
     
     email = Column(String, unique=True, index=True, nullable=False)
     

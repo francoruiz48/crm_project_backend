@@ -7,4 +7,4 @@ class Workspace(BaseModelDB):
     name = Column(String, nullable=False)
     description = Column(String, nullable=True)
 
-    campaigns = relationship("Campaign", back_populates="workspace")
+    campaigns = relationship("Campaign", back_populates="workspace", passive_deletes="all")

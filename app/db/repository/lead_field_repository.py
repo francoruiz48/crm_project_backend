@@ -35,6 +35,7 @@ class LeadFieldRepository(BaseRepository):
         """Verifica si un número de orden ya está en uso en esa campaña."""
         return session.query(cls.model.id).filter(
             cls.model.campaign_id == campaign_id,
-            cls.model.order == order
+            cls.model.order == order,
+            cls.model.active == True
         ).first() is not None
 
