@@ -10,7 +10,7 @@ class BaseController:
     schema_in = None
     schema_out = None
     schema_out_detail = None
-    enabled_methods = {"GET_ALL", "GET_ONE", "POST", "PUT", "DELETE"}
+    enabled_methods = {"GET_ALL", "GET_ONE", "POST", "PUT", "DELETE", "ACTIVE"}
 
     required_permissions: Dict[str, str] = {}
 
@@ -72,8 +72,7 @@ class BaseController:
 
         if "GET_ONE" in cls.enabled_methods:
             @router.get("/{obj_id}", 
-                # USAMOS EL UNION AQUÍ. FastAPI usará el esquema que coincida con el objeto retornado.
-                response_model=cls.schema_out_detail, 
+                response_model=ResponseModelItem, 
                 dependencies=cls._get_deps("read"))
             def get_one(obj_id: int, detailed: bool = Query(False)):
                 # El repositorio ya devuelve un objeto Pydantic (Detail o Simple)
@@ -86,14 +85,14 @@ class BaseController:
 
         
         if "POST" in cls.enabled_methods:
-            @router.post("/", response_model=cls.schema_out, 
+            @router.post("/", response_model=ResponseModelItem, 
                 dependencies=cls._get_deps("create"))
             def create(obj_in: cls.schema_in = Body(...),
                        current_user = Depends(get_current_user)):
                 return cls.service.create(obj_in, created_by=current_user.id)
 
         if "PUT" in cls.enabled_methods:
-            @router.put("/{obj_id}", response_model=cls.schema_out, 
+            @router.put("/{obj_id}", response_model=ResponseModelItem, 
                 dependencies=cls._get_deps("update"))
             def update(obj_id: int, obj_in: cls.schema_in = Body(...)):
                 return cls.service.update(obj_id, obj_in)
@@ -101,16 +100,15 @@ class BaseController:
         if "DELETE" in cls.enabled_methods:
             @router.delete("/{obj_id}", dependencies=cls._get_deps("delete"))
             def delete(obj_id: int):
-                cls.service.delete(obj_id)
-                return {"deleted": True}
+                return cls.service.delete(obj_id)
             
-        if "PUT" in cls.enabled_methods:
-            @router.put("/disable/{obj_id}", dependencies=cls._get_deps("disable"))
-            def set_disable(obj_id: int):
-                cls.service.set_disable(obj_id)
-                return {"disabled": True}
+        #if "SOFT_DELETE" in cls.enabled_methods:
+        #    @router.put("/disable/{obj_id}", dependencies=cls._get_deps("disable"))
+        #    def set_disable(obj_id: int):
+        #        cls.service.set_disable(obj_id)
+        #        return {"disabled": True}
             
-        if "PUT" in cls.enabled_methods:
+        if "ACTIVE" in cls.enabled_methods:
             @router.put("/active/{obj_id}", dependencies=cls._get_deps("active"))
             def set_active(obj_id: int):
                 cls.service.set_active(obj_id)

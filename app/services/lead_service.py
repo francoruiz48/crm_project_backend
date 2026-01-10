@@ -7,6 +7,7 @@ from app.db.repository.lead_repository import LeadRepository
 from app.db.repository.lead_field_repository import LeadFieldRepository
 from app.db.unit_of_work import UnitOfWork
 from app.services.lead_validation_logic import LeadValidationLogic
+from app.core.error_messages import SUCCESS_DELETE
 
 class LeadService(BaseService):
     repository = LeadRepository
@@ -22,6 +23,9 @@ class LeadService(BaseService):
                 setattr(self, k, v)
         
         def dict(self, **kwargs):
+            return self._data
+        
+        def model_dump(self, **kwargs):
             return self._data
         
         def __getitem__(self, item):
@@ -258,7 +262,6 @@ class LeadService(BaseService):
     def create(cls, obj_in, created_by=None):
         campaign_id = obj_in.campaign_id
         with UnitOfWork() as uow:
-            # 1. Obtener definiciones de la campaña
             all_field_defs = cls.field_repository.get_all_active_with_rules(uow.session)
             
             # Validación: Campos pertenecen a la campaña
@@ -276,7 +279,7 @@ class LeadService(BaseService):
             # 2. Input -> Dict
             context_data = cls._prepare_context_dict(obj_in.values)
 
-            # 3. [NUEVO] Rellenar campos faltantes con None
+            # 3. Rellenar campos faltantes con None
             # Esto asegura que si el user no manda un campo opcional, lo tengamos en el dict como None
             context_data = cls._fill_missing_fields(context_data, current_campaign_defs)
 
@@ -308,7 +311,7 @@ class LeadService(BaseService):
                 cls._not_found(obj_id)
             
             # B. Update Campos Base (active, campaign_id)
-            lead_data = obj_in.dict(exclude_unset=True, exclude={"values"})
+            lead_data = obj_in.model_dump(exclude_unset=True, exclude={"values"})
             if lead_data:
                 cls.repository.update(uow.session, obj_id, lead_data)
 
@@ -329,7 +332,21 @@ class LeadService(BaseService):
                 
                 db_values = {}
                 for v in current_lead.field_values:
-                    val = v.nomenclator_item_id if v.nomenclator_item_id is not None else v.value
+                    # [CORRECCIÓN] Adaptación a M2M y Pydantic Models
+                    
+                    # A. Intentar obtener valor simple
+                    val = getattr(v, "value", None)
+                    
+                    # B. Si no hay valor simple, revisar si es Nomenclador (Lista de items)
+                    # El modelo de respuesta ahora tiene 'nomenclator_items', no 'nomenclator_item_id'
+                    if val is None:
+                        if hasattr(v, "nomenclator_items") and v.nomenclator_items:
+                            # Extraemos los IDs de la lista de objetos
+                            val = [item.id for item in v.nomenclator_items]
+                        # Fallback por compatibilidad si en algún lado quedó el campo viejo
+                        elif hasattr(v, "nomenclator_item_id") and v.nomenclator_item_id:
+                            val = v.nomenclator_item_id
+
                     db_values[v.field_id] = val
                 
                 full_context = {**db_values, **incoming_data}
@@ -376,4 +393,13 @@ class LeadService(BaseService):
                 search_params=search_req,
                 detailed=detailed
             )
+        )
+    
+    @classmethod
+    def delete(cls, obj_id: int):
+        return cls._execute(
+            action="Eliminando",
+            obj_id=obj_id,
+            func=lambda uow: cls.repository.delete(uow.session, obj_id, force=True),
+            success_msg=SUCCESS_DELETE
         )

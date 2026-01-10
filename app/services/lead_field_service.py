@@ -18,8 +18,7 @@ class LeadFieldService(BaseService):
         def do_create(uow):
 
             try:
-                # Convertimos a dict excluyendo nulos
-                data = obj_in.dict(exclude_unset=True)
+                data = obj_in.model_dump(exclude_unset=True)
                 
                 template_code = data.get("field_template_code")
                 type_code = data.get("field_type_code")

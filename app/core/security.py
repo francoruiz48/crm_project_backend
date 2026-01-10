@@ -1,20 +1,14 @@
 from fastapi import Depends, HTTPException, status
-from app.db.session import SessionLocal
+from app.db.session import SessionLocal, get_db
 from app.models.security_models import User
-# from app.db.unit_of_work import UnitOfWork # Si prefieres usar UoW
+# from app.db.unit_of_work import UnitOfWork 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 # --- MOCK AUTHENTICATION ---
 def get_current_user(db = Depends(get_db)) -> User:
     user_id_to_simulate = 1  # <--- CAMBIAR ESTO PARA PROBAR DIFERENTES ROLES
     
-    user = db.query(User).get(user_id_to_simulate)
+    user = db.get(User, user_id_to_simulate)
     if not user:
         # Si no has corrido los seeders, esto fallará
         raise HTTPException(status_code=404, detail="Usuario simulado no encontrado (corre los seeders)")

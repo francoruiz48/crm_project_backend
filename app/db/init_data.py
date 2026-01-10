@@ -9,6 +9,7 @@ from app.models.nomenclator_item import NomenclatorItem
 from app.models.security_models import Permission, Role, User
 from app.models.workspace import Workspace
 from app.models.lead_field_subtype import LeadFieldSubtype
+from app.models.lead_field_section import LeadFieldSection
 
 # -----------------------------------------------------------------------------
 # HELPER GENÉRICO
@@ -73,8 +74,13 @@ def seed_generic(
 # -----------------------------------------------------------------------------
 # EXECUTOR PRINCIPAL
 # -----------------------------------------------------------------------------
-def run_seeds():
-    db = SessionLocal()
+def run_seeds(db=None):
+
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+
     try:
         print("🌱 Iniciando Seeders...")
         
@@ -87,6 +93,9 @@ def run_seeds():
         db.commit()
 
         seed_lead_field_subtypes(db)
+        db.commit()
+
+        seed_lead_field_sections(db)
         db.commit()
 
         # 3. Geografía
@@ -103,8 +112,19 @@ def run_seeds():
         db.rollback()
         raise
     finally:
-        db.close()
+        if should_close:
+            db.close()
 
+
+def seed_lead_field_sections(db):
+    print("🔹 Procesando Secciones de Campos...")
+    datos = [
+        {"name": "Datos Personales"},       
+        {"name": "Información de Contacto"},
+        {"name": "Detalles Adicionales"}          
+    ]
+    # Usamos 'name' como clave única para no duplicar
+    seed_generic(db, model=LeadFieldSection, items=datos, unique_by=["name"])
 
 # -----------------------------------------------------------------------------
 # 1. SEED LEAD FIELD TYPES

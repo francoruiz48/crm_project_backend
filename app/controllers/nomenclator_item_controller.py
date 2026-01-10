@@ -13,7 +13,7 @@ class NomenclatorItemController(BaseController):
     schema_out = NomenclatorItemResponse
     schema_out_detail = NomenclatorItemDetailResponse
     
-    enabled_methods = {"GET_ONE", "POST", "PUT", "DELETE"} 
+    enabled_methods = {"GET_ONE", "POST", "PUT", "DELETE", "ACTIVE"} 
 
     @classmethod
     def get_router(cls):

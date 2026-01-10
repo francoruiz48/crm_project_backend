@@ -1,21 +1,39 @@
 #!/bin/bash
 set -e
 
-# Cargar variables de entorno desde .env
 if [ -f /code/.env ]; then
     export $(grep -v '^#' /code/.env | xargs)
 fi
 
-# Ejecutar tests si RUN_TESTS=1
+run_tests() {
+    echo "🧪 Iniciando suite de tests en background..."
+    
+    set +e 
+    
+    PYTHONPATH=/code pytest -v > /code/test_results.log 2>&1
+    
+    TEST_EXIT_CODE=$?
+    set -e
+
+    if [ $TEST_EXIT_CODE -eq 0 ]; then
+        echo -e "\n\033[0;32m✅  TODOS LOS TESTS PASARON EXITOSAMENTE \033[0m"
+    else
+        echo -e "\n\n"
+        echo -e "\033[0;33m/=========================================\\"
+        echo -e "|  ⚠️   WARNING: TESTS FALLIDOS            |"
+        echo -e "|  Revisa test_results.log para detalles  |"
+        echo -e "\\=========================================/\033[0m"
+        
+        # Opcional: Imprimir las últimas 5 líneas del log en consola para dar una pista rápida
+        echo -e "\n🔍 Últimas líneas del error:"
+        tail -n 10 /code/test_results.log
+        echo -e "\n"
+    fi
+}
+
 if [ "$RUN_TESTS" = "1" ]; then
-    echo "=============================="
-    echo "Ejecutando tests automatizados en background"
-    echo "=============================="
-    PYTHONPATH=/code pytest /code/tests/ -v 2>&1 | tee /code/test_results.log || true &
+    run_tests &
 fi
 
-# Iniciar el servidor FastAPI normalmente
-echo "=============================="
-echo "Iniciando servidor FastAPI..."
-echo "=============================="
+echo "🚀 Iniciando servidor FastAPI..."
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
