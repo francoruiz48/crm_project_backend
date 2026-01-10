@@ -141,23 +141,6 @@ class LeadRepository(BaseRepository):
         
         return total, items
 
-    @classmethod
-    def get_all(cls, session, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, 
-                only_active: bool = True, detailed: bool = False, 
-                campaign_id: int = None):
-
-        query = session.query(cls.model)
-
-        if campaign_id is not None:
-            query = query.filter(cls.model.campaign_id == campaign_id)
-        # --------------------------
-
-        if only_active and hasattr(cls.model, "active"):
-            query = query.filter(cls.model.active.is_(True))
-
-        total, query = cls._paginate(query, page, page_size)
-        
-        return total, cls._execute_read_query(query, detailed)
 
     @classmethod
     def find_duplicate(cls, session, campaign_id: int, primary_values: dict) -> bool:

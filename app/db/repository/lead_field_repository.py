@@ -3,6 +3,7 @@ from app.db.repository.base_repository import BaseRepository
 from app.models.lead_field import LeadField
 from app.schemas.lead_field_schema import LeadFieldDetailedResponse, LeadFieldResponse
 from sqlalchemy.orm import joinedload
+from app.core.constans import DEFAULT_PAGE_SIZE
 
 class LeadFieldRepository(BaseRepository):
     model = LeadField
@@ -13,6 +14,7 @@ class LeadFieldRepository(BaseRepository):
         (LeadField.field_type,),
         (LeadField.validation_rules,),
     ]
+
 
     @classmethod
     def get_all_active_with_rules(cls, session):
@@ -35,3 +37,4 @@ class LeadFieldRepository(BaseRepository):
             cls.model.campaign_id == campaign_id,
             cls.model.order == order
         ).first() is not None
+

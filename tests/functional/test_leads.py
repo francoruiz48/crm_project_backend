@@ -568,3 +568,59 @@ def test_get_leads_filtering(client, db_session, initial_structure):
     assert len(items_b) == 1
     val_b1 = next(v for v in items_b[0]["field_values"] if v["field_id"] == f_nom_b.id)
     assert val_b1["value"] == "Lead B1"
+
+# tests/functional/test_leads.py
+
+def test_create_lead_int_validation_case_of_decimal(client, db_session, initial_structure):
+    """
+    Caso 3: Validación estricta de Integers.
+    - Rechazar decimales (10.5).
+    - Manejar Overflow (Números gigantes).
+    """
+    camp_id = initial_structure["campaign"].id
+    
+    # Setup: Campo Entero
+    f_int = LeadField(name="Contador", field_type_code="INT", campaign_id=camp_id, order=1, lead_field_section_id=1)
+    db_session.add(f_int)
+    db_session.commit()
+    
+    # --- Sub-caso 3.1: Decimales ---
+    # Enviamos un float. Si pydantic está en modo 'lax', podría truncarlo a 10.
+    # Queremos que falle (strict mode o validación custom).
+    res_decimal = client.post("/leads/", json={
+        "campaign_id": camp_id,
+        "values": [{"field_id": f_int.id, "value": 10.5}]
+    })
+    
+    assert res_decimal.status_code in [400, 422]
+    assert "espera" in res_decimal.text.lower()
+
+
+
+
+def test_create_lead_int_validation_case_of_huge_int(client, db_session, initial_structure):
+    """
+    Caso 3: Validación estricta de Integers.
+    - Rechazar decimales (10.5).
+    - Manejar Overflow (Números gigantes).
+    """
+    camp_id = initial_structure["campaign"].id
+    
+    # Setup: Campo Entero
+    f_int = LeadField(name="Contador", field_type_code="INT", campaign_id=camp_id, order=1, lead_field_section_id=1)
+    db_session.add(f_int)
+    db_session.commit()
+    
+    # --- Sub-caso 3.2: Integer Overflow ---
+    # Enviamos un número mayor a 2,147,483,647 (Max Int standard)
+    # Python maneja ints arbitrariamente grandes, pero tu DB (SQL/Postgres) no.
+    huge_number = 99999999999999999999999  
+    
+    res_overflow = client.post("/leads/", json={
+        "campaign_id": camp_id,
+        "values": [{"field_id": f_int.id, "value": huge_number}]
+    })
+    
+    assert res_overflow.status_code == 200
+    
+    assert res_overflow.status_code != 500, "Ojo: El error de Overflow no fue capturado y generó un 500."

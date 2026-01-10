@@ -164,6 +164,12 @@ class LeadService(BaseService):
         
         # [MEJORA] Validaciones estrictas con mensajes claros
         if type_code == "INT":
+            if isinstance(value, bool):
+                raise ValueError(f"El campo '{field.name}' espera un número entero, recibió un valor booleano.")
+            
+            if isinstance(value, float) and not value.is_integer():
+                 raise ValueError(f"El campo '{field.name}' espera un número entero, recibió un decimal '{value}'.")
+            
             try:
                 # Intentamos convertir. Si es "Pedro", fallará.
                 int(value)
@@ -275,6 +281,12 @@ class LeadService(BaseService):
 
             # Filtramos solo los campos de ESTA campaña
             current_campaign_defs = [f for f in all_field_defs if f.campaign_id == campaign_id]
+
+            if not current_campaign_defs:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, 
+                    detail="La campaña no tiene campos activos configurados. Debe crear al menos un campo antes de cargar Leads."
+                )
             
             # 2. Input -> Dict
             context_data = cls._prepare_context_dict(obj_in.values)
@@ -367,20 +379,6 @@ class LeadService(BaseService):
         with UnitOfWork() as uow_read:
             return cls.repository.get_by_id(uow_read.session, obj_id, detailed=True)
         
-    @classmethod
-    def get_all(cls, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, only_active: bool = True, detailed: bool = False, campaign_id: int = None):
-        return cls._execute(
-            action="Obteniendo Leads",
-            func=lambda uow: cls.repository.get_all(
-                session=uow.session, 
-                page=page,
-                page_size=page_size,
-                only_active=only_active, 
-                detailed=detailed, 
-                campaign_id=campaign_id
-            )
-        )
-    
 
     @classmethod
     def search(cls, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, detailed: bool = False, search_req=None):
@@ -395,11 +393,3 @@ class LeadService(BaseService):
             )
         )
     
-    @classmethod
-    def delete(cls, obj_id: int):
-        return cls._execute(
-            action="Eliminando",
-            obj_id=obj_id,
-            func=lambda uow: cls.repository.delete(uow.session, obj_id, force=True),
-            success_msg=SUCCESS_DELETE
-        )

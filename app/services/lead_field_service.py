@@ -5,9 +5,13 @@ from app.core.templates.field_templates import STANDARD_FIELD_TEMPLATES
 from app.services.nomenclator_service import NomenclatorService
 from app.services.validation_rule_service import ValidationRuleService
 from app.db.repository.lead_field_repository import LeadFieldRepository
-from app.db.repository.lead_repository import LeadRepository # <--- IMPORTANTE
+from app.db.repository.lead_repository import LeadRepository
 from app.db.repository.lead_field_value_repository import LeadFieldValueRepository
-from app.models.lead_field_type import LeadFieldType # <--- IMPORTANTE
+from app.models.lead_field_type import LeadFieldType
+from app.core.constans import DEFAULT_PAGE_SIZE
+from app.models.lead_field_value import LeadFieldValue
+from app.core.error_messages import SUCCESS_UPDATE
+from app.models.lead_field import LeadField 
 
 class LeadFieldService(BaseService):
     repository = LeadFieldRepository
@@ -101,11 +105,22 @@ class LeadFieldService(BaseService):
                 if not data.get("field_type_code"):
                     raise ValueError("El 'field_type_code' es obligatorio (o usa una plantilla válida).")
 
+
+                name = data.get("name")
+                campaign_id = data.get("campaign_id")
+                if name and campaign_id:
+                    try:
+                        existing_field = cls.repository.get_all(session=uow.session, only_active=True, detailed=True, campaign_id=campaign_id, name=name)
+                    except Exception:
+                        raise ValueError("Error al verificar la existencia del campo en la campaña.")
+                    if existing_field:
+                        raise ValueError(f"Ya existe un campo activo con el nombre '{name}' en esta campaña.")
+                
                 # -------------------------------------------------------
                 # 3. RESTRICCIONES HISTÓRICAS
                 # -------------------------------------------------------
                 # Verificamos si ya hay leads en la campaña ANTES de crear el campo
-                campaign_id = data.get("campaign_id")
+                
                 has_existing_leads = False
                 
                 if campaign_id:
@@ -182,4 +197,86 @@ class LeadFieldService(BaseService):
             action="Creando Campo de Lead",
             func=do_create,
             success_msg="Campo configurado exitosamente."
+        )
+    
+
+    @classmethod
+    def update(cls, obj_id: int, obj_in):
+        """
+        Sobrescribimos update para validar cambios ilegales (Tipo de dato y Required retroactivo).
+        """
+        def do_update(uow):
+            # Obtenemos el campo actual (sin cargar relaciones pesadas por ahora)
+            current_field = cls.repository.get_by_id(uow.session, obj_id, detailed=False)
+            if not current_field:
+                cls._not_found(obj_id)
+
+            data = obj_in.model_dump(exclude_unset=True)
+
+            # --- VALIDACIÓN 1: No permitir cambio de TIPO DE DATO ---
+            new_type = data.get("field_type_code")
+            if new_type and new_type != current_field.field_type_code:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No se puede cambiar el tipo de dato de un campo existente."
+                )
+
+            # --- VALIDACIÓN 2: No permitir cambio a REQUIRED si hay valores nulos ---
+            new_required = data.get("required")
+            # Si quiere hacerlo requerido Y antes no lo era...
+            if new_required is True and not current_field.required:
+                # Verificamos si existen valores vacíos en la base de datos para este campo
+                has_nulls = uow.session.query(LeadFieldValue).filter(
+                    LeadFieldValue.field_id == obj_id,
+                    (LeadFieldValue.value == None) | (LeadFieldValue.value == "")
+                ).first()
+
+                if has_nulls:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="No se puede marcar como requerido porque existen registros antiguos con valor vacío para este campo."
+                    )
+
+            # Si pasa las validaciones, actualizamos
+            return cls.repository.update(uow.session, obj_id, data)
+
+        return cls._execute(
+            action="Actualizando LeadField",
+            func=do_update,
+            success_msg=f"LeadField({obj_id}) actualizado correctamente."
+        )
+    
+
+    @classmethod
+    def set_active(cls, field_id: int):
+        def do_reactivate(uow):
+            # 1. Buscamos el campo INCLUSO si está inactivo (soft-deleted)
+            # Asumimos que get_by_id o una variante puede traerlo. 
+            # Si get_by_id filtra por active=True, necesitamos usar get físico o query directa.
+            field = uow.session.get(LeadField,field_id)
+            
+            if not field:
+                cls._not_found(field_id)
+            
+            if field.active:
+                return field
+
+            conflict_field = cls.repository.get_all(session=uow.session, only_active=True, detailed=True, campaign_id=field.campaign_id, name=field.name)
+            
+            if conflict_field and conflict_field[0].id != field_id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT, 
+                    detail=f"No se puede reactivar el campo '{field.name}' porque ya existe otro campo activo con ese nombre en la campaña."
+                )
+
+            field.active = True
+
+            uow.session.add(field)
+            return field
+
+        return cls._execute(
+            action="Activando",
+            obj_id=field_id,
+            func=do_reactivate,
+            success_msg=SUCCESS_UPDATE
         )

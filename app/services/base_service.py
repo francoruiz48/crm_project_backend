@@ -54,16 +54,16 @@ class BaseService:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
     @classmethod
-    def get_all(cls, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, only_active: bool = True, detailed: bool = False):
+    def get_all(cls, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, only_active: bool = True, detailed: bool = False, **kwargs):
         return cls._execute(
-            action="Obteniendo listado paginado",
-            # Ahora repo.get_all devuelve una tupla (total, items)
+            action=f"Obteniendo listado de {cls.repository.model.__name__}",
             func=lambda uow: cls.repository.get_all(
-                uow.session, 
-                page=page, 
-                page_size=page_size, 
-                only_active=only_active, 
-                detailed=detailed
+                session=uow.session,
+                page=page,
+                page_size=page_size,
+                only_active=only_active,
+                detailed=detailed,
+                **kwargs
             )
         )
 

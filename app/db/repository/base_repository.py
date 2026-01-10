@@ -148,18 +148,30 @@ class BaseRepository:
     # ----------------- CRUD Genérico -----------------
     @classmethod
     def get_all(cls, session, only_active: bool = True, detailed: bool = False, **kwargs):
-        """Trae todos los objetos (Implementación Base)"""
+        """
+        Trae todos los objetos con filtros dinámicos.
+        Cualquier argumento extra (ej: campaign_id=1) se aplica como filtro "=" 
+        si el modelo tiene ese atributo.
+        """
         query = session.query(cls.model)
             
+        # 1. Filtro 'active' (Soft Delete)
         if only_active and hasattr(cls.model, "active"):
             query = query.filter(cls.model.active.is_(True))
 
-        
-        page = kwargs.get('page', 0)
-        page_size = kwargs.get('page_size', 0)
-        
+        # 2. Filtros Dinámicos (kwargs)
+        # Extraemos page/page_size primero para no confundirlos con columnas
+        page = kwargs.pop('page', 0)
+        page_size = kwargs.pop('page_size', 0)
+
+        for field_name, value in kwargs.items():
+            # Si el valor no es None y el modelo tiene ese atributo...
+            if value is not None and hasattr(cls.model, field_name):
+                # ...aplicamos el filtro: WHERE columna = valor
+                query = query.filter(getattr(cls.model, field_name) == value)
+
+        # 3. Paginación y Ejecución
         total, query = cls._paginate(query, page, page_size)
-        
         items = cls._execute_read_query(query, detailed)
         
         if page:
@@ -241,13 +253,12 @@ class BaseRepository:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
     @classmethod
-    def delete(cls, session, obj_id: int, force: bool = False) -> Dict[str, str]:
+    def delete(cls, session, obj_id: int) -> Dict[str, str]:
         """
         Intenta eliminar un objeto físicamente.
         
         Comportamiento:
-        1. Intenta borrar el registro (validando dependencias si force=False).
-        2. Si hay dependencias (Error de Integridad o Validación):
+        Si hay dependencias (Error de Integridad o Validación):
            - Si el modelo tiene campo 'active', realiza un Soft Delete (Deshabilitar).
            - Si no tiene campo 'active', lanza el error original.
            
@@ -259,35 +270,22 @@ class BaseRepository:
             raise NotFoundException(detail=f"{cls.model.__name__} no encontrado.")
 
         try:
-            if not force:
-                mapper = inspect(cls.model)
-                for rel in mapper.relationships:
-                    if rel.direction == ONETOMANY:
-                        # Verificamos si hay hijos en memoria o cargados
-                        related_items = getattr(obj, rel.key)
-                        if related_items:
-                            rel_name = rel.key.replace('_', ' ').capitalize()
-                            # Lanzamos excepción para caer en el bloque except y deshabilitar
-                            raise AppException(detail=f"Dependencias detectadas en {rel_name}")
-
-            # 2. Borrado y Flush (Aquí salta la Defensa Reactiva de la DB si hay FK ocultas)
-            session.delete(obj)
-            session.flush()
+            with session.begin_nested():
+                session.delete(obj)
+                session.flush()
             
             return {
                 "action": "deleted"
             }
 
-        except (IntegrityError, AppException) as e:
-            # --- FALLBACK: SOFT DELETE (DESHABILITAR) ---
-            session.rollback() # Importante: Limpiar el intento fallido de delete
-            
+        except (IntegrityError, AppException) as e:            
+            obj_fresh = session.get(cls.model, obj_id)
             # Verificamos si el modelo soporta 'active' (Soft Delete)
-            if hasattr(obj, 'active'):
-                obj.active = False
-                session.add(obj)
+            if obj_fresh and hasattr(obj_fresh, 'active'):
+                obj_fresh.active = False
+                session.add(obj_fresh)
                 session.flush()
-                session.refresh(obj)
+                session.refresh(obj_fresh)
                 
                 return {
                     "action": "disabled"

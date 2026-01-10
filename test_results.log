@@ -1,28 +1,57 @@
-2026-01-10 14:51:07 [INFO] HTTP Request: GET http://testserver/leads?campaign_id=1 "HTTP/1.1 307 Temporary Redirect"
-2026-01-10 14:51:07 [INFO] Obteniendo Leads Lead...
-2026-01-10 14:51:07 [INFO] HTTP Request: GET http://testserver/leads/?campaign_id=1 "HTTP/1.1 200 OK"
-2026-01-10 14:51:07 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 200 OK"
-2026-01-10 14:51:07 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 400 Bad Request"
-2026-01-10 14:51:07 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 200 OK"
-2026-01-10 14:51:08 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 400 Bad Request"
-2026-01-10 14:51:08 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 200 OK"
-2026-01-10 14:51:08 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 200 OK"
-2026-01-10 14:51:08 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 409 Conflict"
-2026-01-10 14:51:08 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 200 OK"
-2026-01-10 14:51:08 [INFO] HTTP Request: PUT http://testserver/leads/5 "HTTP/1.1 200 OK"
-2026-01-10 14:51:08 PASSED               [ 40%]
-tests/functional/test_leads.py::test_search_leads_advanced PASSED        [ 45%]
-tests/functional/test_leads.py::test_create_lead_with_multiple_nomenclator PASSED [ 50%]
-tests/functional/test_leads.py::test_search_lead_by_nomenclator PASSED   [ 55%]
-tests/functional/test_leads.py::test_create_field_from_template PASSED   [ 60%]
-tests/functional/test_leads.py::test_create_field_from_template_and_validate_success PASSED [ 65%]
-tests/functional/test_leads.py::test_create_field_from_template_and_validate_failure PASSED [ 70%]
-tests/functional/test_leads.py::test_get_leads_filtering PASSED          [ 75%]
-tests/functional/test_validation_rules.py::test_validation_rule_test_rule_success PASSED [ 80%]
+2026-01-10 18:57:39 [INFO] Creando Campo de Lead LeadField...
+2026-01-10 18:57:39 [INFO] Campo configurado exitosamente.
+2026-01-10 18:57:39 [INFO] HTTP Request: POST http://testserver/lead_fields/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:39 [INFO] Eliminando LeadField(1)...
+2026-01-10 18:57:39 [INFO] LeadField(1) eliminado correctamente.
+2026-01-10 18:57:39 [INFO] HTTP Request: DELETE http://testserver/lead_fields/1 "HTTP/1.1 200 OK"
+2026-01-10 18:57:39 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:39 [INFO] Creando Campo de Lead LeadField...
+2026-01-10 18:57:39 [INFO] Campo configurado exitosPASSED [  4%]
+tests/functional/test_lead_fields.py::test_lead_field_delete_with_data_soft_delete PASSED [  6%]
+tests/functional/test_lead_fields.py::test_create_lead_ignores_disabled_required_field PASSED [  8%]
+tests/functional/test_lead_fields.py::test_cannot_add_required_field_to_campaign_with_leads PASSED [ 10%]
+tests/functional/test_lead_fields.py::test_reactivate_field PASSED       [ 12%]
+tests/functional/test_lead_fields.py::test_create_lead_fails_no_fields_defined PASSED [ 14%]
+tests/functional/test_lead_fields.py::test_create_lead_fails_all_fields_disabled PASSED [ 17%]
+tests/functional/test_lead_fields.py::test_create_lead_success_empty_values_optional_fields PASSED [ 19%]
+tests/functional/test_lead_fields.py::test_create_field_fail_order_collision PASSED [ 21%]
+tests/functional/test_lead_fields.py::test_create_field_fail_nomenclator_type_mismatch PASSED [ 23%]
+tests/functional/test_lead_fields.py::test_create_field_fail_subtype_mismatch PASSED [ 25%]
+tests/functional/test_lead_fields.py::test_create_field_fail_missing_subtype PASSED [ 27%]
+tests/functional/test_lead_fields.py::test_create_field_fail_primary_with_existing_leads PASSED [ 29%]
+tests/functional/test_lead_fields.py::test_update_field_fail_change_type PASSED [ 31%]
+tests/functional/test_lead_fields.py::test_update_field_fail_required_with_null_values PASSED [ 34%]
+tests/functional/test_lead_fields.py::test_get_fields_filtering_active PASSED [ 36%]
+tests/functional/test_lead_fields.py::test_create_field_fail_invalid_template PASSED [ 38%]
+tests/functional/test_lead_fields.py::test_delete_field_cascades_validation_rules PASSED [ 40%]
+tests/functional/test_lead_fields.py::test_reactivate_field_name_conflict PASSED [ 42%]
+tests/functional/test_lead_fields.py::test_update_field_fail_required_with_existing_nulls PASSED [ 44%]
+tests/functional/test_leads.py::test_get_empty_leads PASSED              [ 46%]
+tests/functional/test_leads.py::test_create_lead_simple_values PASSED    [ 48%]
+tests/functional/test_leads.py::test_create_lead_missing_required PASSED [ 51%]
+tests/functional/test_leads.py::test_create_lead_various_types PASSED    [ 53%]
+tests/functional/test_leads.py::test_create_lead_input_mask_validation_failure PASSED [ 55%]
+tests/functional/test_leads.py::test_create_lead_input_mask_validation_success PASSED [ 57%]
+tests/functional/test_leads.py::test_create_lead_duplicate_primary_field PASSED [ 59%]
+tests/functional/test_leads.py::test_lead_lifecycle PASSED               [ 61%]
+tests/functional/test_leads.py::test_search_leads_advanced PASSED        [ 63%]
+tests/functional/test_leads.py::test_create_lead_with_multiple_nomenclator PASSED [ 65%]
+tests/functional/test_leads.py::test_search_lead_by_nomenclator PASSED   [ 68%]
+tests/functional/test_leads.py::test_create_field_from_template PASSED   [ 70%]
+tests/functional/test_leads.py::test_create_field_from_template_and_validate_success PASSED [ 72%]
+tests/functional/test_leads.py::test_create_field_from_template_and_validate_failure PASSED [ 74%]
+tests/functional/test_leads.py::test_get_leads_filtering PASSED          [ 76%]
+tests/functional/test_leads.py::test_create_lead_int_validation_case_of_decimal PASSED [ 78%]
+tests/functional/test_leads.py::test_create_lead_int_validation_case_of_huge_int PASSED [ 80%]
+tests/functional/test_validation_rules.py::test_validation_rule_test_rule_success PASSED [ 82%]
 tests/functional/test_validation_rules.py::test_validation_rule_test_rule_failure PASSED [ 85%]
-tests/functional/test_validation_rules.py::test_validation_rule_delete_rule PASSED [ 90%]
-tests/functional/test_validation_rules.py::test_create_manual_validation_rule_success PASSED [ 95%]
-tests/functional/test_validation_rules.py::test_create_manual_validation_rule_failure PASSED [100%]
+tests/functional/test_validation_rules.py::test_validation_rule_delete_rule PASSED [ 87%]
+tests/functional/test_validation_rules.py::test_create_manual_validation_rule_success PASSED [ 89%]
+tests/functional/test_validation_rules.py::test_create_manual_validation_rule_failure PASSED [ 91%]
+tests/functional/test_workspace_and_campaign.py::test_workspace_create PASSED [ 93%]
+tests/functional/test_workspace_and_campaign.py::test_workspace_delete PASSED [ 95%]
+tests/functional/test_workspace_and_campaign.py::test_workspace_update PASSED [ 97%]
+tests/functional/test_workspace_and_campaign.py::test_workspace_delete_when_exists_campaign PASSED [100%]
 
 =============================== warnings summary ===============================
 ../usr/local/lib/python3.11/site-packages/pyiceberg/expressions/parser.py:72
@@ -73,16 +102,67 @@ tests/functional/test_validation_rules.py::test_create_manual_validation_rule_fa
   /usr/local/lib/python3.11/site-packages/pyiceberg/table/metadata.py:550: PydanticDeprecatedSince212: Using `@model_validator` with mode='after' on a classmethod is deprecated. Instead, use an instance method. See the documentation at https://docs.pydantic.dev/2.12/concepts/validators/#model-after-validator. Deprecated in Pydantic V2.12 to be removed in V3.0.
     @model_validator(mode="after")
 
-tests/functional/test_leads.py::test_create_lead_missing_required
-tests/functional/test_leads.py::test_create_lead_input_mask_validation_failure
-tests/functional/test_leads.py::test_create_lead_duplicate_primary_field
-tests/functional/test_leads.py::test_lead_lifecycle
-tests/functional/test_leads.py::test_create_field_from_template_and_validate_failure
-tests/functional/test_validation_rules.py::test_validation_rule_test_rule_failure
-tests/functional/test_validation_rules.py::test_validation_rule_delete_rule
-tests/functional/test_validation_rules.py::test_create_manual_validation_rule_failure
+tests/functional/test_lead_fields.py: 13 warnings
+tests/functional/test_leads.py: 6 warnings
+tests/functional/test_validation_rules.py: 3 warnings
   /code/tests/fixtures/db_fixtures.py:107: SAWarning: transaction already deassociated from connection
     transaction.rollback()
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-======================= 20 passed, 20 warnings in 2.29s ========================
+======================= 47 passed, 34 warnings in 3.59s ========================
+eads/?campaign_id=36 "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] Obteniendo listado de Lead Lead...
+2026-01-10 18:57:40 [INFO] HTTP Request: GET http://testserver/leads/?campaign_id=37 "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 400 Bad Request"
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] Creando Regla ValidationRule...
+2026-01-10 18:57:40 [INFO] ValidationRule creado correctamente (ID=None).
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/validation_rules/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] Creando Regla ValidationRule...
+2026-01-10 18:57:40 [INFO] ValidationRule creado correctamente (ID=None).
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/validation_rules/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 400 Bad Request"
+2026-01-10 18:57:40 [INFO] Creando Regla ValidationRule...
+2026-01-10 18:57:40 [INFO] ValidationRule creado correctamente (ID=None).
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/validation_rules/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] Eliminando ValidationRule(10)...
+2026-01-10 18:57:40 [INFO] ValidationRule(10) eliminado correctamente.
+2026-01-10 18:57:40 [INFO] HTTP Request: DELETE http://testserver/validation_rules/10 "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] Obteniendo ValidationRule(10)...
+2026-01-10 18:57:40 [INFO] HTTP Request: GET http://testserver/validation_rules/10 "HTTP/1.1 404 Not Found"
+2026-01-10 18:57:40 [INFO] Creando Regla ValidationRule...
+2026-01-10 18:57:40 [INFO] ValidationRule creado correctamente (ID=None).
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/validation_rules/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] Creando Regla ValidationRule...
+2026-01-10 18:57:40 [INFO] ValidationRule creado correctamente (ID=None).
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/validation_rules/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 400 Bad Request"
+2026-01-10 18:57:41 [INFO] Creando Workspace...
+2026-01-10 18:57:41 [INFO] Workspace creado correctamente (ID=None).
+2026-01-10 18:57:41 [INFO] HTTP Request: POST http://testserver/workspaces/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:41 [INFO] Creando Workspace...
+2026-01-10 18:57:41 [INFO] Workspace creado correctamente (ID=None).
+2026-01-10 18:57:41 [INFO] HTTP Request: POST http://testserver/workspaces/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:41 [INFO] HTTP Request: DELETE http://testserver/workspaces/45/ "HTTP/1.1 307 Temporary Redirect"
+2026-01-10 18:57:41 [INFO] Eliminando Workspace(45)...
+2026-01-10 18:57:41 [INFO] Workspace(45) eliminado correctamente.
+2026-01-10 18:57:41 [INFO] HTTP Request: DELETE http://testserver/workspaces/45 "HTTP/1.1 200 OK"
+2026-01-10 18:57:41 [INFO] Creando Workspace...
+2026-01-10 18:57:41 [INFO] Workspace creado correctamente (ID=None).
+2026-01-10 18:57:41 [INFO] HTTP Request: POST http://testserver/workspaces/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:41 [INFO] HTTP Request: PUT http://testserver/workspaces/46/ "HTTP/1.1 307 Temporary Redirect"
+2026-01-10 18:57:41 [INFO] Actualizando Workspace(46)...
+2026-01-10 18:57:41 [INFO] Workspace(46) actualizado correctamente.
+2026-01-10 18:57:41 [INFO] HTTP Request: PUT http://testserver/workspaces/46 "HTTP/1.1 200 OK"
+2026-01-10 18:57:41 [INFO] Creando Workspace...
+2026-01-10 18:57:41 [INFO] Workspace creado correctamente (ID=None).
+2026-01-10 18:57:41 [INFO] HTTP Request: POST http://testserver/workspaces/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:41 [INFO] Creando Campaign...
+2026-01-10 18:57:41 [INFO] Campaign creado correctamente (ID=None).
+2026-01-10 18:57:41 [INFO] HTTP Request: POST http://testserver/campaigns/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:41 [INFO] HTTP Request: DELETE http://testserver/workspaces/47/ "HTTP/1.1 307 Temporary Redirect"
+2026-01-10 18:57:41 [INFO] Eliminando Workspace(47)...
+2026-01-10 18:57:41 [INFO] Workspace(47) eliminado correctamente.
+2026-01-10 18:57:41 [INFO] HTTP Request: DELETE http://testserver/workspaces/47 "HTTP/1.1 200 OK"
