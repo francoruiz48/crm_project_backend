@@ -64,6 +64,9 @@ class LeadValidationLogic:
                 if value is None:
                     continue 
 
+                if hasattr(rule, 'active') and not rule.active:
+                    continue
+
                 is_valid = SimpleEval(
                     names=context_names, 
                     functions=allowed_functions

@@ -8,6 +8,8 @@ from app.models.nomenclator import Nomenclator
 from app.models.nomenclator_item import NomenclatorItem
 from app.models.security_models import Permission, Role, User
 from app.models.workspace import Workspace
+from app.models.lead_field_subtype import LeadFieldSubtype
+from app.models.lead_field_section import LeadFieldSection
 
 # -----------------------------------------------------------------------------
 # HELPER GENÉRICO
@@ -72,8 +74,13 @@ def seed_generic(
 # -----------------------------------------------------------------------------
 # EXECUTOR PRINCIPAL
 # -----------------------------------------------------------------------------
-def run_seeds():
-    db = SessionLocal()
+def run_seeds(db=None):
+
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+
     try:
         print("🌱 Iniciando Seeders...")
         
@@ -85,8 +92,17 @@ def run_seeds():
         seed_lead_field_types(db)
         db.commit()
 
+        seed_lead_field_subtypes(db)
+        db.commit()
+
+        seed_lead_field_sections(db)
+        db.commit()
+
         # 3. Geografía
         seed_geography_separated(db)
+        db.commit()
+
+        seed_nomenclator_sex(db)
         db.commit()
 
         print("🚀 Seeders finalizados correctamente.")
@@ -96,8 +112,19 @@ def run_seeds():
         db.rollback()
         raise
     finally:
-        db.close()
+        if should_close:
+            db.close()
 
+
+def seed_lead_field_sections(db):
+    print("🔹 Procesando Secciones de Campos...")
+    datos = [
+        {"name": "Datos Personales"},       
+        {"name": "Información de Contacto"},
+        {"name": "Detalles Adicionales"}          
+    ]
+    # Usamos 'name' como clave única para no duplicar
+    seed_generic(db, model=LeadFieldSection, items=datos, unique_by=["name"])
 
 # -----------------------------------------------------------------------------
 # 1. SEED LEAD FIELD TYPES
@@ -110,11 +137,21 @@ def seed_lead_field_types(db):
         {"code": "NUMBER", "description": "Número decimal"},
         {"code": "DATE", "description": "Fecha"},
         {"code": "BOOL", "description": "Valor verdadero/falso"},
+        {"code": "NOMENCLATOR", "description": "Selector"},
         {"code": "FILE", "description": "Archivo"},
     ]
     seed_generic(db, model=LeadFieldType, items=datos, unique_by=["code"])
 
-
+def seed_lead_field_subtypes(db):
+    print("🔹 Procesando LeadFieldSubTypes...")
+    datos = [
+        {"code": "MULTIPLE", "description": "Multiple", "lead_field_type_code": "NOMENCLATOR"},
+        {"code": "SINGLE", "description": "Simple", "lead_field_type_code": "NOMENCLATOR"},
+        {"code": "IMAGE", "description": "Imagen", "lead_field_type_code": "FILE"},
+        {"code": "DOCUMENT", "description": "Documento", "lead_field_type_code": "FILE"},
+    ]
+    seed_generic(db, model=LeadFieldSubtype, items=datos, unique_by=["code"],resolve_fk={"lead_field_type_code": (LeadFieldType, "code")}
+    )
 # -----------------------------------------------------------------------------
 # 2. SEED RBAC (Corregido con validaciones)
 # -----------------------------------------------------------------------------
@@ -133,7 +170,8 @@ def seed_rbac(db):
         "role",
         "permission",
         "workspace",
-        "lead_field_section"
+        "lead_field_section",
+        "lead_field_subtype",
     ]
 
     # 2. Definimos las acciones estándar
@@ -233,14 +271,8 @@ def seed_rbac(db):
     
     db.commit() # Guardamos todo al final
 
-# -----------------------------------------------------------------------------
-# 3. SEED GEOGRAFÍA
-# -----------------------------------------------------------------------------
-def seed_geography_separated(db):
-    print("🌍 Iniciando Seed de Geografía...")
 
-    # Helpers específicos para geografía
-    def _get_or_create_nom(name):
+def get_or_create_nomenclator(db, name):
         nom = db.query(Nomenclator).filter_by(name=name).first()
         if not nom:
             nom = Nomenclator(name=name)
@@ -248,23 +280,28 @@ def seed_geography_separated(db):
             db.flush()
         return nom
 
-    def _get_or_create_item(nomenclator_id, code, value, parent_id):
-        item = db.query(NomenclatorItem).filter_by(code=code, nomenclator_id=nomenclator_id).first()
-        if not item:
-            item = NomenclatorItem(
-                code=code,
-                value=value,
-                nomenclator_id=nomenclator_id,
-                parent_item_id=parent_id
-            )
-            db.add(item)
-            db.flush()
-        return item
+def get_or_create_nomenclator_item(db, nomenclator_id, code, value, parent_id):
+    item = db.query(NomenclatorItem).filter_by(code=code, nomenclator_id=nomenclator_id).first()
+    if not item:
+        item = NomenclatorItem(
+            code=code,
+            value=value,
+            nomenclator_id=nomenclator_id,
+            parent_item_id=parent_id
+        )
+        db.add(item)
+        db.flush()
+    return item
+
+# -----------------------------------------------------------------------------
+# 3. SEED GEOGRAFÍA
+# -----------------------------------------------------------------------------
+def seed_geography_separated(db):
+    print("🌍 Iniciando Seed de Geografía...")
 
     # 1. Nomencladores Base
-    nom_pais = _get_or_create_nom("Países")
-    nom_prov = _get_or_create_nom("Provincias")
-    # nom_ciud = _get_or_create_nom("Ciudades") # Opcional
+    nom_pais = get_or_create_nomenclator(db, "Países")
+    nom_prov = get_or_create_nomenclator(db, "Provincias")
 
     # 2. Datos Externos
     TARGET_COUNTRIES = ["AR", "CL", "BR", "ES", "US"] 
@@ -288,7 +325,8 @@ def seed_geography_separated(db):
             c_states = country['states']
 
             # País
-            country_item = _get_or_create_item(
+            country_item = get_or_create_nomenclator_item(
+                db=db,
                 nomenclator_id=nom_pais.id, 
                 code=c_iso, 
                 value=c_name, 
@@ -302,7 +340,8 @@ def seed_geography_separated(db):
                 s_code_suffix = state.get('state_code') or re.sub(r'[^a-zA-Z0-9]', '', s_name)[:3].upper()
                 s_full_code = f"{c_iso}-{s_code_suffix}"
 
-                _get_or_create_item(
+                get_or_create_nomenclator_item(
+                    db=db,
                     nomenclator_id=nom_prov.id,
                     code=s_full_code,
                     value=s_name,
@@ -314,7 +353,24 @@ def seed_geography_separated(db):
         # No hacemos rollback aquí para no matar los seeds anteriores, solo geografía fallará
 
 
+def seed_nomenclator_sex(db):
+    print("🔹 Procesando Nomenclador 'Sexo'...")
+    datos = [
+        {"code": "MALE", "value": "Masculino"},
+        {"code": "FEMALE", "value": "Femenino"},
+        {"code": "OTHER", "value": "Otro"},
+    ]
 
+    nom_gen = get_or_create_nomenclator(db, "Genero")
+
+    for item in datos:
+        get_or_create_nomenclator_item(
+            db=db,
+            nomenclator_id=nom_gen.id, 
+            code=item["code"],
+            value=item["value"],
+            parent_id=None
+        )
 
 
 

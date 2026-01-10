@@ -7,6 +7,7 @@ from app.db.repository.lead_repository import LeadRepository
 from app.db.repository.lead_field_repository import LeadFieldRepository
 from app.db.unit_of_work import UnitOfWork
 from app.services.lead_validation_logic import LeadValidationLogic
+from app.core.error_messages import SUCCESS_DELETE
 
 class LeadService(BaseService):
     repository = LeadRepository
@@ -24,9 +25,11 @@ class LeadService(BaseService):
         def dict(self, **kwargs):
             return self._data
         
-        # Agregamos __getitem__ por si acaso alguna librería intenta acceder como dict
+        def model_dump(self, **kwargs):
+            return self._data
+        
         def __getitem__(self, item):
-            return self._data[item]
+            return self._data.get(item)
     # ---------------------------------------------------------
     # Helpers de Lógica de Negocio
     # ---------------------------------------------------------
@@ -161,6 +164,12 @@ class LeadService(BaseService):
         
         # [MEJORA] Validaciones estrictas con mensajes claros
         if type_code == "INT":
+            if isinstance(value, bool):
+                raise ValueError(f"El campo '{field.name}' espera un número entero, recibió un valor booleano.")
+            
+            if isinstance(value, float) and not value.is_integer():
+                 raise ValueError(f"El campo '{field.name}' espera un número entero, recibió un decimal '{value}'.")
+            
             try:
                 # Intentamos convertir. Si es "Pedro", fallará.
                 int(value)
@@ -192,7 +201,26 @@ class LeadService(BaseService):
         
         for field in field_defs_list:
             val = full_context.get(field.id)
+
             try:
+                if val is None:
+                    if field.required: raise ValueError(f"Campo '{field.name}' es obligatorio.")
+                    continue
+
+                if field.field_type_code == "NOMENCLATOR":
+                    if isinstance(val, list):
+                        items_ids = val
+                    else:
+                        items_ids = [val]
+                    
+                    if field.field_subtype_code == "NOMENCLATOR_SINGLE":
+                        if len(items_ids) > 1:
+                            raise ValueError(f"El campo '{field.name}' solo acepta una opción, recibidos: {len(items_ids)}")
+                    
+                    if not all(isinstance(x, int) for x in items_ids):
+                        raise ValueError(f"Campo '{field.name}': IDs inválidos.")
+
+            
                 # Paso 1: Validar definición básica
                 cls._check_field_definition(field, val)
 
@@ -206,6 +234,7 @@ class LeadService(BaseService):
 
             except ValueError as e:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e))
+            
 
     @classmethod
     def _reconstruct_items_for_repo(cls, processed_data: dict, field_defs_list: list):
@@ -216,12 +245,17 @@ class LeadService(BaseService):
             
             item_dict = {'field_id': fid}
             
-            if field_def.nomenclator_id is not None:
-                item_dict['nomenclator_item_id'] = val
+            if field_def.field_type_code == "NOMENCLATOR":
+                # Normalizamos a lista
+                ids_list = val if isinstance(val, list) else [val]
+                if not val: ids_list = [] # Manejo de None/Vacío
+                
+                # Pasamos la LISTA de IDs en una clave especial temporal para el repo
+                item_dict['nomenclator_ids_list'] = ids_list 
                 item_dict['value'] = None
             else:
-                item_dict['nomenclator_item_id'] = None
                 item_dict['value'] = val
+                item_dict['nomenclator_ids_list'] = [] # Vacío
             
             items_for_repo.append(cls.ItemProxy(item_dict))
         return items_for_repo
@@ -234,7 +268,6 @@ class LeadService(BaseService):
     def create(cls, obj_in, created_by=None):
         campaign_id = obj_in.campaign_id
         with UnitOfWork() as uow:
-            # 1. Obtener definiciones de la campaña
             all_field_defs = cls.field_repository.get_all_active_with_rules(uow.session)
             
             # Validación: Campos pertenecen a la campaña
@@ -248,11 +281,17 @@ class LeadService(BaseService):
 
             # Filtramos solo los campos de ESTA campaña
             current_campaign_defs = [f for f in all_field_defs if f.campaign_id == campaign_id]
+
+            if not current_campaign_defs:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, 
+                    detail="La campaña no tiene campos activos configurados. Debe crear al menos un campo antes de cargar Leads."
+                )
             
             # 2. Input -> Dict
             context_data = cls._prepare_context_dict(obj_in.values)
 
-            # 3. [NUEVO] Rellenar campos faltantes con None
+            # 3. Rellenar campos faltantes con None
             # Esto asegura que si el user no manda un campo opcional, lo tengamos en el dict como None
             context_data = cls._fill_missing_fields(context_data, current_campaign_defs)
 
@@ -284,7 +323,7 @@ class LeadService(BaseService):
                 cls._not_found(obj_id)
             
             # B. Update Campos Base (active, campaign_id)
-            lead_data = obj_in.dict(exclude_unset=True, exclude={"values"})
+            lead_data = obj_in.model_dump(exclude_unset=True, exclude={"values"})
             if lead_data:
                 cls.repository.update(uow.session, obj_id, lead_data)
 
@@ -305,7 +344,21 @@ class LeadService(BaseService):
                 
                 db_values = {}
                 for v in current_lead.field_values:
-                    val = v.nomenclator_item_id if v.nomenclator_item_id is not None else v.value
+                    # [CORRECCIÓN] Adaptación a M2M y Pydantic Models
+                    
+                    # A. Intentar obtener valor simple
+                    val = getattr(v, "value", None)
+                    
+                    # B. Si no hay valor simple, revisar si es Nomenclador (Lista de items)
+                    # El modelo de respuesta ahora tiene 'nomenclator_items', no 'nomenclator_item_id'
+                    if val is None:
+                        if hasattr(v, "nomenclator_items") and v.nomenclator_items:
+                            # Extraemos los IDs de la lista de objetos
+                            val = [item.id for item in v.nomenclator_items]
+                        # Fallback por compatibilidad si en algún lado quedó el campo viejo
+                        elif hasattr(v, "nomenclator_item_id") and v.nomenclator_item_id:
+                            val = v.nomenclator_item_id
+
                     db_values[v.field_id] = val
                 
                 full_context = {**db_values, **incoming_data}
@@ -326,20 +379,6 @@ class LeadService(BaseService):
         with UnitOfWork() as uow_read:
             return cls.repository.get_by_id(uow_read.session, obj_id, detailed=True)
         
-    @classmethod
-    def get_all(cls, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, only_active: bool = True, detailed: bool = False, campaign_id: int = None):
-        return cls._execute(
-            action="Obteniendo Leads",
-            func=lambda uow: cls.repository.get_all(
-                session=uow.session, 
-                page=page,
-                page_size=page_size,
-                only_active=only_active, 
-                detailed=detailed, 
-                campaign_id=campaign_id
-            )
-        )
-    
 
     @classmethod
     def search(cls, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, detailed: bool = False, search_req=None):
@@ -353,3 +392,4 @@ class LeadService(BaseService):
                 detailed=detailed
             )
         )
+    

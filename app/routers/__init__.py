@@ -12,6 +12,7 @@ from app.controllers.security_controllers.permission_controller import router as
 from app.controllers.workspace_controller import router as workspace_router
 from app.controllers.storage_controller import router as storage_router
 from app.controllers.lead_field_section_controller import router as lead_field_section_router
+from app.controllers.lead_field_subtype_controller import router as lead_field_subtype_router
 
 router = APIRouter()
 
@@ -28,3 +29,4 @@ router.include_router(permission_router)
 router.include_router(workspace_router)
 router.include_router(storage_router)
 router.include_router(lead_field_section_router)
+router.include_router(lead_field_subtype_router)

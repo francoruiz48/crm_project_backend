@@ -2,7 +2,6 @@
 from app.models.base_model import BaseModelDB
 from sqlalchemy import Column, Integer, String, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
-
 from app.models.validation_rule import ValidationRule
 
 class LeadField(BaseModelDB):
@@ -22,9 +21,11 @@ class LeadField(BaseModelDB):
     field_template_code = Column(String, nullable=True)
     field_type_code = Column(String, ForeignKey("lead_field_type.code"), nullable=False)
     lead_field_section_id = Column(Integer, ForeignKey("lead_field_section.id"), nullable=False)
+    field_subtype_code = Column(String, ForeignKey("lead_field_subtype.code"), nullable=True)
     
     field_type = relationship("LeadFieldType", back_populates="fields", foreign_keys=[field_type_code])
-    field_values = relationship("LeadFieldValue", back_populates="field", cascade="all, delete-orphan")
+    field_subtype = relationship("LeadFieldSubtype", foreign_keys=[field_subtype_code])
+    field_values = relationship("LeadFieldValue", back_populates="field")
     validation_rules = relationship("ValidationRule", back_populates="field", foreign_keys=lambda: [ValidationRule.field_id], cascade="all, delete-orphan")
     campaign = relationship("Campaign", foreign_keys=[campaign_id])
     nomenclator = relationship("Nomenclator", foreign_keys=[nomenclator_id])

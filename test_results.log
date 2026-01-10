@@ -1,296 +1,168 @@
-============================= test session starts ==============================
-platform linux -- Python 3.11.14, pytest-9.0.2, pluggy-1.6.0 -- /usr/local/bin/python3.11
-cachedir: .pytest_cache
-rootdir: /code
-plugins: anyio-4.12.0, asyncio-1.3.0
-asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collecting ... collected 4 items
+2026-01-10 18:57:39 [INFO] Creando Campo de Lead LeadField...
+2026-01-10 18:57:39 [INFO] Campo configurado exitosamente.
+2026-01-10 18:57:39 [INFO] HTTP Request: POST http://testserver/lead_fields/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:39 [INFO] Eliminando LeadField(1)...
+2026-01-10 18:57:39 [INFO] LeadField(1) eliminado correctamente.
+2026-01-10 18:57:39 [INFO] HTTP Request: DELETE http://testserver/lead_fields/1 "HTTP/1.1 200 OK"
+2026-01-10 18:57:39 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:39 [INFO] Creando Campo de Lead LeadField...
+2026-01-10 18:57:39 [INFO] Campo configurado exitosPASSED [  4%]
+tests/functional/test_lead_fields.py::test_lead_field_delete_with_data_soft_delete PASSED [  6%]
+tests/functional/test_lead_fields.py::test_create_lead_ignores_disabled_required_field PASSED [  8%]
+tests/functional/test_lead_fields.py::test_cannot_add_required_field_to_campaign_with_leads PASSED [ 10%]
+tests/functional/test_lead_fields.py::test_reactivate_field PASSED       [ 12%]
+tests/functional/test_lead_fields.py::test_create_lead_fails_no_fields_defined PASSED [ 14%]
+tests/functional/test_lead_fields.py::test_create_lead_fails_all_fields_disabled PASSED [ 17%]
+tests/functional/test_lead_fields.py::test_create_lead_success_empty_values_optional_fields PASSED [ 19%]
+tests/functional/test_lead_fields.py::test_create_field_fail_order_collision PASSED [ 21%]
+tests/functional/test_lead_fields.py::test_create_field_fail_nomenclator_type_mismatch PASSED [ 23%]
+tests/functional/test_lead_fields.py::test_create_field_fail_subtype_mismatch PASSED [ 25%]
+tests/functional/test_lead_fields.py::test_create_field_fail_missing_subtype PASSED [ 27%]
+tests/functional/test_lead_fields.py::test_create_field_fail_primary_with_existing_leads PASSED [ 29%]
+tests/functional/test_lead_fields.py::test_update_field_fail_change_type PASSED [ 31%]
+tests/functional/test_lead_fields.py::test_update_field_fail_required_with_null_values PASSED [ 34%]
+tests/functional/test_lead_fields.py::test_get_fields_filtering_active PASSED [ 36%]
+tests/functional/test_lead_fields.py::test_create_field_fail_invalid_template PASSED [ 38%]
+tests/functional/test_lead_fields.py::test_delete_field_cascades_validation_rules PASSED [ 40%]
+tests/functional/test_lead_fields.py::test_reactivate_field_name_conflict PASSED [ 42%]
+tests/functional/test_lead_fields.py::test_update_field_fail_required_with_existing_nulls PASSED [ 44%]
+tests/functional/test_leads.py::test_get_empty_leads PASSED              [ 46%]
+tests/functional/test_leads.py::test_create_lead_simple_values PASSED    [ 48%]
+tests/functional/test_leads.py::test_create_lead_missing_required PASSED [ 51%]
+tests/functional/test_leads.py::test_create_lead_various_types PASSED    [ 53%]
+tests/functional/test_leads.py::test_create_lead_input_mask_validation_failure PASSED [ 55%]
+tests/functional/test_leads.py::test_create_lead_input_mask_validation_success PASSED [ 57%]
+tests/functional/test_leads.py::test_create_lead_duplicate_primary_field PASSED [ 59%]
+tests/functional/test_leads.py::test_lead_lifecycle PASSED               [ 61%]
+tests/functional/test_leads.py::test_search_leads_advanced PASSED        [ 63%]
+tests/functional/test_leads.py::test_create_lead_with_multiple_nomenclator PASSED [ 65%]
+tests/functional/test_leads.py::test_search_lead_by_nomenclator PASSED   [ 68%]
+tests/functional/test_leads.py::test_create_field_from_template PASSED   [ 70%]
+tests/functional/test_leads.py::test_create_field_from_template_and_validate_success PASSED [ 72%]
+tests/functional/test_leads.py::test_create_field_from_template_and_validate_failure PASSED [ 74%]
+tests/functional/test_leads.py::test_get_leads_filtering PASSED          [ 76%]
+tests/functional/test_leads.py::test_create_lead_int_validation_case_of_decimal PASSED [ 78%]
+tests/functional/test_leads.py::test_create_lead_int_validation_case_of_huge_int PASSED [ 80%]
+tests/functional/test_validation_rules.py::test_validation_rule_test_rule_success PASSED [ 82%]
+tests/functional/test_validation_rules.py::test_validation_rule_test_rule_failure PASSED [ 85%]
+tests/functional/test_validation_rules.py::test_validation_rule_delete_rule PASSED [ 87%]
+tests/functional/test_validation_rules.py::test_create_manual_validation_rule_success PASSED [ 89%]
+tests/functional/test_validation_rules.py::test_create_manual_validation_rule_failure PASSED [ 91%]
+tests/functional/test_workspace_and_campaign.py::test_workspace_create PASSED [ 93%]
+tests/functional/test_workspace_and_campaign.py::test_workspace_delete PASSED [ 95%]
+tests/functional/test_workspace_and_campaign.py::test_workspace_update PASSED [ 97%]
+tests/functional/test_workspace_and_campaign.py::test_workspace_delete_when_exists_campaign PASSED [100%]
 
-tests/test_leads.py::test_get_empty_leads PASSED                         [ 25%]
-tests/test_leads.py::test_create_lead_success ERROR                      [ 50%]
-tests/test_leads.py::test_get_leads ERROR                                [ 75%]
-tests/test_leads.py::test_create_lead_missing_values PASSED              [100%]
-
-==================================== ERRORS ====================================
-__________________ ERROR at setup of test_create_lead_success __________________
-
-fixturedef = <FixtureDef argname='initial_fields' scope='function' baseid='tests'>
-request = <SubRequest 'initial_fields' for <Function test_create_lead_success>>
-
-    @pytest.hookimpl(wrapper=True)
-    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
-        asyncio_mode = _get_asyncio_mode(request.config)
-        if not _is_asyncio_fixture_function(fixturedef.func):
-            if asyncio_mode == Mode.STRICT:
-                # Ignore async fixtures without explicit asyncio mark in strict mode
-                # This applies to pytest_trio fixtures, for example
->               return (yield)
-                        ^^^^^
-
-/usr/local/lib/python3.11/site-packages/pytest_asyncio/plugin.py:728: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/conftest.py:48: in initial_fields
-    nombre_field = LeadField(name="Nombre", field_type_id=string_type.id, required=True)
-                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/state.py:596: in _initialize_instance
-    with util.safe_reraise():
-/usr/local/lib/python3.11/site-packages/sqlalchemy/util/langhelpers.py:224: in __exit__
-    raise exc_value.with_traceback(exc_tb)
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/state.py:594: in _initialize_instance
-    manager.original_init(*mixed[1:], **kwargs)
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-
-self = <LeadField(id=None)>
-kwargs = {'field_type_id': 1, 'name': 'Nombre', 'required': True}
-cls_ = <class 'app.models.lead_field.LeadField'>, k = 'field_type_id'
-
-    def _declarative_constructor(self: Any, **kwargs: Any) -> None:
-        """A simple constructor that allows initialization from kwargs.
-    
-        Sets attributes on the constructed instance using the names and
-        values in ``kwargs``.
-    
-        Only keys that are present as
-        attributes of the instance's class are allowed. These could be,
-        for example, any mapped columns or relationships.
-        """
-        cls_ = type(self)
-        for k in kwargs:
-            if not hasattr(cls_, k):
->               raise TypeError(
-                    "%r is an invalid keyword argument for %s" % (k, cls_.__name__)
-                )
-E               TypeError: 'field_type_id' is an invalid keyword argument for LeadField
-
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/decl_base.py:2179: TypeError
-_______________________ ERROR at setup of test_get_leads _______________________
-
-self = <sqlalchemy.engine.base.Connection object at 0x737546e82cd0>
-dialect = <sqlalchemy.dialects.sqlite.pysqlite.SQLiteDialect_pysqlite object at 0x737548b90f90>
-context = <sqlalchemy.dialects.sqlite.base.SQLiteExecutionContext object at 0x737546e835d0>
-statement = <sqlalchemy.dialects.sqlite.base.SQLiteCompiler object at 0x73754874a9d0>
-parameters = [('STRING', 'Texto', 1)]
-
-    def _exec_single_context(
-        self,
-        dialect: Dialect,
-        context: ExecutionContext,
-        statement: Union[str, Compiled],
-        parameters: Optional[_AnyMultiExecuteParams],
-    ) -> CursorResult[Any]:
-        """continue the _execute_context() method for a single DBAPI
-        cursor.execute() or cursor.executemany() call.
-    
-        """
-        if dialect.bind_typing is BindTyping.SETINPUTSIZES:
-            generic_setinputsizes = context._prepare_set_input_sizes()
-    
-            if generic_setinputsizes:
-                try:
-                    dialect.do_set_input_sizes(
-                        context.cursor, generic_setinputsizes, context
-                    )
-                except BaseException as e:
-                    self._handle_dbapi_exception(
-                        e, str(statement), parameters, None, context
-                    )
-    
-        cursor, str_statement, parameters = (
-            context.cursor,
-            context.statement,
-            context.parameters,
-        )
-    
-        effective_parameters: Optional[_AnyExecuteParams]
-    
-        if not context.executemany:
-            effective_parameters = parameters[0]
-        else:
-            effective_parameters = parameters
-    
-        if self._has_events or self.engine._has_events:
-            for fn in self.dispatch.before_cursor_execute:
-                str_statement, effective_parameters = fn(
-                    self,
-                    cursor,
-                    str_statement,
-                    effective_parameters,
-                    context,
-                    context.executemany,
-                )
-    
-        if self._echo:
-            self._log_info(str_statement)
-    
-            stats = context._get_cache_stats()
-    
-            if not self.engine.hide_parameters:
-                self._log_info(
-                    "[%s] %r",
-                    stats,
-                    sql_util._repr_params(
-                        effective_parameters,
-                        batches=10,
-                        ismulti=context.executemany,
-                    ),
-                )
-            else:
-                self._log_info(
-                    "[%s] [SQL parameters hidden due to hide_parameters=True]",
-                    stats,
-                )
-    
-        evt_handled: bool = False
-        try:
-            if context.execute_style is ExecuteStyle.EXECUTEMANY:
-                effective_parameters = cast(
-                    "_CoreMultiExecuteParams", effective_parameters
-                )
-                if self.dialect._has_events:
-                    for fn in self.dialect.dispatch.do_executemany:
-                        if fn(
-                            cursor,
-                            str_statement,
-                            effective_parameters,
-                            context,
-                        ):
-                            evt_handled = True
-                            break
-                if not evt_handled:
-                    self.dialect.do_executemany(
-                        cursor,
-                        str_statement,
-                        effective_parameters,
-                        context,
-                    )
-            elif not effective_parameters and context.no_parameters:
-                if self.dialect._has_events:
-                    for fn in self.dialect.dispatch.do_execute_no_params:
-                        if fn(cursor, str_statement, context):
-                            evt_handled = True
-                            break
-                if not evt_handled:
-                    self.dialect.do_execute_no_params(
-                        cursor, str_statement, context
-                    )
-            else:
-                effective_parameters = cast(
-                    "_CoreSingleExecuteParams", effective_parameters
-                )
-                if self.dialect._has_events:
-                    for fn in self.dialect.dispatch.do_execute:
-                        if fn(
-                            cursor,
-                            str_statement,
-                            effective_parameters,
-                            context,
-                        ):
-                            evt_handled = True
-                            break
-                if not evt_handled:
->                   self.dialect.do_execute(
-                        cursor, str_statement, effective_parameters, context
-                    )
-
-/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1967: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-
-self = <sqlalchemy.dialects.sqlite.pysqlite.SQLiteDialect_pysqlite object at 0x737548b90f90>
-cursor = <sqlite3.Cursor object at 0x737546b2ce40>
-statement = 'INSERT INTO lead_field_type (code, description, active) VALUES (?, ?, ?) RETURNING id, created_at, updated_at'
-parameters = ('STRING', 'Texto', 1)
-context = <sqlalchemy.dialects.sqlite.base.SQLiteExecutionContext object at 0x737546e835d0>
-
-    def do_execute(self, cursor, statement, parameters, context=None):
->       cursor.execute(statement, parameters)
-E       sqlite3.IntegrityError: UNIQUE constraint failed: lead_field_type.code
-
-/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/default.py:952: IntegrityError
-
-The above exception was the direct cause of the following exception:
-
-fixturedef = <FixtureDef argname='initial_fields' scope='function' baseid='tests'>
-request = <SubRequest 'initial_fields' for <Function test_get_leads>>
-
-    @pytest.hookimpl(wrapper=True)
-    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
-        asyncio_mode = _get_asyncio_mode(request.config)
-        if not _is_asyncio_fixture_function(fixturedef.func):
-            if asyncio_mode == Mode.STRICT:
-                # Ignore async fixtures without explicit asyncio mark in strict mode
-                # This applies to pytest_trio fixtures, for example
->               return (yield)
-                        ^^^^^
-
-/usr/local/lib/python3.11/site-packages/pytest_asyncio/plugin.py:728: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-tests/conftest.py:44: in initial_fields
-    db_session.commit()
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py:2030: in commit
-    trans.commit(_to_root=True)
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/state_changes.py:137: in _go
-    ret_value = fn(self, *arg, **kw)
-                ^^^^^^^^^^^^^^^^^^^^
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py:1311: in commit
-    self._prepare_impl()
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/state_changes.py:137: in _go
-    ret_value = fn(self, *arg, **kw)
-                ^^^^^^^^^^^^^^^^^^^^
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py:1286: in _prepare_impl
-    self.session.flush()
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py:4331: in flush
-    self._flush(objects)
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py:4466: in _flush
-    with util.safe_reraise():
-/usr/local/lib/python3.11/site-packages/sqlalchemy/util/langhelpers.py:224: in __exit__
-    raise exc_value.with_traceback(exc_tb)
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/session.py:4427: in _flush
-    flush_context.execute()
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/unitofwork.py:466: in execute
-    rec.execute(self)
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/unitofwork.py:642: in execute
-    util.preloaded.orm_persistence.save_obj(
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/persistence.py:93: in save_obj
-    _emit_insert_statements(
-/usr/local/lib/python3.11/site-packages/sqlalchemy/orm/persistence.py:1233: in _emit_insert_statements
-    result = connection.execute(
-/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1419: in execute
-    return meth(
-/usr/local/lib/python3.11/site-packages/sqlalchemy/sql/elements.py:527: in _execute_on_connection
-    return connection._execute_clauseelement(
-/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1641: in _execute_clauseelement
-    ret = self._execute_context(
-/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1846: in _execute_context
-    return self._exec_single_context(
-/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1986: in _exec_single_context
-    self._handle_dbapi_exception(
-/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py:2363: in _handle_dbapi_exception
-    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
-/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/base.py:1967: in _exec_single_context
-    self.dialect.do_execute(
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
-
-self = <sqlalchemy.dialects.sqlite.pysqlite.SQLiteDialect_pysqlite object at 0x737548b90f90>
-cursor = <sqlite3.Cursor object at 0x737546b2ce40>
-statement = 'INSERT INTO lead_field_type (code, description, active) VALUES (?, ?, ?) RETURNING id, created_at, updated_at'
-parameters = ('STRING', 'Texto', 1)
-context = <sqlalchemy.dialects.sqlite.base.SQLiteExecutionContext object at 0x737546e835d0>
-
-    def do_execute(self, cursor, statement, parameters, context=None):
->       cursor.execute(statement, parameters)
-E       sqlalchemy.exc.IntegrityError: (sqlite3.IntegrityError) UNIQUE constraint failed: lead_field_type.code
-E       [SQL: INSERT INTO lead_field_type (code, description, active) VALUES (?, ?, ?) RETURNING id, created_at, updated_at]
-E       [parameters: ('STRING', 'Texto', 1)]
-E       (Background on this error at: https://sqlalche.me/e/20/gkpj)
-
-/usr/local/lib/python3.11/site-packages/sqlalchemy/engine/default.py:952: IntegrityError
 =============================== warnings summary ===============================
-app/core/config.py:3
-  /code/app/core/config.py:3: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
-    class Settings(BaseSettings):
+../usr/local/lib/python3.11/site-packages/pyiceberg/expressions/parser.py:72
+  /usr/local/lib/python3.11/site-packages/pyiceberg/expressions/parser.py:72: DeprecationWarning: 'enablePackrat' deprecated - use 'enable_packrat'
+    ParserElement.enablePackrat()
+
+../usr/local/lib/python3.11/site-packages/pyiceberg/expressions/parser.py:85
+  /usr/local/lib/python3.11/site-packages/pyiceberg/expressions/parser.py:85: DeprecationWarning: 'escChar' argument is deprecated, use 'esc_char'
+    quoted_identifier = QuotedString('"', escChar="\\", unquoteResults=True)
+
+../usr/local/lib/python3.11/site-packages/pyiceberg/expressions/parser.py:85
+  /usr/local/lib/python3.11/site-packages/pyiceberg/expressions/parser.py:85: DeprecationWarning: 'unquoteResults' argument is deprecated, use 'unquote_results'
+    quoted_identifier = QuotedString('"', escChar="\\", unquoteResults=True)
+
+../usr/local/lib/python3.11/site-packages/pyiceberg/table/metadata.py:365
+  /usr/local/lib/python3.11/site-packages/pyiceberg/table/metadata.py:365: PydanticDeprecatedSince212: Using `@model_validator` with mode='after' on a classmethod is deprecated. Instead, use an instance method. See the documentation at https://docs.pydantic.dev/2.12/concepts/validators/#model-after-validator. Deprecated in Pydantic V2.12 to be removed in V3.0.
+    @model_validator(mode="after")
+
+../usr/local/lib/python3.11/site-packages/pyiceberg/table/metadata.py:494
+  /usr/local/lib/python3.11/site-packages/pyiceberg/table/metadata.py:494: PydanticDeprecatedSince212: Using `@model_validator` with mode='after' on a classmethod is deprecated. Instead, use an instance method. See the documentation at https://docs.pydantic.dev/2.12/concepts/validators/#model-after-validator. Deprecated in Pydantic V2.12 to be removed in V3.0.
+    @model_validator(mode="after")
+
+../usr/local/lib/python3.11/site-packages/pyiceberg/table/metadata.py:498
+  /usr/local/lib/python3.11/site-packages/pyiceberg/table/metadata.py:498: PydanticDeprecatedSince212: Using `@model_validator` with mode='after' on a classmethod is deprecated. Instead, use an instance method. See the documentation at https://docs.pydantic.dev/2.12/concepts/validators/#model-after-validator. Deprecated in Pydantic V2.12 to be removed in V3.0.
+    @model_validator(mode="after")
+
+../usr/local/lib/python3.11/site-packages/pyiceberg/table/metadata.py:502
+  /usr/local/lib/python3.11/site-packages/pyiceberg/table/metadata.py:502: PydanticDeprecatedSince212: Using `@model_validator` with mode='after' on a classmethod is deprecated. Instead, use an instance method. See the documentation at https://docs.pydantic.dev/2.12/concepts/validators/#model-after-validator. Deprecated in Pydantic V2.12 to be removed in V3.0.
+    @model_validator(mode="after")
+
+../usr/local/lib/python3.11/site-packages/pyiceberg/table/metadata.py:506
+  /usr/local/lib/python3.11/site-packages/pyiceberg/table/metadata.py:506: PydanticDeprecatedSince212: Using `@model_validator` with mode='after' on a classmethod is deprecated. Instead, use an instance method. See the documentation at https://docs.pydantic.dev/2.12/concepts/validators/#model-after-validator. Deprecated in Pydantic V2.12 to be removed in V3.0.
+    @model_validator(mode="after")
+
+../usr/local/lib/python3.11/site-packages/pyiceberg/table/metadata.py:538
+  /usr/local/lib/python3.11/site-packages/pyiceberg/table/metadata.py:538: PydanticDeprecatedSince212: Using `@model_validator` with mode='after' on a classmethod is deprecated. Instead, use an instance method. See the documentation at https://docs.pydantic.dev/2.12/concepts/validators/#model-after-validator. Deprecated in Pydantic V2.12 to be removed in V3.0.
+    @model_validator(mode="after")
+
+../usr/local/lib/python3.11/site-packages/pyiceberg/table/metadata.py:542
+  /usr/local/lib/python3.11/site-packages/pyiceberg/table/metadata.py:542: PydanticDeprecatedSince212: Using `@model_validator` with mode='after' on a classmethod is deprecated. Instead, use an instance method. See the documentation at https://docs.pydantic.dev/2.12/concepts/validators/#model-after-validator. Deprecated in Pydantic V2.12 to be removed in V3.0.
+    @model_validator(mode="after")
+
+../usr/local/lib/python3.11/site-packages/pyiceberg/table/metadata.py:546
+  /usr/local/lib/python3.11/site-packages/pyiceberg/table/metadata.py:546: PydanticDeprecatedSince212: Using `@model_validator` with mode='after' on a classmethod is deprecated. Instead, use an instance method. See the documentation at https://docs.pydantic.dev/2.12/concepts/validators/#model-after-validator. Deprecated in Pydantic V2.12 to be removed in V3.0.
+    @model_validator(mode="after")
+
+../usr/local/lib/python3.11/site-packages/pyiceberg/table/metadata.py:550
+  /usr/local/lib/python3.11/site-packages/pyiceberg/table/metadata.py:550: PydanticDeprecatedSince212: Using `@model_validator` with mode='after' on a classmethod is deprecated. Instead, use an instance method. See the documentation at https://docs.pydantic.dev/2.12/concepts/validators/#model-after-validator. Deprecated in Pydantic V2.12 to be removed in V3.0.
+    @model_validator(mode="after")
+
+tests/functional/test_lead_fields.py: 13 warnings
+tests/functional/test_leads.py: 6 warnings
+tests/functional/test_validation_rules.py: 3 warnings
+  /code/tests/fixtures/db_fixtures.py:107: SAWarning: transaction already deassociated from connection
+    transaction.rollback()
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-=========================== short test summary info ============================
-ERROR tests/test_leads.py::test_create_lead_success - TypeError: 'field_type_...
-ERROR tests/test_leads.py::test_get_leads - sqlalchemy.exc.IntegrityError: (s...
-==================== 2 passed, 1 warning, 2 errors in 1.48s ====================
+======================= 47 passed, 34 warnings in 3.59s ========================
+eads/?campaign_id=36 "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] Obteniendo listado de Lead Lead...
+2026-01-10 18:57:40 [INFO] HTTP Request: GET http://testserver/leads/?campaign_id=37 "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 400 Bad Request"
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] Creando Regla ValidationRule...
+2026-01-10 18:57:40 [INFO] ValidationRule creado correctamente (ID=None).
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/validation_rules/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] Creando Regla ValidationRule...
+2026-01-10 18:57:40 [INFO] ValidationRule creado correctamente (ID=None).
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/validation_rules/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 400 Bad Request"
+2026-01-10 18:57:40 [INFO] Creando Regla ValidationRule...
+2026-01-10 18:57:40 [INFO] ValidationRule creado correctamente (ID=None).
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/validation_rules/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] Eliminando ValidationRule(10)...
+2026-01-10 18:57:40 [INFO] ValidationRule(10) eliminado correctamente.
+2026-01-10 18:57:40 [INFO] HTTP Request: DELETE http://testserver/validation_rules/10 "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] Obteniendo ValidationRule(10)...
+2026-01-10 18:57:40 [INFO] HTTP Request: GET http://testserver/validation_rules/10 "HTTP/1.1 404 Not Found"
+2026-01-10 18:57:40 [INFO] Creando Regla ValidationRule...
+2026-01-10 18:57:40 [INFO] ValidationRule creado correctamente (ID=None).
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/validation_rules/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] Creando Regla ValidationRule...
+2026-01-10 18:57:40 [INFO] ValidationRule creado correctamente (ID=None).
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/validation_rules/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:40 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 400 Bad Request"
+2026-01-10 18:57:41 [INFO] Creando Workspace...
+2026-01-10 18:57:41 [INFO] Workspace creado correctamente (ID=None).
+2026-01-10 18:57:41 [INFO] HTTP Request: POST http://testserver/workspaces/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:41 [INFO] Creando Workspace...
+2026-01-10 18:57:41 [INFO] Workspace creado correctamente (ID=None).
+2026-01-10 18:57:41 [INFO] HTTP Request: POST http://testserver/workspaces/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:41 [INFO] HTTP Request: DELETE http://testserver/workspaces/45/ "HTTP/1.1 307 Temporary Redirect"
+2026-01-10 18:57:41 [INFO] Eliminando Workspace(45)...
+2026-01-10 18:57:41 [INFO] Workspace(45) eliminado correctamente.
+2026-01-10 18:57:41 [INFO] HTTP Request: DELETE http://testserver/workspaces/45 "HTTP/1.1 200 OK"
+2026-01-10 18:57:41 [INFO] Creando Workspace...
+2026-01-10 18:57:41 [INFO] Workspace creado correctamente (ID=None).
+2026-01-10 18:57:41 [INFO] HTTP Request: POST http://testserver/workspaces/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:41 [INFO] HTTP Request: PUT http://testserver/workspaces/46/ "HTTP/1.1 307 Temporary Redirect"
+2026-01-10 18:57:41 [INFO] Actualizando Workspace(46)...
+2026-01-10 18:57:41 [INFO] Workspace(46) actualizado correctamente.
+2026-01-10 18:57:41 [INFO] HTTP Request: PUT http://testserver/workspaces/46 "HTTP/1.1 200 OK"
+2026-01-10 18:57:41 [INFO] Creando Workspace...
+2026-01-10 18:57:41 [INFO] Workspace creado correctamente (ID=None).
+2026-01-10 18:57:41 [INFO] HTTP Request: POST http://testserver/workspaces/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:41 [INFO] Creando Campaign...
+2026-01-10 18:57:41 [INFO] Campaign creado correctamente (ID=None).
+2026-01-10 18:57:41 [INFO] HTTP Request: POST http://testserver/campaigns/ "HTTP/1.1 200 OK"
+2026-01-10 18:57:41 [INFO] HTTP Request: DELETE http://testserver/workspaces/47/ "HTTP/1.1 307 Temporary Redirect"
+2026-01-10 18:57:41 [INFO] Eliminando Workspace(47)...
+2026-01-10 18:57:41 [INFO] Workspace(47) eliminado correctamente.
+2026-01-10 18:57:41 [INFO] HTTP Request: DELETE http://testserver/workspaces/47 "HTTP/1.1 200 OK"

@@ -12,37 +12,61 @@ class LeadFieldValueRepository(BaseRepository):
     @classmethod
     def initialize_values_for_new_field(cls, session, campaign_id: int, new_field_id: int, default_value: str = None, is_nomenclator: bool = False):
         """
-        Crea registros LeadFieldValue para TODOS los leads existentes de una campaña.
-        Usa INSERT INTO ... SELECT para máxima eficiencia.
+        Backfill optimizado.
+        1. Crea registros LeadFieldValue para todos los leads.
+        2. Si es Nomenclador con Default, llena la tabla intermedia.
         """
         
-        # Definimos dónde guardar el valor (value o nomenclator_item_id)
-        if is_nomenclator and default_value:
-            val_col = "NULL"
-            nom_col = ":default_val" # Si es nomenclador, el default_value es el ID del item
-        else:
-            val_col = ":default_val"
-            nom_col = "NULL"
+        # 1. INSERT EN LEAD_FIELD_VALUE (Siempre se hace)
+        # Si NO es nomenclador, el default va en 'value'. Si ES nomenclador, 'value' queda NULL.
+        val_col = ":default_val" if (default_value and not is_nomenclator) else "NULL"
 
-        # SQL Crudo optimizado: 
-        # Inserta en field_values SELECCIONANDO todos los IDs de la tabla LEAD de esa campaña.
-        stmt = text(f"""
-            INSERT INTO lead_field_value (lead_id, field_id, value, nomenclator_item_id, created_at, updated_at, active)
+        # Usamos RETURNING id para obtener los IDs de los valores recién creados
+        # Esto es vital para poder llenar la tabla intermedia después
+        stmt_values = text(f"""
+            INSERT INTO lead_field_value (lead_id, field_id, value, created_at, updated_at, active)
             SELECT 
                 l.id, 
                 :field_id, 
                 {val_col}, 
-                {nom_col}, 
                 NOW(), 
                 NOW(), 
                 true
             FROM lead l
             WHERE l.campaign_id = :campaign_id
+            RETURNING id
         """)
 
-        session.execute(stmt, {
+        result = session.execute(stmt_values, {
             "field_id": new_field_id,
             "campaign_id": campaign_id,
             "default_val": default_value
         })
+        
+        # Obtenemos los IDs de los LeadFieldValues creados
+        # fetchall devuelve lista de tuplas [(id1,), (id2,)]
+        new_value_ids = [row[0] for row in result.fetchall()]
+
+        # 2. INSERT EN TABLA INTERMEDIA (Solo si es Nomenclador y tiene Default)
+        if is_nomenclator and default_value and new_value_ids:
+            # Asumimos que default_value es el ID del item (int en string)
+            try:
+                default_item_id = int(default_value)
+                
+                # Insert masivo en la tabla de asociación
+                # Usamos UNNEST para insertar múltiples filas de golpe en Postgres
+                stmt_assoc = text("""
+                    INSERT INTO lead_field_value_nomenclator (lead_field_value_id, nomenclator_item_id)
+                    SELECT unnest(:ids), :item_id
+                """)
+                
+                session.execute(stmt_assoc, {
+                    "ids": new_value_ids,
+                    "item_id": default_item_id
+                })
+                
+            except ValueError:
+                # Si el default no es un entero válido, no insertamos nada en la relación
+                pass
+
         session.flush()

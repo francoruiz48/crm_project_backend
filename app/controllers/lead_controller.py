@@ -24,7 +24,7 @@ class LeadController(BaseController):
     ]
     
     # Quitamos "GET_ALL" de aquí para que BaseController NO genere el default
-    enabled_methods = {"GET_ONE", "POST", "PUT", "DELETE"} 
+    enabled_methods = {"GET_ONE", "POST", "PUT", "DELETE"}
 
     @classmethod
     def get_router(cls):

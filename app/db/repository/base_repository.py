@@ -4,6 +4,8 @@ from sqlalchemy.orm import selectinload
 from app.core.exceptions import AppException, NotFoundException
 from app.core.error_messages import ERROR_DATABASE, ERROR_NOT_FOUND
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import inspect
+from sqlalchemy.orm.interfaces import ONETOMANY
 
 class BaseRepository:
     model = None
@@ -94,6 +96,11 @@ class BaseRepository:
         """Convierte obj_data a dict (compatible con Pydantic u dict normal)"""
         if obj_data is None:
             return {}
+        # Soporte para Pydantic V2
+        if hasattr(obj_data, "model_dump"):
+            return obj_data.model_dump(exclude_unset=True)
+            
+        # Soporte Legacy / Pydantic V1
         if hasattr(obj_data, "dict"):
             return obj_data.dict(exclude_unset=True)
         return dict(obj_data)
@@ -114,29 +121,57 @@ class BaseRepository:
             field_name = match.group(1)
             value = match.group(2)
             detail = f"El valor '{value}' para el campo '{field_name}' no existe en la base de datos relacionada."
-        elif match and "already exists" in error_msg:
+            raise AppException(detail=detail)
+        if match and "already exists" in error_msg:
             field_name = match.group(1)
             detail = f"Ya existe un registro con el campo '{field_name}' igual a los datos proporcionados."
-        else:
-            detail = "Error de integridad de datos (posible ID inválido o duplicado)."
+            raise AppException(detail=detail)
+        if "update or delete on table" in error_msg and "violates foreign key constraint" in error_msg:
+            match_table = re.search(r'on table "(.*?)"', error_msg)
+            table_name = match_table.group(1) if match_table else "otra entidad"            
+            detail = f"No se puede eliminar el registro porque está siendo utilizado en '{table_name}'."
+            raise AppException(detail=detail)
 
-        raise AppException(detail=detail)
+        match_fk = re.search(r'Key \((.*?)\)=\((.*?)\) is not present in table', error_msg)
+        if match_fk:
+            field_name = match_fk.group(1)
+            value = match_fk.group(2)
+            raise AppException(detail=f"El valor '{value}' para '{field_name}' no existe.")
+
+        match_dup = re.search(r'Key \((.*?)\)=\((.*?)\) already exists', error_msg)
+        if match_dup:
+            field_name = match_dup.group(1)
+            value = match_dup.group(2)
+            raise AppException(detail=f"Ya existe un registro con {field_name}='{value}'.")
+        raise AppException(detail="Error de integridad de datos en la base de datos.")
 
     # ----------------- CRUD Genérico -----------------
     @classmethod
     def get_all(cls, session, only_active: bool = True, detailed: bool = False, **kwargs):
-        """Trae todos los objetos (Implementación Base)"""
+        """
+        Trae todos los objetos con filtros dinámicos.
+        Cualquier argumento extra (ej: campaign_id=1) se aplica como filtro "=" 
+        si el modelo tiene ese atributo.
+        """
         query = session.query(cls.model)
             
+        # 1. Filtro 'active' (Soft Delete)
         if only_active and hasattr(cls.model, "active"):
             query = query.filter(cls.model.active.is_(True))
 
-        
-        page = kwargs.get('page', 0)
-        page_size = kwargs.get('page_size', 0)
-        
+        # 2. Filtros Dinámicos (kwargs)
+        # Extraemos page/page_size primero para no confundirlos con columnas
+        page = kwargs.pop('page', 0)
+        page_size = kwargs.pop('page_size', 0)
+
+        for field_name, value in kwargs.items():
+            # Si el valor no es None y el modelo tiene ese atributo...
+            if value is not None and hasattr(cls.model, field_name):
+                # ...aplicamos el filtro: WHERE columna = valor
+                query = query.filter(getattr(cls.model, field_name) == value)
+
+        # 3. Paginación y Ejecución
         total, query = cls._paginate(query, page, page_size)
-        
         items = cls._execute_read_query(query, detailed)
         
         if page:
@@ -181,7 +216,8 @@ class BaseRepository:
             session.add(obj)
             session.flush()  # flush para obtener ID antes de commit
             session.refresh(obj)
-            return cls.schema_out.model_validate(obj) if cls.schema_out else obj
+            schema_to_use = cls.schema_out_detail or cls.schema_out
+            return schema_to_use.model_validate(obj) if schema_to_use else obj
 
         except IntegrityError as e:
             session.rollback()
@@ -205,7 +241,8 @@ class BaseRepository:
 
             session.flush()
             session.refresh(obj)
-            return cls.schema_out.model_validate(obj) if cls.schema_out else obj
+            schema_to_use = cls.schema_out_detail or cls.schema_out
+            return schema_to_use.model_validate(obj) if schema_to_use else obj
 
         except IntegrityError as e:
             session.rollback()
@@ -216,17 +253,51 @@ class BaseRepository:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
     @classmethod
-    def delete(cls, session, obj_id: int) -> bool:
-        """Elimina un objeto por id"""
+    def delete(cls, session, obj_id: int) -> Dict[str, str]:
+        """
+        Intenta eliminar un objeto físicamente.
+        
+        Comportamiento:
+        Si hay dependencias (Error de Integridad o Validación):
+           - Si el modelo tiene campo 'active', realiza un Soft Delete (Deshabilitar).
+           - Si no tiene campo 'active', lanza el error original.
+           
+        Returns:
+            Dict con claves 'action' ('deleted' | 'disabled') y 'message'.
+        """
+        obj = session.get(cls.model, obj_id)
+        if not obj:
+            raise NotFoundException(detail=f"{cls.model.__name__} no encontrado.")
+
         try:
-            obj = session.get(cls.model, obj_id)
-            if not obj:
-                return False
-            session.delete(obj)
-            session.flush()
-            return True
+            with session.begin_nested():
+                session.delete(obj)
+                session.flush()
+            
+            return {
+                "action": "deleted"
+            }
+
+        except (IntegrityError, AppException) as e:            
+            obj_fresh = session.get(cls.model, obj_id)
+            # Verificamos si el modelo soporta 'active' (Soft Delete)
+            if obj_fresh and hasattr(obj_fresh, 'active'):
+                obj_fresh.active = False
+                session.add(obj_fresh)
+                session.flush()
+                session.refresh(obj_fresh)
+                
+                return {
+                    "action": "disabled"
+                }
+            
+            # Si no soporta 'active', no nos queda otra que fallar con el error original
+            if isinstance(e, IntegrityError):
+                cls._handle_integrity_error(e) # Esto lanza AppException
+            raise e # Relanzamos AppException original
 
         except Exception as e:
+            session.rollback()
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
     # ----------------- Upsert relaciones One-to-Many -----------------

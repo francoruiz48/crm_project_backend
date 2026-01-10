@@ -1,6 +1,6 @@
 from typing import List, Union
 from pydantic import AnyHttpUrl, field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     POSTGRES_USER: str
@@ -29,8 +29,6 @@ class Settings(BaseSettings):
             return v
         raise ValueError(v)
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()

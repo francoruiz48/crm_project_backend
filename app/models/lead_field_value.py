@@ -1,6 +1,15 @@
-from sqlalchemy import Column, String, Integer, ForeignKey
+from sqlalchemy import Column, String, Integer, ForeignKey, Table
 from sqlalchemy.orm import relationship
-from app.models.base_model import BaseModelDB
+from app.models.base_model import BaseModelDB, Base
+
+
+# Tabla intermedia para guardar la lista de items seleccionados
+lead_field_value_nomenclator_assoc = Table(
+    'lead_field_value_nomenclator',
+    Base.metadata,
+    Column('lead_field_value_id', Integer, ForeignKey('lead_field_value.id'), primary_key=True),
+    Column('nomenclator_item_id', Integer, ForeignKey('nomenclator_item.id'), primary_key=True)
+)
 
 class LeadFieldValue(BaseModelDB):
     __tablename__ = "lead_field_value"
@@ -11,5 +20,9 @@ class LeadFieldValue(BaseModelDB):
     lead = relationship("Lead", back_populates="field_values")
     field = relationship("LeadField", back_populates="field_values")
 
-    nomenclator_item_id = Column(Integer, ForeignKey("nomenclator_item.id"), nullable=True)
-    nomenclator_item = relationship("NomenclatorItem", foreign_keys=[nomenclator_item_id])
+    nomenclator_items = relationship(
+        "NomenclatorItem",
+        secondary=lead_field_value_nomenclator_assoc,
+        lazy="selectin" # Cargamos la lista automáticamente
+    )
+

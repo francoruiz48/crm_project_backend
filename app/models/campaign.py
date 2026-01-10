@@ -9,9 +9,9 @@ class Campaign(BaseModelDB):
     name = Column(String, nullable=False)
     description = Column(String, nullable=True)
 
-    nomenclators = relationship("Nomenclator", back_populates="campaign", cascade="all, delete-orphan")
+    nomenclators = relationship("Nomenclator", back_populates="campaign")
 
-    leads = relationship("Lead", back_populates="campaign", cascade="all, delete-orphan")
+    leads = relationship("Lead", back_populates="campaign")
 
     workspace_id = Column(Integer, ForeignKey("workspace.id"), nullable=False)
     workspace = relationship("Workspace", back_populates="campaigns")
