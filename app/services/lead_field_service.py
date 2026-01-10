@@ -8,7 +8,7 @@ from app.db.repository.lead_field_repository import LeadFieldRepository
 from app.db.repository.lead_repository import LeadRepository
 from app.db.repository.lead_field_value_repository import LeadFieldValueRepository
 from app.models.lead_field_type import LeadFieldType
-from app.core.constans import DEFAULT_PAGE_SIZE
+from app.core.constans import DEFAULT_PAGE_SIZE, NOMENCLATOR_FIELD_TYPES
 from app.models.lead_field_value import LeadFieldValue
 from app.core.error_messages import SUCCESS_UPDATE
 from app.models.lead_field import LeadField 
@@ -17,6 +17,59 @@ class LeadFieldService(BaseService):
     repository = LeadFieldRepository
     nomenclatorService = NomenclatorService
     
+    # =========================================================================
+    # HELPERS DE VALIDACIÓN
+    # =========================================================================
+
+    @classmethod
+    def _validate_name_uniqueness(cls, session, campaign_id: int, name: str, exclude_id: int = None):
+        """
+        Verifica que no exista otro campo ACTIVO con el mismo nombre en la campaña.
+        Si exclude_id se provee (update/reactivate), ignora ese ID.
+        """
+
+        existing = cls.repository.get_all(session=session, only_active=True, detailed=True, campaign_id=campaign_id, name=name)
+        
+        if existing:
+            # Si encontramos uno y NO es el mismo que estamos editando/activando
+            if exclude_id is None or existing[0].id != exclude_id:
+                raise ValueError(f"Ya existe un campo activo con el nombre '{name}' en esta campaña.")
+
+    @classmethod
+    def _validate_order_uniqueness(cls, session, campaign_id: int, order: int, exclude_id: int = None):
+        """
+        Verifica que el número de orden no esté ocupado.
+        """
+        # Buscamos si existe algun campo con ese order y campaign_id
+        # Nota: Necesitarás asegurarte que tu repo tenga un método similar o usar query directa
+        collision = cls.repository.get_all(session=session, only_active=True, detailed=True, campaign_id=campaign_id, order=order)
+        
+        if collision:
+            if exclude_id is None or collision[0].id != exclude_id:
+                raise ValueError(f"El número de orden {order} ya está ocupado por el campo {collision[0].name}.")
+
+    @classmethod
+    def _validate_historic_constraints(cls, session, field: LeadField, new_required: bool, new_primary: bool):
+        """
+        Valida que los cambios no rompan la integridad de datos existentes (Leads).
+        """
+        # A. Validación de REQUIRED retroactivo
+        if new_required is True and not field.required:
+            has_nulls = session.query(LeadFieldValue).filter(
+                LeadFieldValue.field_id == field.id,
+                (LeadFieldValue.value == None) | (LeadFieldValue.value == "")
+            ).first()
+
+            if has_nulls:
+                raise ValueError("No se puede marcar como requerido porque existen registros antiguos con valor vacío.")
+
+        # B. Validación de PRIMARY retroactivo
+        if new_primary is True and not field.is_primary:
+            has_leads = LeadRepository.has_leads_in_campaign(session, field.campaign_id)
+            if has_leads:
+                raise ValueError("No se puede marcar como 'Primary' porque ya existen Leads en esta campaña (no se garantiza unicidad retroactiva).")
+
+
     @classmethod
     def create(cls, obj_in, created_by=None):
         def do_create(uow):
@@ -25,24 +78,26 @@ class LeadFieldService(BaseService):
                 data = obj_in.model_dump(exclude_unset=True)
                 
                 template_code = data.get("field_template_code")
-                type_code = data.get("field_type_code")
+                field_type_code = data.get("field_type_code")
                 subtype_code = data.get("field_subtype_code")
                 nomenclator_id = data.get("nomenclator_id")
 
                 if nomenclator_id:
-                    if not type_code:
-                        data["field_type_code"] = "NOMENCLATOR"
-                        type_code = "NOMENCLATOR"
-                    elif type_code != "NOMENCLATOR":
+                    if field_type_code:
+                        if field_type_code not in NOMENCLATOR_FIELD_TYPES:
+                            raise ValueError(
+                                f"El 'field_type_code' debe ser uno de {NOMENCLATOR_FIELD_TYPES} cuando se especifica 'nomenclator_id'."
+                            )
+                    else:
                         raise ValueError(
-                            "Si especificas 'nomenclator_id', el 'field_type_code' debe ser 'NOMENCLATOR'."
+                            "Si especificas 'nomenclator_id', el 'field_type_code' debe ser uno de {NOMENCLATOR_FIELD_TYPES}."
                         )
 
-                if type_code:
-                    field_type = uow.session.query(LeadFieldType).filter_by(code=type_code).first()
+                if field_type_code:
+                    field_type = uow.session.query(LeadFieldType).filter_by(code=field_type_code).first()
                     
                     if not field_type:
-                        raise ValueError(f"El tipo '{type_code}' no existe.")
+                        raise ValueError(f"El tipo '{field_type_code}' no existe.")
 
                     # 2. Verificamos si tiene subtipos asociados en la BD
                     has_subtypes = len(field_type.subtypes) > 0
@@ -50,7 +105,7 @@ class LeadFieldService(BaseService):
                     # 3. Regla: Si tiene subtipos en BD, es obligatorio elegir uno
                     if has_subtypes and not subtype_code:
                         raise ValueError(
-                            f"El tipo '{type_code}' requiere especificar un subtipo (field_subtype_code)."
+                            f"El tipo '{field_type_code}' requiere especificar un subtipo (field_subtype_code)."
                         )
                     
                     # 4. Validar coherencia si envió un subtipo
@@ -58,7 +113,7 @@ class LeadFieldService(BaseService):
                         # Verifica que el subtipo exista y pertenezca al padre
                         valid_subtype = any(s.code == subtype_code for s in field_type.subtypes)
                         if not valid_subtype:
-                            raise ValueError(f"El subtipo '{subtype_code}' no es válido para '{type_code}'.")
+                            raise ValueError(f"El subtipo '{subtype_code}' no es válido para '{field_type_code}'.")
 
 
                 rules_to_create = []
@@ -89,71 +144,42 @@ class LeadFieldService(BaseService):
 
                     if not data.get("name"):
                         data["name"] = nomenclator.name
-                    
-                    if not data.get("field_type_code"):
-                        # Generalmente un nomenclador se referencia como entero (ID) o string, 
-                        # mantenemos tu lógica de default a STRING si no se especifica.
-                        data["field_type_code"] = "STRING"
-
 
                 # -------------------------------------------------------
                 # 2. VALIDACIONES DE INTEGRIDAD (Básicas)
                 # -------------------------------------------------------
-                if not data.get("name"):
-                    raise ValueError("El nombre del campo es obligatorio.")
+                if not data.get("name"): raise ValueError("El nombre del campo es obligatorio.")
 
-                if not data.get("field_type_code"):
-                    raise ValueError("El 'field_type_code' es obligatorio (o usa una plantilla válida).")
-
+                if not data.get("field_type_code"): raise ValueError("El 'field_type_code' es obligatorio (o usa una plantilla válida).")
 
                 name = data.get("name")
                 campaign_id = data.get("campaign_id")
+                
+                # 1. Validar Nombre Único
                 if name and campaign_id:
-                    try:
-                        existing_field = cls.repository.get_all(session=uow.session, only_active=True, detailed=True, campaign_id=campaign_id, name=name)
-                    except Exception:
-                        raise ValueError("Error al verificar la existencia del campo en la campaña.")
-                    if existing_field:
-                        raise ValueError(f"Ya existe un campo activo con el nombre '{name}' en esta campaña.")
+                    cls._validate_name_uniqueness(uow.session, campaign_id, name)
                 
-                # -------------------------------------------------------
-                # 3. RESTRICCIONES HISTÓRICAS
-                # -------------------------------------------------------
-                # Verificamos si ya hay leads en la campaña ANTES de crear el campo
-                
+                # 2. Validar Restricciones si hay Leads (Required / Primary)
                 has_existing_leads = False
-                
                 if campaign_id:
                     has_existing_leads = LeadRepository.has_leads_in_campaign(uow.session, campaign_id)
-
+                
                 if has_existing_leads:
-                    # Regla: No se puede agregar Required en campaña con datos
-                    if data.get("required") is True:
-                        raise ValueError(
-                            "No se puede crear un campo 'Required' porque ya existen Leads en esta campaña (no se puede garantizar cumplimiento retroactivo)."
-                        )
-                    
-                    # Regla: No se puede agregar Primary en campaña con datos
-                    if data.get("is_primary") is True:
-                        raise ValueError(
-                            "No se puede crear un campo 'Primary' porque ya existen Leads en esta campaña (no se puede garantizar unicidad retroactiva)."
-                        )
+                    if data.get("required") is True: raise ValueError("No se puede crear Required con Leads existentes.")
+                    if data.get("is_primary") is True: raise ValueError("No se puede crear Primary con Leads existentes.")
 
+                # 3. Validar Orden
                 order = data.get("order")
                 if order is None:
-                    # Caso A: Automático (al final de la lista)
                     max_order = cls.repository.get_max_order(uow.session, campaign_id)
                     data["order"] = max_order + 1
                 else:
-                    # Caso B: Manual (validar colisión)
-                    if cls.repository.order_exists(uow.session, campaign_id, order):
-                        raise ValueError(
-                            f"El número de orden {order} ya está ocupado por otro campo en esta campaña."
-                        )
+                    # Usamos el helper
+                    cls._validate_order_uniqueness(uow.session, campaign_id, order)
             except ValueError as ve:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
             except Exception as e:
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error interno al intentar validar el campo del lead.")
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error interno al intentar validar el campo del lead. Detalle: " + str(e))
     
 
             try:
@@ -191,7 +217,7 @@ class LeadFieldService(BaseService):
 
                 return new_field
             except Exception as e:
-                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error interno al intentar crear el campo del lead.")
+                raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Error interno al intentar crear el campo del lead. Detalle: " + str(e))
                 
         return cls._execute(
             action="Creando Campo de Lead",
@@ -206,38 +232,42 @@ class LeadFieldService(BaseService):
         Sobrescribimos update para validar cambios ilegales (Tipo de dato y Required retroactivo).
         """
         def do_update(uow):
-            # Obtenemos el campo actual (sin cargar relaciones pesadas por ahora)
             current_field = cls.repository.get_by_id(uow.session, obj_id, detailed=False)
-            if not current_field:
-                cls._not_found(obj_id)
+            if not current_field: cls._not_found(obj_id)
 
             data = obj_in.model_dump(exclude_unset=True)
 
-            # --- VALIDACIÓN 1: No permitir cambio de TIPO DE DATO ---
-            new_type = data.get("field_type_code")
-            if new_type and new_type != current_field.field_type_code:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="No se puede cambiar el tipo de dato de un campo existente."
-                )
+            try:
+                # 1. Inmutabilidad de Tipo
+                new_type = data.get("field_type_code")
+                if new_type and new_type != current_field.field_type_code:
+                    raise ValueError("No se puede cambiar el tipo de dato de un campo existente.")
 
-            # --- VALIDACIÓN 2: No permitir cambio a REQUIRED si hay valores nulos ---
-            new_required = data.get("required")
-            # Si quiere hacerlo requerido Y antes no lo era...
-            if new_required is True and not current_field.required:
-                # Verificamos si existen valores vacíos en la base de datos para este campo
-                has_nulls = uow.session.query(LeadFieldValue).filter(
-                    LeadFieldValue.field_id == obj_id,
-                    (LeadFieldValue.value == None) | (LeadFieldValue.value == "")
-                ).first()
+                # 2. Validar Unicidad de Nombre (Si cambió)
+                new_name = data.get("name")
+                if new_name and new_name != current_field.name:
+                    cls._validate_name_uniqueness(uow.session, current_field.campaign_id, new_name, exclude_id=obj_id)
 
-                if has_nulls:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="No se puede marcar como requerido porque existen registros antiguos con valor vacío para este campo."
-                    )
+                # 3. Validar Unicidad de Orden (Si cambió)
+                new_order = data.get("order")
+                if new_order is not None and new_order != current_field.order:
+                    cls._validate_order_uniqueness(uow.session, current_field.campaign_id, new_order, exclude_id=obj_id)
 
-            # Si pasa las validaciones, actualizamos
+                # 4. Validar Restricciones Históricas (Required / Primary)
+                new_required = data.get("required")
+                new_primary = data.get("is_primary")
+                
+                # Solo validamos si vienen en el payload y son True (o diferentes al actual)
+                if (new_required is not None) or (new_primary is not None):
+                     # Preparamos los valores finales para pasar al validador
+                     check_req = new_required if new_required is not None else current_field.required
+                     check_pri = new_primary if new_primary is not None else current_field.is_primary
+                     
+                     cls._validate_historic_constraints(uow.session, current_field, check_req, check_pri)
+
+            except ValueError as ve:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+
             return cls.repository.update(uow.session, obj_id, data)
 
         return cls._execute(
@@ -249,11 +279,13 @@ class LeadFieldService(BaseService):
 
     @classmethod
     def set_active(cls, field_id: int):
+        """
+        Reactiva un campo eliminado. 
+        Maneja colisiones de Nombre (Error) y colisiones de Orden (Auto-fix).
+        """
         def do_reactivate(uow):
-            # 1. Buscamos el campo INCLUSO si está inactivo (soft-deleted)
-            # Asumimos que get_by_id o una variante puede traerlo. 
-            # Si get_by_id filtra por active=True, necesitamos usar get físico o query directa.
-            field = uow.session.get(LeadField,field_id)
+            # Usar .get() de SQLAlchemy para evitar filtros automáticos de soft-delete si tu repo los tiene
+            field = uow.session.get(LeadField, field_id)
             
             if not field:
                 cls._not_found(field_id)
@@ -261,21 +293,30 @@ class LeadFieldService(BaseService):
             if field.active:
                 return field
 
-            conflict_field = cls.repository.get_all(session=uow.session, only_active=True, detailed=True, campaign_id=field.campaign_id, name=field.name)
-            
-            if conflict_field and conflict_field[0].id != field_id:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT, 
-                    detail=f"No se puede reactivar el campo '{field.name}' porque ya existe otro campo activo con ese nombre en la campaña."
-                )
+            try:
+                # 1. Validar Nombre: Si el nombre está ocupado, NO podemos reactivar.
+                cls._validate_name_uniqueness(uow.session, field.campaign_id, field.name, exclude_id=field_id)
+                
+                # 2. Validar Orden: 
+                # Estrategia: Si el orden antiguo está ocupado, NO fallamos. 
+                # Simplemente lo movemos al final de la lista. Es mejor UX que obligar al usuario a reordenar todo.
+                try:
+                    cls._validate_order_uniqueness(uow.session, field.campaign_id, field.order, exclude_id=field_id)
+                except ValueError:
+                    # Conflicto de orden detectado -> Asignar nuevo orden al final
+                    max_order = cls.repository.get_max_order(uow.session, field.campaign_id)
+                    field.order = max_order + 1
+                    # (Opcional) Podrías agregar un log o warning aquí indicando que el orden cambió.
+
+            except ValueError as ve:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(ve))
 
             field.active = True
-
             uow.session.add(field)
             return field
 
         return cls._execute(
-            action="Activando",
+            action="Activando Campo",
             obj_id=field_id,
             func=do_reactivate,
             success_msg=SUCCESS_UPDATE

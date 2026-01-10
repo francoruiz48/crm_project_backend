@@ -331,10 +331,10 @@ def test_create_lead_with_multiple_nomenclator(client, db_session, initial_struc
     field_tags = LeadField(
         name="Etiquetas",
         campaign_id=camp_id,
-        field_type_code="NOMENCLATOR",
-        field_subtype_code="MULTIPLE",
+        field_type_code="SELECTOR",
+        field_subtype_code="SELECTOR_MULTIPLE",
         nomenclator_id=nom.id,
-        lead_field_section_id=1, # Asumido
+        lead_field_section_id=1,
         required=False,
         order=5
     )
@@ -389,7 +389,7 @@ def test_search_lead_by_nomenclator(client, db_session, initial_structure):
 
     field_depto = LeadField(
         name="Departamento", campaign_id=camp_id, 
-        field_type_code="NOMENCLATOR", field_subtype_code="SINGLE",
+        field_type_code="SELECTOR", field_subtype_code="SELECTOR_SIMPLE",
         nomenclator_id=nom.id, lead_field_section_id=1, order=1
     )
     db_session.add(field_depto)

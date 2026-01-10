@@ -5,7 +5,7 @@ from sqlalchemy.orm import relationship
 
 class LeadFieldSubtype(BaseModelDB):
     __tablename__ = "lead_field_subtype"
-    code = Column(String, unique=True, nullable=False) 
+    code = Column(String, nullable=False, unique=True)
     description = Column(String, nullable=False)
 
     lead_field_type_code = Column(String, ForeignKey("lead_field_type.code"), nullable=False)

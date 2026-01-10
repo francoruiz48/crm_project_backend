@@ -1,13 +1,14 @@
 from datetime import datetime
 import re
 from fastapi import HTTPException, status
-from app.core.constans import DEFAULT_PAGE_SIZE
+from app.core.constans import DEFAULT_PAGE_SIZE, NOMENCLATOR_FIELD_TYPES
 from app.services.base_service import BaseService
 from app.db.repository.lead_repository import LeadRepository
 from app.db.repository.lead_field_repository import LeadFieldRepository
 from app.db.unit_of_work import UnitOfWork
 from app.services.lead_validation_logic import LeadValidationLogic
 from app.core.error_messages import SUCCESS_DELETE
+
 
 class LeadService(BaseService):
     repository = LeadRepository
@@ -207,13 +208,13 @@ class LeadService(BaseService):
                     if field.required: raise ValueError(f"Campo '{field.name}' es obligatorio.")
                     continue
 
-                if field.field_type_code == "NOMENCLATOR":
+                if field.field_type_code in NOMENCLATOR_FIELD_TYPES:
                     if isinstance(val, list):
                         items_ids = val
                     else:
                         items_ids = [val]
                     
-                    if field.field_subtype_code == "NOMENCLATOR_SINGLE":
+                    if field.field_subtype_code == f"{field.field_type_code}_SINGLE":
                         if len(items_ids) > 1:
                             raise ValueError(f"El campo '{field.name}' solo acepta una opción, recibidos: {len(items_ids)}")
                     
@@ -245,7 +246,7 @@ class LeadService(BaseService):
             
             item_dict = {'field_id': fid}
             
-            if field_def.field_type_code == "NOMENCLATOR":
+            if field_def.field_type_code in NOMENCLATOR_FIELD_TYPES:
                 # Normalizamos a lista
                 ids_list = val if isinstance(val, list) else [val]
                 if not val: ids_list = [] # Manejo de None/Vacío

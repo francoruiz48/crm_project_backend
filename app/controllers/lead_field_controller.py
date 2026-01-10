@@ -56,7 +56,9 @@ class LeadFieldController(BaseController):
                     page_size=page_size, 
                     only_active=only_active,
                     detailed=detailed,
-                    campaign_id=campaign_id
+                    campaign_id=campaign_id,
+                    order_by="order",
+                    ascending=True
                 )
 
             return PaginatedResponse.create(

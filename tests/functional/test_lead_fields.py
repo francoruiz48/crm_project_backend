@@ -326,7 +326,7 @@ def test_create_field_fail_order_collision(client, db_session, initial_structure
 
 def test_create_field_fail_nomenclator_type_mismatch(client, db_session, initial_structure):
     """
-    Caso: Enviar 'nomenclator_id' pero con un 'field_type_code' que no es NOMENCLATOR.
+    Caso: Enviar 'nomenclator_id' pero con un 'field_type_code' que no es SELECTOR ni CHECKBOX.
     Resultado: 400 Bad Request (Incoherencia de datos).
     """
     camp_id = initial_structure["campaign"].id
@@ -341,7 +341,7 @@ def test_create_field_fail_nomenclator_type_mismatch(client, db_session, initial
         "name": "Pais",
         "campaign_id": camp_id,
         "nomenclator_id": nom.id,
-        "field_type_code": "INT", # <--- ERROR: Debería ser NOMENCLATOR o nulo
+        "field_type_code": "INT", # <--- ERROR: Debería ser SELECTOR o nulo
         "order": 1,
         "lead_field_section_id": 1
     }
@@ -349,13 +349,13 @@ def test_create_field_fail_nomenclator_type_mismatch(client, db_session, initial
     res = client.post("/lead_fields/", json=payload)
     assert res.status_code == 400
     # Validamos que el mensaje mencione la discrepancia
-    assert "nomenclator" in res.text.lower()
+    assert "nomenclator_id" in res.text.lower()
 
 
 def test_create_field_fail_subtype_mismatch(client, initial_structure):
     """
     Caso: Enviar un subtipo que no pertenece al tipo de campo padre.
-    Ejemplo: Tipo FILE con subtipo NOMENCLATOR_SINGLE.
+    Ejemplo: Tipo FILE con subtipo SIMPLE.
     """
     camp_id = initial_structure["campaign"].id
     
@@ -363,7 +363,7 @@ def test_create_field_fail_subtype_mismatch(client, initial_structure):
         "name": "Archivo Loco",
         "campaign_id": camp_id,
         "field_type_code": "FILE",
-        "field_subtype_code": "NOMENCLATOR_SINGLE", # <--- ERROR: Esto es de selectores
+        "field_subtype_code": "SELECTOR_SIMPLE", # <--- ERROR: Esto es de selectores
         "order": 1,
         "lead_field_section_id": 1
     }
@@ -375,15 +375,14 @@ def test_create_field_fail_subtype_mismatch(client, initial_structure):
 
 def test_create_field_fail_missing_subtype(client, initial_structure):
     """
-    Caso: Crear un campo que REQUIERE subtipo (como NOMENCLATOR) sin enviarlo.
+    Caso: Crear un campo que REQUIERE subtipo (como SELECTOR) sin enviarlo.
     """
     camp_id = initial_structure["campaign"].id
     
-    # Asumimos que en tu seeder NOMENCLATOR tiene subtipos (Single/Multiple)
     payload = {
         "name": "Selector Incompleto",
         "campaign_id": camp_id,
-        "field_type_code": "NOMENCLATOR",
+        "field_type_code": "SELECTOR",
         # Falta field_subtype_code
         "order": 1,
         "lead_field_section_id": 1
@@ -420,7 +419,7 @@ def test_create_field_fail_primary_with_existing_leads(client, db_session, initi
     
     res = client.post("/lead_fields/", json=payload)
     assert res.status_code == 400
-    assert "primary" in res.text.lower() and "ya existen leads" in res.text.lower()
+    assert "primary" in res.text.lower() and "leads" in res.text.lower()
 
 
 def test_update_field_fail_change_type(client, initial_structure):

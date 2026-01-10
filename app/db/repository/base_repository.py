@@ -23,11 +23,6 @@ class BaseRepository:
         # Siempre contamos primero (requerido para el frontend)
         total = query.count()
 
-        # Ordenamiento por defecto (si no tiene order_by previo)
-        # Esto evita resultados aleatorios en Postgres
-        if hasattr(cls.model, "id") and not query._order_by_clauses:
-            query = query.order_by(cls.model.id.desc())
-
         if page and page > 0 and page_size and page_size > 0:
             offset = (page - 1) * page_size
             query = query.offset(offset).limit(page_size)
@@ -164,11 +159,22 @@ class BaseRepository:
         page = kwargs.pop('page', 0)
         page_size = kwargs.pop('page_size', 0)
 
+        #Parametros de ordenamiento
+        order_by = kwargs.pop('order_by', None)
+        ascending = kwargs.pop('ascending', True)
+
         for field_name, value in kwargs.items():
             # Si el valor no es None y el modelo tiene ese atributo...
             if value is not None and hasattr(cls.model, field_name):
                 # ...aplicamos el filtro: WHERE columna = valor
                 query = query.filter(getattr(cls.model, field_name) == value)
+
+        if order_by and hasattr(cls.model, order_by):
+            column = getattr(cls.model, order_by)
+            # Aplicamos asc() o desc() según el flag
+            query = query.order_by(column.asc() if ascending else column.desc())
+        elif hasattr(cls.model, 'id'):
+                query = query.order_by(cls.model.id.desc())
 
         # 3. Paginación y Ejecución
         total, query = cls._paginate(query, page, page_size)
