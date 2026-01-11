@@ -33,7 +33,7 @@ STANDARD_RULES = {
         code="RANGE",
         name="Rango Numérico",
         description="El valor debe estar entre un mínimo y un máximo (inclusivo).",
-        expression_fmt="value >= {min} and value <= {max}",
+        expression_fmt="AND(value >= {min}, value <= {max})",
         params=["min", "max"],
         error_message="El número debe estar entre {min} y {max}."
     ),
@@ -41,7 +41,7 @@ STANDARD_RULES = {
         code="EXACT_VALUE",
         name="Valor Exacto",
         description="El valor debe ser exactamente igual al parámetro.",
-        expression_fmt="value == {target}",
+        expression_fmt="value = {target}", # Excel usa un solo =
         params=["target"],
         error_message="El valor debe ser exactamente {target}."
     ),
@@ -49,7 +49,7 @@ STANDARD_RULES = {
         code="NOT_ZERO",
         name="No puede ser Cero",
         description="Valida que el número no sea 0.",
-        expression_fmt="value != 0",
+        expression_fmt="value <> 0", # Excel usa <> para distinto
         params=[],
         error_message="El valor no puede ser cero."
     ),
@@ -57,7 +57,7 @@ STANDARD_RULES = {
         code="MULTIPLE_OF",
         name="Múltiplo De",
         description="El número debe ser múltiplo de X (ej: cajas de 6 unidades).",
-        expression_fmt="value % {step} == 0",
+        expression_fmt="MOD(value, {step}) = 0",
         params=["step"],
         error_message="El valor debe ser múltiplo de {step}."
     ),
@@ -65,7 +65,7 @@ STANDARD_RULES = {
         code="IS_EVEN",
         name="Es Par",
         description="El número debe ser par.",
-        expression_fmt="value % 2 == 0",
+        expression_fmt="MOD(value, 2) = 0",
         params=[],
         error_message="El número debe ser par."
     ),
@@ -77,7 +77,7 @@ STANDARD_RULES = {
         code="MAX_LENGTH",
         name="Longitud Máxima",
         description="Cantidad máxima de caracteres permitidos.",
-        expression_fmt="len(str(value)) <= {limit}",
+        expression_fmt="LEN(value) <= {limit}",
         params=["limit"],
         error_message="El texto no debe exceder {limit} caracteres."
     ),
@@ -85,7 +85,7 @@ STANDARD_RULES = {
         code="MIN_LENGTH",
         name="Longitud Mínima",
         description="Cantidad mínima de caracteres permitidos.",
-        expression_fmt="len(str(value)) >= {limit}",
+        expression_fmt="LEN(value) >= {limit}",
         params=["limit"],
         error_message="El texto debe tener al menos {limit} caracteres."
     ),
@@ -93,7 +93,7 @@ STANDARD_RULES = {
         code="EXACT_LENGTH",
         name="Longitud Exacta",
         description="El texto debe tener una cantidad exacta de caracteres.",
-        expression_fmt="len(str(value)) == {limit}",
+        expression_fmt="LEN(value) = {limit}",
         params=["limit"],
         error_message="El texto debe tener exactamente {limit} caracteres."
     ),
@@ -101,7 +101,8 @@ STANDARD_RULES = {
         code="STARTS_WITH",
         name="Empieza con...",
         description="El texto debe comenzar con un prefijo específico.",
-        expression_fmt="str(value).startswith('{prefix}')",
+        # Usamos Regex para ser más robustos
+        expression_fmt='REGEXMATCH(value, "^{prefix}")',
         params=["prefix"],
         error_message="El valor debe comenzar con '{prefix}'."
     ),
@@ -109,7 +110,7 @@ STANDARD_RULES = {
         code="ENDS_WITH",
         name="Termina con...",
         description="El texto debe terminar con un sufijo específico.",
-        expression_fmt="str(value).endswith('{suffix}')",
+        expression_fmt='REGEXMATCH(value, "{suffix}$")',
         params=["suffix"],
         error_message="El valor debe terminar con '{suffix}'."
     ),
@@ -117,7 +118,7 @@ STANDARD_RULES = {
         code="CONTAINS_TEXT",
         name="Contiene Texto",
         description="El texto debe contener una palabra o frase específica.",
-        expression_fmt="'{text}' in str(value)",
+        expression_fmt='REGEXMATCH(value, "{text}")',
         params=["text"],
         error_message="El valor debe contener el texto '{text}'."
     ),
@@ -125,7 +126,9 @@ STANDARD_RULES = {
         code="NOT_CONTAINS_TEXT",
         name="No Contiene Texto",
         description="El texto NO debe contener una palabra prohibida.",
-        expression_fmt="'{text}' not in str(value)",
+        # Regex retorna True si encuentra, queremos que sea False si encuentra.
+        # Comparamos con False (o 0)
+        expression_fmt='REGEXMATCH(value, "{text}") = FALSE',
         params=["text"],
         error_message="El valor no puede contener el texto '{text}'."
     ),
@@ -133,7 +136,7 @@ STANDARD_RULES = {
         code="IS_UPPERCASE",
         name="Todo Mayúsculas",
         description="El texto debe estar completamente en mayúsculas.",
-        expression_fmt="str(value).isupper()",
+        expression_fmt="value = UPPER(value)",
         params=[],
         error_message="El texto debe estar en mayúsculas."
     ),
@@ -141,7 +144,7 @@ STANDARD_RULES = {
         code="IS_LOWERCASE",
         name="Todo Minúsculas",
         description="El texto debe estar completamente en minúsculas.",
-        expression_fmt="str(value).islower()",
+        expression_fmt="value = LOWER(value)",
         params=[],
         error_message="El texto debe estar en minúsculas."
     ),
@@ -149,7 +152,7 @@ STANDARD_RULES = {
         code="NO_SPACES",
         name="Sin Espacios",
         description="El texto no puede contener espacios en blanco.",
-        expression_fmt="' ' not in str(value)",
+        expression_fmt='REGEXMATCH(value, "\s") = FALSE',
         params=[],
         error_message="El valor no puede contener espacios."
     ),
@@ -161,15 +164,15 @@ STANDARD_RULES = {
         code="EMAIL_FORMAT",
         name="Es Email Válido",
         description="Valida formato simple de correo.",
-        expression_fmt="'@' in str(value) and '.' in str(value) and len(str(value)) > 5", 
+        expression_fmt='REGEXMATCH(value, "^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")', 
         params=[],
         error_message="El formato del correo electrónico no es válido."
     ),
     "ONLY_DIGITS": RuleTemplate(
         code="ONLY_DIGITS",
         name="Solo Dígitos",
-        description="El texto debe contener solo números (útil para teléfonos o IDs).",
-        expression_fmt="str(value).isdigit()",
+        description="El texto debe contener solo números.",
+        expression_fmt='REGEXMATCH(value, "^\d+$")',
         params=[],
         error_message="El campo solo debe contener números."
     ),
@@ -177,7 +180,7 @@ STANDARD_RULES = {
         code="ALPHANUMERIC",
         name="Alfanumérico",
         description="Solo letras y números, sin símbolos especiales.",
-        expression_fmt="str(value).isalnum()",
+        expression_fmt='REGEXMATCH(value, "^[a-zA-Z0-9]+$")',
         params=[],
         error_message="El campo solo puede contener letras y números."
     ),
@@ -185,17 +188,15 @@ STANDARD_RULES = {
         code="IS_URL",
         name="Es URL",
         description="Validación básica de URL (http/https).",
-        expression_fmt="str(value).startswith('http://') or str(value).startswith('https://')",
+        expression_fmt='REGEXMATCH(value, "^https?://")',
         params=[],
         error_message="Debe ser una URL válida que comience con http:// o https://."
     ),
-    # NOTA: Para REGEX_MATCH necesitas pasar la función 'regex_match' o 're' a SimpleEval
     "REGEX_MATCH": RuleTemplate(
         code="REGEX_MATCH",
         name="Patrón Personalizado (Regex)",
         description="Valida contra una expresión regular personalizada.",
-        # Asumiendo que inyectas una función helper: regex_match(pattern, string)
-        expression_fmt="regex_match('{pattern}', str(value))", 
+        expression_fmt='REGEXMATCH(value, "{pattern}")', 
         params=["pattern"],
         error_message="El valor no cumple con el formato requerido."
     ),
@@ -206,17 +207,17 @@ STANDARD_RULES = {
     "IN_LIST": RuleTemplate(
         code="IN_LIST",
         name="Debe ser uno de...",
-        description="El valor debe estar dentro de una lista separada por comas.",
-        # Convertimos el string de params "A,B,C" a lista y chequeamos
-        expression_fmt="str(value) in '{options}'.split(',')",
+        description="El valor debe estar dentro de una lista (separada por | pipes).",
+        # Usamos Regex para simular el IN. Ej: ^(A|B|C)$
+        expression_fmt='REGEXMATCH(value, "^({options})$")',
         params=["options"],
         error_message="El valor debe ser uno de los siguientes: {options}."
     ),
     "NOT_IN_LIST": RuleTemplate(
         code="NOT_IN_LIST",
-        name="No puede ser uno de... (Lista Negra)",
-        description="El valor no puede estar en la lista prohibida.",
-        expression_fmt="str(value) not in '{options}'.split(',')",
+        name="Lista Negra",
+        description="El valor no puede estar en la lista prohibida (separada por |).",
+        expression_fmt='REGEXMATCH(value, "^({options})$") = FALSE',
         params=["options"],
         error_message="El valor no está permitido."
     ),
@@ -228,7 +229,7 @@ STANDARD_RULES = {
         code="DATE_FUTURE",
         name="Fecha Futura",
         description="La fecha debe ser estrictamente mayor a hoy.",
-        expression_fmt="value > today",
+        expression_fmt="value > TODAY()",
         params=[],
         error_message="La fecha debe ser posterior a hoy."
     ),
@@ -236,7 +237,7 @@ STANDARD_RULES = {
         code="DATE_PAST",
         name="Fecha Pasada",
         description="La fecha debe ser estrictamente menor a hoy.",
-        expression_fmt="value < today",
+        expression_fmt="value < TODAY()",
         params=[],
         error_message="La fecha debe ser anterior a hoy."
     ),
@@ -244,17 +245,15 @@ STANDARD_RULES = {
         code="DATE_PAST_OR_TODAY",
         name="Pasado o Presente",
         description="No permite fechas futuras.",
-        expression_fmt="value <= today",
+        expression_fmt="value <= TODAY()",
         params=[],
         error_message="La fecha no puede ser futura."
     ),
     "MIN_AGE": RuleTemplate(
         code="MIN_AGE",
         name="Edad Mínima (Años)",
-        description="Calcula si la fecha de nacimiento cumple una edad mínima.",
-        # Lógica aproximada segura: (Año actual - Año Nac)
-        # Nota: Para precisión exacta de día/mes se requiere lógica más compleja o función helper
-        expression_fmt="(today.year - value.year) - (1 if (today.month, today.day) < (value.month, value.day) else 0) >= {age}",
+        description="Calcula si la fecha de nacimiento cumple una edad mínima (aprox).",
+        expression_fmt="(YEAR(TODAY()) - YEAR(value)) >= {age}",
         params=["age"],
         error_message="La persona debe tener al menos {age} años."
     ),
@@ -263,7 +262,7 @@ STANDARD_RULES = {
         name="Es Día de Semana",
         description="La fecha debe caer de Lunes a Viernes.",
         # .weekday(): 0=Lunes, 4=Viernes, 5=Sabado, 6=Domingo
-        expression_fmt="value.weekday() < 5",
+        expression_fmt="WEEKDAY(value) < 5",
         params=[],
         error_message="La fecha debe ser un día de semana (Lun-Vie)."
     ),
@@ -271,7 +270,7 @@ STANDARD_RULES = {
         code="IS_WEEKEND",
         name="Es Fin de Semana",
         description="La fecha debe caer Sábado o Domingo.",
-        expression_fmt="value.weekday() >= 5",
+        expression_fmt="WEEKDAY(value) >= 5",
         params=[],
         error_message="La fecha debe ser Sábado o Domingo."
     ),
@@ -279,36 +278,37 @@ STANDARD_RULES = {
     # =========================================================================
     # 6. RELACIONALES (Comparación entre campos)
     # =========================================================================
+    # OJO: Aquí 'other_field_name' debe ser el NOMBRE de la variable en el contexto
     "GREATER_THAN_FIELD": RuleTemplate(
         code="GREATER_THAN_FIELD",
         name="Mayor que otro campo",
         description="Este valor > Otro campo.",
-        expression_fmt="value > fields.get({other_field_id})",
-        params=["other_field_id"],
+        expression_fmt="value > {other_field_name}",
+        params=["other_field_name"],
         error_message="El valor debe ser mayor que el campo relacionado."
     ),
     "LESS_THAN_FIELD": RuleTemplate(
         code="LESS_THAN_FIELD",
         name="Menor que otro campo",
         description="Este valor < Otro campo.",
-        expression_fmt="value < fields.get({other_field_id})",
-        params=["other_field_id"],
+        expression_fmt="value < {other_field_name}",
+        params=["other_field_name"],
         error_message="El valor debe ser menor que el campo relacionado."
     ),
     "EQUALS_FIELD": RuleTemplate(
         code="EQUALS_FIELD",
         name="Igual a otro campo",
         description="Debe ser idéntico a otro campo (ej: Confirmar Email).",
-        expression_fmt="value == fields.get({other_field_id})",
-        params=["other_field_id"],
+        expression_fmt="value = {other_field_name}",
+        params=["other_field_name"],
         error_message="Los campos no coinciden."
     ),
     "NOT_EQUALS_FIELD": RuleTemplate(
         code="NOT_EQUALS_FIELD",
         name="Distinto a otro campo",
         description="No puede ser igual a otro campo.",
-        expression_fmt="value != fields.get({other_field_id})",
-        params=["other_field_id"],
+        expression_fmt="value <> {other_field_name}",
+        params=["other_field_name"],
         error_message="El valor no puede ser igual al campo relacionado."
     ),
     
@@ -319,17 +319,18 @@ STANDARD_RULES = {
         code="REQUIRED_IF",
         name="Obligatorio Si...",
         description="Este campo es obligatorio si otro campo tiene un valor específico.",
-        # Si (OtroCampo == ValorGatillo) ENTONCES (EsteCampo no debe ser vacio)
-        expression_fmt="(value is not None and str(value).strip() != '') if str(fields.get({other_field_id})) == '{trigger_value}' else True",
-        params=["other_field_id", "trigger_value"],
+        # Lógica Excel: IF(OtroCampo = Valor, LEN(EsteCampo) > 0, TRUE)
+        expression_fmt="IF({other_field_name} = '{trigger_value}', LEN(value) > 0, TRUE)",
+        params=["other_field_name", "trigger_value"],
         error_message="Este campo es obligatorio debido a la selección anterior."
     ),
     "REQUIRED_IF_CHECKED": RuleTemplate(
         code="REQUIRED_IF_CHECKED",
         name="Obligatorio si Boolean es True",
         description="Obligatorio si un checkbox/switch está activo.",
-        expression_fmt="(value is not None) if str(fields.get({other_field_id})).lower() == 'true' else True",
-        params=["other_field_id"],
+        # Asumiendo que el booleano llega como True/False al motor
+        expression_fmt="IF({other_field_name} = TRUE, LEN(value) > 0, TRUE)",
+        params=["other_field_name"],
         error_message="Campo requerido."
     )
 }

@@ -130,8 +130,7 @@ class LeadFieldService(BaseService):
                     if not data.get("name"):
                         data["name"] = template.name
 
-                    if not data.get("field_type_code"):
-                        data["field_type_code"] = template.field_type_code
+                    data["field_type_code"] = template.field_type_code
 
                     # Preparamos las reglas para crearlas después
                     rules_to_create = template.rules

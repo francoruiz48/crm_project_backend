@@ -70,19 +70,6 @@ class BaseController:
                     page_size=page_size
                 )
 
-        if "GET_ONE" in cls.enabled_methods:
-            @router.get("/{obj_id}", 
-                response_model=ResponseModelItem, 
-                dependencies=cls._get_deps("read"))
-            def get_one(obj_id: int, detailed: bool = Query(False)):
-                # El repositorio ya devuelve un objeto Pydantic (Detail o Simple)
-                obj = cls.service.get_by_id(obj_id, detailed=detailed)
-                
-                if not obj:
-                    raise HTTPException(status_code=404, detail="No encontrado")
-
-                return obj
-
         
         if "POST" in cls.enabled_methods:
             @router.post("/", response_model=ResponseModelItem, 
@@ -113,5 +100,17 @@ class BaseController:
             def set_active(obj_id: int):
                 cls.service.set_active(obj_id)
                 return {"actived": True}
+            
+        if "GET_ONE" in cls.enabled_methods:
+            @router.get("/{obj_id}", 
+                response_model=ResponseModelItem, 
+                dependencies=cls._get_deps("read"))
+            def get_one(obj_id: int, detailed: bool = Query(False)):
+                # El repositorio ya devuelve un objeto Pydantic (Detail o Simple)
+                obj = cls.service.get_by_id(obj_id, detailed=detailed)
+                
+                if not obj:
+                    raise HTTPException(status_code=404, detail="No encontrado")
+                return obj
 
         return router

@@ -16,9 +16,14 @@ class ExcelFormulaEvaluatorService:
         }
 
         self.func_map = {
+            # Regex
+            'REGEXMATCH': self._regex_match, 
+            'REGEX': self._regex_match,
+
             # Lógica
             'AND': all, 'Y': all,
             'OR': any, 'O': any,
+            'NOT': self._not, 'NO': self._not,
             
             # Texto
             'CONCAT': self._concat, 'CONCATENATE': self._concat,
@@ -28,6 +33,11 @@ class ExcelFormulaEvaluatorService:
             'LEFT': self._left, 'IZQUIERDA': self._left,
             'RIGHT': self._right, 'DERECHA': self._right,
             'MID': self._mid, 'EXTRAE': self._mid,
+            'TEXT': self._text, 'TEXTO': self._text,
+            'TRIM': self._trim, 'ESPACIOS': self._trim,
+            'SUBSTITUTE': self._substitute, 'SUSTITUIR': self._substitute, 'REPLACE': self._substitute,
+            'PROPER': self._proper, 'NOMPROPIO': self._proper,
+            'FIND': self._find, 'ENCONTRAR': self._find, 'HALLAR': self._find,
 
             #Números
             'ROUND': self._round, 'REDONDEAR': self._round,
@@ -58,6 +68,9 @@ class ExcelFormulaEvaluatorService:
             'HOUR': self._hour, 'HORA': self._hour,
             'MINUTE': self._minute, 'MINUTO': self._minute,
             'SECOND': self._second, 'SEGUNDO': self._second,
+
+            #Otras
+            'WEEKDAY': self._weekday, 'DIASEM': self._weekday
         }
 
     def evaluate(self, expression):
@@ -103,7 +116,13 @@ class ExcelFormulaEvaluatorService:
 
         # 5. Es una operación matemática/lógica simple? (A > B, A + B)
         # Esto es un parser simplificado, busca el operador de menor precedencia
-        for op_symbol in ['=', '<>', '>', '<', '>=', '<=', '&', '+', '-', '*', '/']:
+        operators_priority = [
+            '<>', '>=', '<=',  # Multi-caracter PRIMERO
+            '=', '>', '<',     # Single-caracter DESPUÉS
+            '&', '+', '-', '*', '/' # Matemáticos
+        ]
+
+        for op_symbol in operators_priority:
             # Buscamos el operador pero ignorando lo que esté dentro de paréntesis
             split_idx = self._find_operator_index(expr, op_symbol)
             if split_idx != -1:
@@ -326,6 +345,87 @@ class ExcelFormulaEvaluatorService:
             return datetime.strptime(str(val), DATE_FORMAT + " %H:%M:%S").second
         except:
             return 0
+        
+    def _text(self, args):
+        return str(args[0])
+    
+    def _weekday(self, args):
+        """
+        Retorna el día de la semana.
+        Estándar Python: 0=Lunes, 1=Martes, ..., 5=Sábado, 6=Domingo.
+        """
+        val = args[0]
+        
+        # 1. Si ya es un objeto fecha, devolvemos directo
+        if isinstance(val, (datetime, date)): 
+            return val.weekday()
+        
+        # 2. Si es string, intentamos parsear
+        s_val = str(val)
+        try:
+            # Intento 1: Fecha sola (YYYY-MM-DD)
+            return datetime.strptime(s_val[:10], DATE_FORMAT).weekday()
+        except ValueError:
+            try:
+                # Intento 2: Fecha y Hora (YYYY-MM-DD HH:MM:SS)
+                # Asumiendo que DATE_TIME_FORMAT está disponible o hardcodeado
+                return datetime.strptime(s_val, "%Y-%m-%d %H:%M:%S").weekday()
+            except ValueError:
+                return 0 # O manejar error si prefieres
+        
+    # Regex
+    def _regex_match(self, args):
+        # Sintaxis: REGEXMATCH(texto, patron)
+        text = str(args[0])
+        pattern = str(args[1])
+        return bool(re.search(pattern, text))
+    
+    def _trim(self, args):
+        """Elimina espacios al inicio y al final"""
+        val = str(args[0]) if args[0] is not None else ""
+        return val.strip()
+
+    def _substitute(self, args):
+        """
+        Sintaxis: SUBSTITUTE(texto, texto_viejo, texto_nuevo)
+        Ej: SUBSTITUTE("123-456", "-", "") -> "123456"
+        """
+        text = str(args[0]) if args[0] is not None else ""
+        old_text = str(args[1]) if len(args) > 1 else ""
+        new_text = str(args[2]) if len(args) > 2 else ""
+        
+        return text.replace(old_text, new_text)
+
+    def _proper(self, args):
+        """Convierte a Título: 'juan perez' -> 'Juan Perez'"""
+        val = str(args[0]) if args[0] is not None else ""
+        return val.title()
+
+    def _not(self, args):
+        """Invierte un booleano"""
+        val = args[0]
+        # Manejo robusto de falsy values de Excel
+        if isinstance(val, bool): return not val
+        if val == 0: return True
+        if val == 1: return False
+        return not bool(val)
+    
+    def _find(self, args):
+        """
+        Devuelve la posición de un texto dentro de otro.
+        Sintaxis: FIND(texto_buscado, texto_donde_buscar)
+        OJO: Excel retorna índice base 1. Si no encuentra, Excel da error.
+        Aquí retornaremos 0 si no encuentra para facilitar condiciones IF(FIND(...) > 0, ...)
+        """
+        find_text = str(args[0])
+        within_text = str(args[1])
+        
+        # Python find retorna -1 si no encuentra, y es base 0.
+        # Ajustamos a base 1 para Excel.
+        pos = within_text.find(find_text)
+        if pos == -1:
+            return 0
+        return pos + 1
 
     # --- HELPERS DE PARSING ---
     def _split_args(self, args_str):

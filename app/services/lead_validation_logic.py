@@ -1,9 +1,9 @@
 from datetime import datetime
-import re
 from typing import Any, Dict
-from simpleeval import SimpleEval, NameNotDefined
 from app.models.lead_field import LeadField
 from app.core.constans import DATE_FORMAT
+# IMPORTAMOS EL NUEVO MOTOR
+from app.services.excel_formula_evaluator_service import ExcelFormulaEvaluatorService
 
 class LeadValidationLogic:
 
@@ -16,80 +16,63 @@ class LeadValidationLogic:
         all_fields_defs: Dict[int, LeadField]
     ):
         """
-        Ejecuta SOLAMENTE las reglas dinámicas (validation_rules) usando SimpleEval.
-        Asume que 'raw_value' ya pasó las validaciones básicas de tipo y requerimiento.
+        Ejecuta reglas usando ExcelFormulaEvaluatorService.
         """
-        # Si no hay reglas, salimos rápido
         if not current_field.validation_rules:
             return
 
-        # 1. Casteamos el valor actual para que las reglas funcionen (ej: value > 10)
-        value = cls._cast_value_for_rules(raw_value, current_field.field_type.code)
-
-        # 2. PREPARACIÓN DE CONTEXTO (Variables disponibles para las reglas)
-        typed_fields = {}
+        # 1. Preparar Contexto Global (Todos los campos por su Nombre)
+        # Esto permite reglas cruzadas tipo: "Si Ciudad = 'Madrid', Precio > 100"
+        context = {}
+        
+        # Pre-casteo de todos los valores del lead
         for f_id, f_val in all_values.items():
             f_def = all_fields_defs.get(f_id)
             if f_def:
-                typed_fields[f_id] = cls._cast_value_for_rules(f_val, f_def.field_type.code)
-            else:
-                typed_fields[f_id] = f_val
+                # Usamos el nombre del campo como variable (ej: "Edad")
+                clean_val = cls._cast_value_for_rules(f_val, f_def.field_type.code)
+                context[f_def.name] = clean_val
 
-        def regex_match_helper(pattern, text):
-            if text is None: return False
-            return bool(re.search(pattern, str(text)))
+        # 2. Inyectar el valor del campo actual
+        # Permitimos usar "value" o el nombre del campo en la fórmula
+        current_val_casted = cls._cast_value_for_rules(raw_value, current_field.field_type.code)
         
-        # Funciones permitidas en las reglas
-        allowed_functions = {
-            "len": len,
-            "sum": sum,
-            "abs": abs,
-            "str": str,
-            "regex_match": regex_match_helper
-        }
+        context["value"] = current_val_casted
+        context["VALUE"] = current_val_casted # Por si lo escriben en mayúsculas
+        # También nos aseguramos de que el propio nombre del campo tenga el valor actual
+        context[current_field.name] = current_val_casted
 
-        # Variables disponibles
-        context_names = {
-            "value": value,          
-            "fields": typed_fields, 
-            "today": datetime.now().replace(hour=0, minute=0, second=0, microsecond=0),
-            "now": datetime.now(),
-        }
+        # 3. Instanciar Evaluador
+        evaluator = ExcelFormulaEvaluatorService(context=context)
 
-        # 3. EJECUCIÓN DE REGLAS
+        # 4. Ejecutar Reglas
         for rule in current_field.validation_rules:
-            try:
-                # Si el valor es nulo y la regla no menciona "required", solemos saltarla.
-                # Pero como la validación de 'required' ya se hizo en el Service, 
-                # aquí evaluamos todo o decidimos saltar si value es None.
-                if value is None:
-                    continue 
+            if hasattr(rule, 'active') and not rule.active:
+                continue
+            
+            # Si el valor es nulo, generalmente saltamos la validación extra, 
+            # salvo que la regla sea explícita. (Asumimos 'Required' ya validó nulos).
+            if current_val_casted is None:
+                continue
 
-                if hasattr(rule, 'active') and not rule.active:
-                    continue
+            # Evaluamos
+            result = evaluator.evaluate(rule.expression)
 
-                is_valid = SimpleEval(
-                    names=context_names, 
-                    functions=allowed_functions
-                ).eval(rule.expression)
+            # Verificamos errores de sintaxis del motor (devuelve strings con #ERROR)
+            if isinstance(result, str) and result.startswith("#ERROR"):
+                # Opción: Loguear el error técnico y fallar, o ignorar.
+                # Aquí fallamos para avisar que la regla está rota.
+                raise ValueError(f"Error técnico en la regla '{rule.name}': {result}")
 
-                if not is_valid:
-                    raise ValueError(rule.error_message or "Error de validación personalizada.")
-
-            except NameNotDefined as e:
-                raise ValueError(f"Regla inválida: Variable desconocida {e}")
-            except Exception as e:
-                # Si ya es ValueError lo dejamos pasar, sino lo envolvemos
-                if isinstance(e, ValueError):
-                    raise e
-                raise ValueError(f"Error técnico en regla '{rule.name}': {str(e)}")
+            # La regla debe devolver TRUE para pasar. Si devuelve False o 0, falla.
+            # Nota: En Excel, IF devuelve valores, pero validaciones suelen ser booleanas.
+            if not result:
+                raise ValueError(rule.error_message or f"El valor '{raw_value}' no cumple la regla: {rule.name}")
 
     @staticmethod
     def _cast_value_for_rules(value, type_code):
         """
-        Intenta convertir el valor al tipo correcto para que las comparaciones
-        matemáticas funcionen en SimpleEval. Si falla, devuelve el original 
-        (para no romper, aunque la regla podría fallar después).
+        Convierte valores para que el motor de Excel pueda operar matemáticamente.
         """
         if value is None or value == "":
             return None
@@ -99,9 +82,21 @@ class LeadValidationLogic:
             elif type_code == "NUMBER":
                 return float(value)
             elif type_code == "BOOL":
-                return str(value).lower() in ("true", "1")
+                # Manejo string 'true'/'false'
+                if isinstance(value, str):
+                    return value.lower() in ("true", "1", "yes", "si")
+                return bool(value)
             elif type_code == "DATE":
-                return datetime.strptime(str(value), DATE_FORMAT)
+                # Si ya es objeto, devolver. Si es str, parsear.
+                if isinstance(value, (datetime, datetime.date)): return value
+                # Cortamos por si viene con hora: 2023-01-01 00:00:00
+                return datetime.strptime(str(value)[:10], DATE_FORMAT)
+            elif type_code == "DATE_TIME":
+                 # El motor soporta datetimes, intentamos parsear si es string
+                 if isinstance(value, str):
+                     # Asumiendo ISO o similar, simplificado
+                     return datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+                 return value
         except:
             return value 
         return value

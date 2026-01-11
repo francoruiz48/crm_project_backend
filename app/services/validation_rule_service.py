@@ -7,6 +7,8 @@ from app.services.base_service import BaseService
 from simpleeval import SimpleEval
 from datetime import datetime
 
+from app.services.excel_formula_evaluator_service import ExcelFormulaEvaluatorService
+
 class ValidationRuleService(BaseService):
     repository = ValidationRuleRepository
     
@@ -15,37 +17,26 @@ class ValidationRuleService(BaseService):
         if not expression:
             raise HTTPException(400, "La expresión no puede estar vacía.")
 
-        # Variables dummy para probar la compilación
-        dummy_names = {
-            "value": 1,
-            "related": 1,
-            "today": datetime.now(),
-            "now": datetime.now(),
+        # Contexto Dummy para probar la fórmula
+        dummy_context = {
+            "value": 10,       # Simulamos un número
+            "VALUE": 10,
+            "Edad": 18,        # Simulamos otros campos
+            "Nombre": "Test",
+            "Monto": 100.50
         }
 
-        def regex_match_helper(pattern, text):
-            if text is None: return False
-            return bool(re.search(pattern, str(text)))
-
-        # Funciones dummy
-        dummy_functions = {
-            "len": len,
-            "sum": sum,
-            "abs": abs,
-            "str": str,
-            "regex_match": regex_match_helper
-        }
+        evaluator = ExcelFormulaEvaluatorService(context=dummy_context)
         
-        try:
-            SimpleEval(names=dummy_names, functions=dummy_functions).eval(expression)
-        except SyntaxError:
-            raise HTTPException(
+        # Ejecutamos "en seco"
+        result = evaluator.evaluate(expression)
+
+        # El motor devuelve strings "#ERROR: ..." si falla
+        if isinstance(result, str) and result.startswith("#ERROR"):
+             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, 
-                detail="Error de sintaxis en la expresión. Verifica paréntesis y operadores."
+                detail=f"Sintaxis inválida para fórmula Excel: {result}"
             )
-        except Exception:
-            # Errores de tipo (ej: len(int)) son aceptables en validación estática
-            pass
 
     @classmethod
     def _build_expression_from_template(cls, code: str, params: dict) -> str:

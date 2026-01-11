@@ -179,7 +179,7 @@ def test_create_manual_validation_rule_success(client, db_session, initial_struc
     payload_manual = {
         "field_id": f_num.id,
         "name": "Solo Pares",
-        "expression": "value % 2 == 0", 
+        "expression": "MOD(value,2) = 0", 
         "error_message": "El número debe ser par."
     }
     
@@ -210,7 +210,7 @@ def test_create_manual_validation_rule_failure(client, db_session, initial_struc
     payload_manual = {
         "field_id": f_num.id,
         "name": "Solo Pares",
-        "expression": "value % 2 == 0", 
+        "expression": "MOD(value, 2) = 0", 
         "error_message": "El número debe ser par."
     }
     

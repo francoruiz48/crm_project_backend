@@ -33,8 +33,3 @@ class LeadFieldDetailedResponse(LeadFieldBase, BaseDetailResponse):
     nomenclator: Optional[NomenclatorResponse]
     lead_field_section: LeadFieldSectionDetailedResponse
 
-class LeadFieldTemplateResponse(BaseModel):
-    code: str
-    name: str
-    field_type_code: str
-    rules: List[Dict[str, Any]]
