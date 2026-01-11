@@ -136,6 +136,7 @@ def seed_lead_field_types(db):
         {"code": "INT", "description": "Número entero"},
         {"code": "NUMBER", "description": "Número decimal"},
         {"code": "DATE", "description": "Fecha"},
+        {"code": "DATE_TIME", "description": "Fecha y hora"},
         {"code": "BOOL", "description": "Valor verdadero/falso"},
         {"code": "SELECTOR", "description": "Selector"},
         {"code": "CHECKBOX", "description": "Casilla de verificación"},

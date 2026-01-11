@@ -1,7 +1,7 @@
 from datetime import date, datetime
 import re
 from fastapi import HTTPException, status
-from app.core.constans import DEFAULT_PAGE_SIZE, NOMENCLATOR_FIELD_TYPES
+from app.core.constans import DATE_FORMAT, DATE_TIME_FORMAT, DEFAULT_PAGE_SIZE, NOMENCLATOR_FIELD_TYPES
 from app.services.base_service import BaseService
 from app.db.repository.lead_repository import LeadRepository
 from app.db.repository.lead_field_repository import LeadFieldRepository
@@ -64,6 +64,11 @@ class LeadService(BaseService):
                 if isinstance(value, (datetime, date)): return value
                 # Asumimos ISO format YYYY-MM-DD
                 return datetime.strptime(str(value), "%Y-%m-%d").date()
+            
+            if type_code == "DATE_TIME":
+                if isinstance(value, datetime): return value
+                # Convertimos string "2026-01-10 22:00:00" a objeto datetime
+                return datetime.strptime(str(value), DATE_TIME_FORMAT)
 
             # Si es STRING, TEXT, NOMENCLATOR, etc., devolvemos tal cual
             return value
@@ -265,7 +270,13 @@ class LeadService(BaseService):
                 # Asumimos formato ISO YYYY-MM-DD
                 datetime.strptime(str(value), "%Y-%m-%d")
             except ValueError:
-                raise ValueError(f"El campo '{field.name}' espera formato de fecha YYYY-MM-DD, pero recibió '{value}'.")
+                raise ValueError(f"El campo '{field.name}' espera formato de fecha '{DATE_FORMAT}', pero recibió '{value}'.")
+        elif type_code == "DATE_TIME":
+            try:
+                # Validamos contra el formato con horas/min/seg
+                datetime.strptime(str(value), DATE_TIME_FORMAT)
+            except ValueError:
+                raise ValueError(f"El campo '{field.name}' espera formato '{DATE_TIME_FORMAT}' (Ej: 2026-01-30 14:30:00), pero recibió '{value}'.")
 
     @classmethod
     def _validate_processed_data(cls, full_context, field_defs_list):

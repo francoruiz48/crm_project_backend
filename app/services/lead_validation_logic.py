@@ -3,6 +3,7 @@ import re
 from typing import Any, Dict
 from simpleeval import SimpleEval, NameNotDefined
 from app.models.lead_field import LeadField
+from app.core.constans import DATE_FORMAT
 
 class LeadValidationLogic:
 
@@ -100,7 +101,7 @@ class LeadValidationLogic:
             elif type_code == "BOOL":
                 return str(value).lower() in ("true", "1")
             elif type_code == "DATE":
-                return datetime.strptime(str(value), "%Y-%m-%d")
+                return datetime.strptime(str(value), DATE_FORMAT)
         except:
             return value 
         return value

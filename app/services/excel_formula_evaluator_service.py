@@ -1,6 +1,7 @@
 import operator
 import re
 from datetime import datetime, date
+from app.core.constans import DATE_FORMAT
 
 class ExcelFormulaEvaluatorService:
     def __init__(self, context=None):
@@ -39,7 +40,10 @@ class ExcelFormulaEvaluatorService:
             'TODAY': self._today, 'HOY': self._today,
             'DAY': self._day, 'DIA': self._day,
             'YEAR': self._year, 'ANO': self._year, 'AÑO': self._year,
-            'MONTH': self._month, 'MES': self._month
+            'MONTH': self._month, 'MES': self._month,
+            'HOUR': self._hour, 'HORA': self._hour,
+            'MINUTE': self._minute, 'MINUTO': self._minute,
+            'SECOND': self._second, 'SEGUNDO': self._second,
         }
 
     def evaluate(self, expression):
@@ -203,7 +207,7 @@ class ExcelFormulaEvaluatorService:
         if isinstance(val, (datetime, date)): return val.day
         # Si es string, intentamos parsear ISO básico
         try:
-            return datetime.strptime(str(val)[:10], "%Y-%m-%d").day
+            return datetime.strptime(str(val)[:10], DATE_FORMAT).day
         except:
             return 0
 
@@ -211,7 +215,7 @@ class ExcelFormulaEvaluatorService:
         val = args[0]
         if isinstance(val, (datetime, date)): return val.month
         try:
-            return datetime.strptime(str(val)[:10], "%Y-%m-%d").month
+            return datetime.strptime(str(val)[:10], DATE_FORMAT).month
         except:
             return 0
             
@@ -219,7 +223,31 @@ class ExcelFormulaEvaluatorService:
         val = args[0]
         if isinstance(val, (datetime, date)): return val.year
         try:
-            return datetime.strptime(str(val)[:10], "%Y-%m-%d").year
+            return datetime.strptime(str(val)[:10], DATE_FORMAT).year
+        except:
+            return 0
+
+    def _hour(self, args):
+        val = args[0]
+        if isinstance(val, datetime): return val.hour
+        try:
+            return datetime.strptime(str(val), DATE_FORMAT + " %H:%M:%S").hour
+        except:
+            return 0
+
+    def _minute(self, args):
+        val = args[0]
+        if isinstance(val, datetime): return val.minute
+        try:
+            return datetime.strptime(str(val), DATE_FORMAT + " %H:%M:%S").minute
+        except:
+            return 0
+
+    def _second(self, args):
+        val = args[0]
+        if isinstance(val, datetime): return val.second
+        try:
+            return datetime.strptime(str(val), DATE_FORMAT + " %H:%M:%S").second
         except:
             return 0
 
