@@ -1,5 +1,7 @@
 import pytest
 from app.models.lead_field import LeadField
+import json
+from datetime import datetime, timedelta
 
 def test_validation_rule_test_rule_success(client, db_session, initial_structure):
     """
@@ -225,3 +227,110 @@ def test_create_manual_validation_rule_failure(client, db_session, initial_struc
         })
         assert res_impar.status_code == 400
         assert "par" in res_impar.text  # Verificamos mensaje personalizado
+
+# --- 1. PRUEBA DE MATEMÁTICAS (Template: AGE -> MIN_VALUE / MAX_VALUE) ---
+def test_validation_rule_math_min_max(client, initial_structure):
+    camp_id = initial_structure["campaign"].id
+    
+    # Creamos campo Edad usando el template AGE (0 - 120)
+    res_field = client.post("/lead_fields/", json={
+        "name": "Edad Test",
+        "field_template_code": "AGE",
+        "campaign_id": camp_id,
+        "order": 1,
+        "lead_field_section_id": 1
+    })
+    assert res_field.status_code == 200
+    f_id = res_field.json()["id"]
+
+    # Caso Éxito: 25
+    client.post("/leads/", json={
+        "campaign_id": camp_id,
+        "values": [{"field_id": f_id, "value": 25}]
+    }).raise_for_status()
+
+    # Caso Fallo: -5 (Menor al mínimo)
+    res_fail = client.post("/leads/", json={
+        "campaign_id": camp_id,
+        "values": [{"field_id": f_id, "value": -5}]
+    })
+    assert res_fail.status_code == 400
+    assert "mayor o igual" in res_fail.text.lower()
+
+# --- 2. PRUEBA DE REGEX (Template: EMAIL -> EMAIL_FORMAT) ---
+def test_validation_rule_regex_email(client, initial_structure):
+    camp_id = initial_structure["campaign"].id
+    
+    # Creamos campo Email
+    res_field = client.post("/lead_fields/", json={
+        "field_template_code": "EMAIL",
+        "campaign_id": camp_id,
+        "order": 2,
+        "lead_field_section_id": 1
+    })
+    f_id = res_field.json()["id"]
+
+    # Caso Éxito
+    res_ok = client.post("/leads/", json={
+        "campaign_id": camp_id,
+        "values": [{"field_id": f_id, "value": "usuario@test.com"}]
+    })
+    assert res_ok.status_code == 200
+
+    # Caso Fallo (Regex)
+    res_fail = client.post("/leads/", json={
+        "campaign_id": camp_id,
+        "values": [{"field_id": f_id, "value": "usuario-sin-arroba.com"}]
+    })
+    assert res_fail.status_code == 400
+    assert "formato" in res_fail.text.lower()
+
+# --- 3. PRUEBA DE FECHAS (Template: BIRTH_DATE -> DATE_PAST) ---
+def test_validation_rule_date_logic(client, initial_structure):
+    camp_id = initial_structure["campaign"].id
+    
+    # Creamos campo Fecha Nacimiento
+    res_field = client.post("/lead_fields/", json={
+        "field_template_code": "BIRTH_DATE",
+        "campaign_id": camp_id,
+        "order": 3,
+        "lead_field_section_id": 1
+    })
+    f_id = res_field.json()["id"]
+
+    # Caso Éxito: Ayer
+    ayer = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    client.post("/leads/", json={
+        "campaign_id": camp_id,
+        "values": [{"field_id": f_id, "value": ayer}]
+    }).raise_for_status()
+
+    # Caso Fallo: Mañana (Usa TODAY() < value)
+    manana = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+    res_fail = client.post("/leads/", json={
+        "campaign_id": camp_id,
+        "values": [{"field_id": f_id, "value": manana}]
+    })
+    assert res_fail.status_code == 400
+    assert "pasado" in res_fail.text.lower()
+
+# --- 4. PRUEBA DE TEXTO (Template: CBU_ALIAS -> LEN / MIN_LENGTH) ---
+def test_validation_rule_text_length(client, initial_structure):
+    camp_id = initial_structure["campaign"].id
+    
+    # CBU Alias pide min 6 caracteres
+    res_field = client.post("/lead_fields/", json={
+        "field_template_code": "CBU_ALIAS",
+        "campaign_id": camp_id,
+        "order": 4,
+        "lead_field_section_id": 1
+    })
+    f_id = res_field.json()["id"]
+
+    # Caso Fallo: Muy corto
+    res_fail = client.post("/leads/", json={
+        "campaign_id": camp_id,
+        "values": [{"field_id": f_id, "value": "ABC"}] # 3 chars
+    })
+    assert res_fail.status_code == 400
+    assert "corto" in res_fail.text.lower()

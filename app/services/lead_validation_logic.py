@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Dict
 from app.models.lead_field import LeadField
 from app.core.constans import DATE_FORMAT
@@ -87,14 +87,16 @@ class LeadValidationLogic:
                     return value.lower() in ("true", "1", "yes", "si")
                 return bool(value)
             elif type_code == "DATE":
-                # Si ya es objeto, devolver. Si es str, parsear.
-                if isinstance(value, (datetime, datetime.date)): return value
-                # Cortamos por si viene con hora: 2023-01-01 00:00:00
-                return datetime.strptime(str(value)[:10], DATE_FORMAT)
+                if isinstance(value, datetime): return value.date() # Si ya es datetime, bajamos a date
+                if isinstance(value, date): return value # Si ya es date, ok
+
+                return datetime.strptime(str(value)[:10], DATE_FORMAT).date()
             elif type_code == "DATE_TIME":
-                 # El motor soporta datetimes, intentamos parsear si es string
+                 # El motor soporta datetimes
                  if isinstance(value, str):
-                     # Asumiendo ISO o similar, simplificado
+                     # Asumiendo ISO o similar
+                     if len(value) <= 10: # Si viene solo fecha '2023-01-01'
+                         return datetime.strptime(value, DATE_FORMAT)
                      return datetime.fromisoformat(str(value).replace('Z', '+00:00'))
                  return value
         except:

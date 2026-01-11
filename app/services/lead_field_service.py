@@ -220,7 +220,13 @@ class LeadFieldService(BaseService):
                 for rule_cfg in rules_to_create:
                     rule_payload = rule_cfg.copy()
                     rule_payload["field_id"] = new_field.id
-                    ValidationRuleService.create_within_session(uow.session, rule_payload, created_by)
+                    
+                    ValidationRuleService.create_within_session(
+                        session=uow.session, 
+                        obj_data=rule_payload, 
+                        created_by=created_by,
+                        field_type_code=new_field.field_type_code 
+                    )
 
                 return new_field
             except Exception as e:
