@@ -1,7 +1,7 @@
 from datetime import date, datetime
 import re
-from fastapi import HTTPException, status
-from app.core.constans import DATE_FORMAT, DATE_TIME_FORMAT, DEFAULT_PAGE_SIZE, NOMENCLATOR_FIELD_TYPES
+from fastapi import HTTPException, UploadFile, status
+from app.core.constans import ALLOWED_DOCUMENT_TYPES, ALLOWED_IMAGE_TYPES, DATE_FORMAT, DATE_TIME_FORMAT, DEFAULT_PAGE_SIZE, NOMENCLATOR_FIELD_TYPES
 from app.services.base_service import BaseService
 from app.db.repository.lead_repository import LeadRepository
 from app.db.repository.lead_field_repository import LeadFieldRepository
@@ -9,6 +9,7 @@ from app.db.unit_of_work import UnitOfWork
 from app.services.lead_validation_logic import LeadValidationLogic
 from app.core.error_messages import SUCCESS_DELETE
 from app.services.excel_formula_evaluator_service import ExcelFormulaEvaluatorService
+from app.services.storage_service import StorageService
 
 
 class LeadService(BaseService):
@@ -32,6 +33,9 @@ class LeadService(BaseService):
         
         def __getitem__(self, item):
             return self._data.get(item)
+        
+
+
     # ---------------------------------------------------------
     # Helpers de Lógica de Negocio
     # ---------------------------------------------------------
@@ -347,11 +351,91 @@ class LeadService(BaseService):
         return items_for_repo
 
     # ---------------------------------------------------------
+    # HELPER DE ARCHIVOS
+    # ---------------------------------------------------------
+    @classmethod
+    def _handle_file_uploads(cls, context_data: dict, files_map: dict[int, UploadFile], field_defs_list: list):
+        """
+        1. Itera sobre los archivos recibidos.
+        2. Valida que el campo exista y sea de tipo FILE.
+        3. Valida el subtipo (IMAGEN vs DOCUMENTO).
+        4. Sube a Supabase.
+        5. Inyecta el PATH resultante en context_data para que se guarde en la BD.
+        """
+        print(f"📂 _handle_file_uploads invocado con: {files_map.keys()}")
+        if not files_map:
+            print("⚠️ files_map vacío, saliendo.")
+            return context_data
+
+        fields_by_id = {f.id: f for f in field_defs_list}
+
+        for field_id, file in files_map.items():
+            print(f"➡️ Procesando archivo para field_id: {field_id}, Filename: {file.filename}") # DEBUG
+            field_def = fields_by_id.get(field_id)
+            
+            # Validación básica de existencia y tipo
+            if not field_def:
+                print(f"❌ Campo {field_id} no encontrado en definiciones.")
+                raise HTTPException(400, f"Se intentó subir archivo para un campo inexistente (ID: {field_id})")
+            
+            print(f"ℹ️ Tipo de campo: {field_def.field_type_code}") # DEBUG
+
+            if field_def.field_type_code != "FILE":
+                raise HTTPException(400, f"El campo '{field_def.name}' no acepta archivos.")
+
+            # Validación de Subtipo (Imagen vs Documento)
+            allowed_types = []
+            if field_def.field_subtype_code == "FILE_IMAGE":
+                allowed_types = ALLOWED_IMAGE_TYPES
+            elif field_def.field_subtype_code == "FILE_DOCUMENT":
+                allowed_types = ALLOWED_DOCUMENT_TYPES
+            else:
+                # Si no tiene subtipo, permitimos ambos por defecto (o restringimos)
+                allowed_types = ALLOWED_IMAGE_TYPES + ALLOWED_DOCUMENT_TYPES
+
+            # Validar Mime Type
+            StorageService.validate_file(file, allowed_types)
+
+            # Subir
+            try:
+                # Usamos una carpeta organizada por campaña o fecha si quisieras
+                path = StorageService.upload_file(file, folder="leads")
+                print(f"✅ Archivo subido a Supabase en: {path}")
+                # INYECCIÓN: Guardamos el path como si fuera el valor de texto del campo
+                context_data[field_id] = path
+                
+            except Exception as e:
+                print(f"🔥 Error en subida: {e}")
+                raise HTTPException(500, f"Fallo al procesar archivo para campo {field_def.name}: {str(e)}")
+
+        return context_data
+
+    @classmethod
+    def _enrich_lead_with_urls(cls, lead):
+        """
+        Recorre los valores del Lead. Si encuentra un campo tipo FILE,
+        transforma el PATH relativo (DB) en URL pública (Display).
+        Funciona sobre objetos ORM o Pydantic que tengan estructura de objetos.
+        """
+        if not lead or not lead.field_values:
+            return lead
+
+        for fv in lead.field_values:
+            # Verificamos si tenemos acceso a la definición del campo y si es FILE
+            # Nota: Al usar ORM 'joinedload', fv.field debería estar cargado.
+            if fv.field and fv.field.field_type_code == "FILE":
+                if fv.value: # Si hay path guardado
+                    # Transformamos Path -> URL solo para la vista (en memoria)
+                    fv.value = StorageService.get_public_url(fv.value)
+        
+        return lead
+
+    # ---------------------------------------------------------
     # Métodos CRUD Públicos
     # ---------------------------------------------------------
 
     @classmethod
-    def create(cls, obj_in, created_by=None):
+    def create(cls, obj_in, created_by=None, files_map: dict = None):
         campaign_id = obj_in.campaign_id
         with UnitOfWork() as uow:
             all_field_defs = cls.field_repository.get_all_active_with_rules(uow.session)
@@ -377,6 +461,10 @@ class LeadService(BaseService):
             # 2. Input -> Dict
             context_data = cls._prepare_context_dict(obj_in.values)
 
+            # Esto subirá los archivos y agregará sus paths al context_data
+            if files_map:
+                context_data = cls._handle_file_uploads(context_data, files_map, current_campaign_defs)
+
             # 3. Rellenar campos faltantes con None
             # Esto asegura que si el user no manda un campo opcional, lo tengamos en el dict como None
             context_data = cls._fill_missing_fields(context_data, current_campaign_defs)
@@ -399,11 +487,11 @@ class LeadService(BaseService):
             # 8. Guardar
             lead = cls.repository.create(uow.session, {'campaign_id': campaign_id}, created_by=created_by)
             cls.repository.upsert_values(uow.session, lead.id, clean_values)
-            
-            return cls.repository.get_by_id(uow.session, lead.id)
+            lead_id = lead.id
+        return cls.get_by_id(lead_id, detailed=True)
 
     @classmethod
-    def update(cls, obj_id: int, obj_in):
+    def update(cls, obj_id: int, obj_in, files_map: dict = None):
         # 1. Usamos UOW para la escritura
         with UnitOfWork() as uow:
             # A. Obtener Lead
@@ -430,6 +518,17 @@ class LeadService(BaseService):
 
                 # 3. Merge de datos (DB + Nuevos)
                 incoming_data = cls._prepare_context_dict(obj_in.values)
+
+                # --- PROCESAMIENTO DE ARCHIVOS ---
+                if files_map:
+                    # Validar que los archivos pertenezcan a la campaña correcta
+                    for fid in files_map.keys():
+                        if fid not in defs_map: raise HTTPException(400, f"Campo {fid} no existe")
+                        if defs_map[fid].campaign_id != current_lead.campaign_id: 
+                            raise HTTPException(400, f"El campo {fid} no pertenece a la campaña del lead.")
+                    
+                    # Subir e inyectar paths en incoming_data (sobrescribe lo que había)
+                    incoming_data = cls._handle_file_uploads(incoming_data, files_map, field_defs)
                 
                 db_values = {}
                 for v in current_lead.field_values:
@@ -471,25 +570,56 @@ class LeadService(BaseService):
                 
                 # 7. Ejecutar Upsert
                 cls.repository.upsert_values(uow.session, obj_id, clean_values)
-            
-            # COMMIT AUTOMÁTICO AL SALIR DEL WITH
 
-        # 2. Usamos UN NUEVO UOW para leer el resultado fresco desde la BD
-        # Esto es vital para asegurar que devolvemos lo que realmente se guardó
-        with UnitOfWork() as uow_read:
-            return cls.repository.get_by_id(uow_read.session, obj_id, detailed=True)
+        return cls.get_by_id(obj_id, detailed=True)
+            
         
 
     @classmethod
     def search(cls, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, detailed: bool = False, search_req=None):
-        return cls._execute(
-            action="Buscando Leads",
-            func=lambda uow: cls.repository.search(
+        def do_search(uow):
+            total, items = cls.repository.search(
                 session=uow.session,
                 page=page,
                 page_size=page_size,
                 search_params=search_req,
                 detailed=detailed
             )
+            
+            for item in items:
+                cls._enrich_lead_with_urls(item)
+                
+            return total, items
+
+        return cls._execute(
+            action="Buscando Leads",
+            func=do_search
         )
     
+    @classmethod
+    def get_all(cls, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, only_active: bool = True, detailed: bool = False, **kwargs):
+        total, items = cls._execute(
+            action=f"Obteniendo listado de leads",
+            func=lambda uow: cls.repository.get_all(
+                session=uow.session,
+                page=page,
+                page_size=page_size,
+                only_active=only_active,
+                detailed=detailed,
+                **kwargs
+            ))
+
+        for item in items:
+                cls._enrich_lead_with_urls(item)
+                
+        return total, items
+
+    @classmethod
+    def get_by_id(cls, obj_id: int, detailed: bool = True):
+        lead = cls._execute(
+            action="Obteniendo",
+            obj_id=obj_id,
+            func=lambda uow: cls.repository.get_by_id(uow.session, obj_id, detailed=detailed)
+        )
+        
+        return cls._enrich_lead_with_urls(lead)

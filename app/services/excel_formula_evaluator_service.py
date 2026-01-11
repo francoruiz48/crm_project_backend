@@ -1,4 +1,5 @@
 import operator
+import random
 import re
 from datetime import datetime, date
 from app.core.constans import DATE_FORMAT
@@ -27,6 +28,19 @@ class ExcelFormulaEvaluatorService:
             'LEFT': self._left, 'IZQUIERDA': self._left,
             'RIGHT': self._right, 'DERECHA': self._right,
             'MID': self._mid, 'EXTRAE': self._mid,
+
+            #Números
+            'ROUND': self._round, 'REDONDEAR': self._round,
+            'INT': self._int, 'ENTERO': self._int,
+            'ABS': self._abs, 'VALORABSOLUTO': self._abs,
+            'SQRT': self._sqrt, 'RAIZCUADRADA': self._sqrt,
+            'POWER': self._power, 'POTENCIA': self._power,
+            'MOD': self._mod, 'RESIDUO': self._mod,
+            'FLOOR': self._floor, 'REDONDEAR.MENOS': self._floor,
+            'CEIL': self._ceil, 'REDONDEAR.MAS': self._ceil,
+            'SIGN': self._sign, 'SIGNO': self._sign,
+            'RANDOM': self._random_number, 'ALEATORIO': self._random_number,
+            'RANDOM_BETWEEN': self._random_between, 'ALEATORIO.ENTRE': self._random_between,
 
             # Matemáticas / Estadística
             'SUM': self._sum, 'SUMA': self._sum,
@@ -194,6 +208,68 @@ class ExcelFormulaEvaluatorService:
         validos = [x for x in args if isinstance(x, (int, float))]
         if not validos: return 0
         return min(validos)
+    
+    #Numeros
+    def _round(self, args):
+        val = float(args[0])
+        digits = int(args[1]) if len(args) > 1 else 0
+        return round(val, digits)
+    
+    def _int(self, args):
+        val = float(args[0])
+        return int(val)
+    
+    def _abs(self, args):
+        val = float(args[0])
+        return abs(val)
+    
+    def _sqrt(self, args):
+        val = float(args[0])
+        if val < 0:
+            raise ValueError("No se puede calcular la raíz cuadrada de un número negativo")
+        return val ** 0.5
+    
+    def _power(self, args):
+        base = float(args[0])
+        exponent = float(args[1])
+        return base ** exponent
+    
+    def _mod(self, args):
+        dividend = int(args[0])
+        divisor = int(args[1])
+        if divisor == 0:
+            raise ValueError("División por cero en MOD")
+        return dividend % divisor
+    
+    def _random_between(self, args):
+        from_ = int(args[0])
+        until_ = int(args[1])
+        return random.randint(from_, until_)
+    
+    def _random_number(self):
+        return random.random()
+
+    #Redondeo hacia abajo
+    def _floor(self, args):
+        import math
+        val = float(args[0])
+        return math.floor(val)
+    
+    #Redondeo hacia arriba
+    def _ceil(self, args):
+        import math
+        val = float(args[0])
+        return math.ceil(val)
+    
+    # Devuelve el signo de un número
+    def _sign(self, args):
+        val = float(args[0])
+        if val > 0:
+            return 1
+        elif val < 0:
+            return -1
+        else:
+            return 0
 
     # Fechas
     def _now(self, args):
