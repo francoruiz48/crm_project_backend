@@ -14,6 +14,7 @@ class LeadField(BaseModelDB):
     input_mask = Column(String, nullable=True)
     order = Column(Integer, nullable=False)
     is_visible = Column(Boolean, default=True)
+    calculation_expression = Column(String, nullable=True)
 
     #relations
     campaign_id = Column(Integer, ForeignKey("campaign.id"), nullable=False)

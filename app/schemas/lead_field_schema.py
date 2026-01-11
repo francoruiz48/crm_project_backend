@@ -12,12 +12,12 @@ class LeadFieldBase(BaseModel):
     required: bool = False
     default_value: Optional[str] = None
     is_primary: bool = False
-    is_primary: bool = False
     input_mask: Optional[str] = None
     field_template_code: Optional[str] = None
     is_visible: bool = True
     order: int
     campaign_id: int
+    calculation_expression: Optional[str] = None
 
 class LeadFieldCreate(LeadFieldBase, BaseCreate):
     field_template_code: Optional[str] = None

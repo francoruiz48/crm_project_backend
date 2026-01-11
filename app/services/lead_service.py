@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 import re
 from fastapi import HTTPException, status
 from app.core.constans import DEFAULT_PAGE_SIZE, NOMENCLATOR_FIELD_TYPES
@@ -8,6 +8,7 @@ from app.db.repository.lead_field_repository import LeadFieldRepository
 from app.db.unit_of_work import UnitOfWork
 from app.services.lead_validation_logic import LeadValidationLogic
 from app.core.error_messages import SUCCESS_DELETE
+from app.services.excel_formula_evaluator_service import ExcelFormulaEvaluatorService
 
 
 class LeadService(BaseService):
@@ -34,6 +35,76 @@ class LeadService(BaseService):
     # ---------------------------------------------------------
     # Helpers de Lógica de Negocio
     # ---------------------------------------------------------
+
+    @classmethod
+    def _convert_value_by_type(cls, value, field_def):
+        """
+        Convierte el valor crudo (generalmente string) al tipo de dato real de Python
+        según la definición del campo. Esto es vital para que las fórmulas funcionen.
+        """
+        if value is None:
+            return None
+            
+        type_code = field_def.field_type_code
+
+        try:
+            if type_code == "INT":
+                return int(value)
+            
+            if type_code == "NUMBER":
+                return float(value)
+            
+            if type_code == "BOOL":
+                # Manejo robusto de booleanos
+                if isinstance(value, bool): return value
+                return str(value).lower() in ("true", "1", "yes", "si")
+
+            if type_code == "DATE":
+                # Si ya es date, lo devolvemos. Si es string, parseamos.
+                if isinstance(value, (datetime, date)): return value
+                # Asumimos ISO format YYYY-MM-DD
+                return datetime.strptime(str(value), "%Y-%m-%d").date()
+
+            # Si es STRING, TEXT, NOMENCLATOR, etc., devolvemos tal cual
+            return value
+
+        except (ValueError, TypeError):
+            # Si falla la conversión, devolvemos el valor original o None
+            # Esto evita que explote aquí, y deja que las validaciones posteriores capturen el error
+            return value
+
+    @classmethod
+    def _evaluate_calculated_fields(cls, input_data: dict, field_defs_list: list):
+        calculated_fields = [f for f in field_defs_list if f.field_type_code == "CALCULATED"]
+        if not calculated_fields: return input_data
+
+        fields_by_id = {f.id: f for f in field_defs_list}
+        
+        # Construimos contexto (Nombres de variables -> Valores TIPADOS)
+        context = {}
+        for fid, val in input_data.items():
+            field_def = fields_by_id.get(fid)
+            if field_def:
+                # Convertimos el valor antes de meterlo al contexto ---
+                typed_value = cls._convert_value_by_type(val, field_def)
+                
+                # Normalizamos nombre (opcionalmente podrías hacer .upper() para estandarizar)
+                context[field_def.name] = typed_value
+
+        # Instanciamos NUESTRO evaluador
+        evaluator = ExcelFormulaEvaluatorService(context=context)
+
+        for field in calculated_fields:
+            if not field.calculation_expression: continue
+            
+            # Resultado
+            result = evaluator.evaluate(field.calculation_expression)
+            input_data[field.id] = result
+            
+            # Actualizamos contexto para cálculos encadenados
+            context[field.name] = result
+
+        return input_data
 
     @classmethod
     def _prepare_context_dict(cls, values_in):
@@ -255,7 +326,10 @@ class LeadService(BaseService):
                 item_dict['nomenclator_ids_list'] = ids_list 
                 item_dict['value'] = None
             else:
-                item_dict['value'] = val
+                if val is not None:
+                    item_dict['value'] = str(val) 
+                else:
+                    item_dict['value'] = None
                 item_dict['nomenclator_ids_list'] = [] # Vacío
             
             items_for_repo.append(cls.ItemProxy(item_dict))
@@ -298,6 +372,9 @@ class LeadService(BaseService):
 
             # 4. Aplicar Defaults (Ahora verá los Nones creados arriba y aplicará default si corresponde)
             context_data = cls._apply_defaults(context_data, current_campaign_defs)
+
+            # 4.5. EVALUAR CAMPOS CALCULADOS
+            context_data = cls._evaluate_calculated_fields(context_data, current_campaign_defs)
 
             # 5. Chequear Duplicados
             cls._check_duplicates(uow.session, campaign_id, context_data, current_campaign_defs)
@@ -364,13 +441,24 @@ class LeadService(BaseService):
                 
                 full_context = {**db_values, **incoming_data}
                 
-                # 4. Validar Reglas
+                # 4. EVALUAR CAMPOS CALCULADOS (Sobre el contexto completo)
+                full_context = cls._evaluate_calculated_fields(full_context, field_defs)
+
+                # [CRÍTICO] Actualizar 'incoming_data' con los resultados calculados.
+                # Si el usuario cambió 'Precio', el campo 'Total' (calculado) cambió en full_context,
+                # pero debemos decirle al repo que lo guarde.
+                calculated_fields = [f for f in field_defs if f.field_type_code == "CALCULATED"]
+                for cf in calculated_fields:
+                    # Sobrescribimos/Agregamos el valor calculado a lo que vamos a guardar
+                    incoming_data[cf.id] = full_context.get(cf.id)
+
+                # 5. Validar Reglas
                 cls._validate_processed_data(full_context, field_defs)
                 
-                # 5. Preparar items para upsert (Solo lo nuevo/modificado)
+                # 6. Preparar items para upsert (Solo lo nuevo/modificado)
                 clean_values = cls._reconstruct_items_for_repo(incoming_data, field_defs)
                 
-                # 6. Ejecutar Upsert
+                # 7. Ejecutar Upsert
                 cls.repository.upsert_values(uow.session, obj_id, clean_values)
             
             # COMMIT AUTOMÁTICO AL SALIR DEL WITH

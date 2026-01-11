@@ -1,12 +1,12 @@
-2026-01-10 22:13:22 [INFO] Creando Campo de Lead LeadField...
-2026-01-10 22:13:22 [INFO] Campo configurado exitosamente.
-2026-01-10 22:13:22 [INFO] HTTP Request: POST http://testserver/lead_fields/ "HTTP/1.1 200 OK"
-2026-01-10 22:13:22 [INFO] Eliminando LeadField(1)...
-2026-01-10 22:13:22 [INFO] LeadField(1) eliminado correctamente.
-2026-01-10 22:13:22 [INFO] HTTP Request: DELETE http://testserver/lead_fields/1 "HTTP/1.1 200 OK"
-2026-01-10 22:13:22 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 200 OK"
-2026-01-10 22:13:22 [INFO] Creando Campo de Lead LeadField...
-2026-01-10 22:13:22 [INFO] Campo configurado exitosPASSED [  4%]
+2026-01-11 00:35:43 [INFO] Creando Campo de Lead LeadField...
+2026-01-11 00:35:43 [INFO] Campo configurado exitosamente.
+2026-01-11 00:35:43 [INFO] HTTP Request: POST http://testserver/lead_fields/ "HTTP/1.1 200 OK"
+2026-01-11 00:35:43 [INFO] Eliminando LeadField(1)...
+2026-01-11 00:35:43 [INFO] LeadField(1) eliminado correctamente.
+2026-01-11 00:35:43 [INFO] HTTP Request: DELETE http://testserver/lead_fields/1 "HTTP/1.1 200 OK"
+2026-01-11 00:35:43 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 200 OK"
+2026-01-11 00:35:43 [INFO] Creando Campo de Lead LeadField...
+2026-01-11 00:35:43 [INFO] Campo configurado exitosPASSED [  4%]
 tests/functional/test_lead_fields.py::test_lead_field_delete_with_data_soft_delete PASSED [  6%]
 tests/functional/test_lead_fields.py::test_create_lead_ignores_disabled_required_field PASSED [  8%]
 tests/functional/test_lead_fields.py::test_cannot_add_required_field_to_campaign_with_leads PASSED [ 10%]
@@ -109,60 +109,60 @@ tests/functional/test_validation_rules.py: 3 warnings
     transaction.rollback()
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-======================= 47 passed, 34 warnings in 4.12s ========================
+======================= 47 passed, 34 warnings in 3.58s ========================
 testserver/leads/?campaign_id=36 "HTTP/1.1 200 OK"
-2026-01-10 22:13:23 [INFO] Obteniendo listado de Lead Lead...
-2026-01-10 22:13:23 [INFO] HTTP Request: GET http://testserver/leads/?campaign_id=37 "HTTP/1.1 200 OK"
-2026-01-10 22:13:23 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 400 Bad Request"
-2026-01-10 22:13:24 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 200 OK"
-2026-01-10 22:13:24 [INFO] Creando Regla ValidationRule...
-2026-01-10 22:13:24 [INFO] ValidationRule creado correctamente (ID=None).
-2026-01-10 22:13:24 [INFO] HTTP Request: POST http://testserver/validation_rules/ "HTTP/1.1 200 OK"
-2026-01-10 22:13:24 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 200 OK"
-2026-01-10 22:13:24 [INFO] Creando Regla ValidationRule...
-2026-01-10 22:13:24 [INFO] ValidationRule creado correctamente (ID=None).
-2026-01-10 22:13:24 [INFO] HTTP Request: POST http://testserver/validation_rules/ "HTTP/1.1 200 OK"
-2026-01-10 22:13:24 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 400 Bad Request"
-2026-01-10 22:13:24 [INFO] Creando Regla ValidationRule...
-2026-01-10 22:13:24 [INFO] ValidationRule creado correctamente (ID=None).
-2026-01-10 22:13:24 [INFO] HTTP Request: POST http://testserver/validation_rules/ "HTTP/1.1 200 OK"
-2026-01-10 22:13:24 [INFO] Eliminando ValidationRule(10)...
-2026-01-10 22:13:24 [INFO] ValidationRule(10) eliminado correctamente.
-2026-01-10 22:13:24 [INFO] HTTP Request: DELETE http://testserver/validation_rules/10 "HTTP/1.1 200 OK"
-2026-01-10 22:13:24 [INFO] Obteniendo ValidationRule(10)...
-2026-01-10 22:13:24 [INFO] HTTP Request: GET http://testserver/validation_rules/10 "HTTP/1.1 404 Not Found"
-2026-01-10 22:13:24 [INFO] Creando Regla ValidationRule...
-2026-01-10 22:13:24 [INFO] ValidationRule creado correctamente (ID=None).
-2026-01-10 22:13:24 [INFO] HTTP Request: POST http://testserver/validation_rules/ "HTTP/1.1 200 OK"
-2026-01-10 22:13:24 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 200 OK"
-2026-01-10 22:13:24 [INFO] Creando Regla ValidationRule...
-2026-01-10 22:13:24 [INFO] ValidationRule creado correctamente (ID=None).
-2026-01-10 22:13:24 [INFO] HTTP Request: POST http://testserver/validation_rules/ "HTTP/1.1 200 OK"
-2026-01-10 22:13:24 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 400 Bad Request"
-2026-01-10 22:13:24 [INFO] Creando Workspace...
-2026-01-10 22:13:24 [INFO] Workspace creado correctamente (ID=None).
-2026-01-10 22:13:24 [INFO] HTTP Request: POST http://testserver/workspaces/ "HTTP/1.1 200 OK"
-2026-01-10 22:13:24 [INFO] Creando Workspace...
-2026-01-10 22:13:24 [INFO] Workspace creado correctamente (ID=None).
-2026-01-10 22:13:24 [INFO] HTTP Request: POST http://testserver/workspaces/ "HTTP/1.1 200 OK"
-2026-01-10 22:13:24 [INFO] HTTP Request: DELETE http://testserver/workspaces/45/ "HTTP/1.1 307 Temporary Redirect"
-2026-01-10 22:13:24 [INFO] Eliminando Workspace(45)...
-2026-01-10 22:13:24 [INFO] Workspace(45) eliminado correctamente.
-2026-01-10 22:13:24 [INFO] HTTP Request: DELETE http://testserver/workspaces/45 "HTTP/1.1 200 OK"
-2026-01-10 22:13:24 [INFO] Creando Workspace...
-2026-01-10 22:13:24 [INFO] Workspace creado correctamente (ID=None).
-2026-01-10 22:13:24 [INFO] HTTP Request: POST http://testserver/workspaces/ "HTTP/1.1 200 OK"
-2026-01-10 22:13:24 [INFO] HTTP Request: PUT http://testserver/workspaces/46/ "HTTP/1.1 307 Temporary Redirect"
-2026-01-10 22:13:24 [INFO] Actualizando Workspace(46)...
-2026-01-10 22:13:24 [INFO] Workspace(46) actualizado correctamente.
-2026-01-10 22:13:24 [INFO] HTTP Request: PUT http://testserver/workspaces/46 "HTTP/1.1 200 OK"
-2026-01-10 22:13:24 [INFO] Creando Workspace...
-2026-01-10 22:13:24 [INFO] Workspace creado correctamente (ID=None).
-2026-01-10 22:13:24 [INFO] HTTP Request: POST http://testserver/workspaces/ "HTTP/1.1 200 OK"
-2026-01-10 22:13:24 [INFO] Creando Campaign...
-2026-01-10 22:13:24 [INFO] Campaign creado correctamente (ID=None).
-2026-01-10 22:13:24 [INFO] HTTP Request: POST http://testserver/campaigns/ "HTTP/1.1 200 OK"
-2026-01-10 22:13:24 [INFO] HTTP Request: DELETE http://testserver/workspaces/47/ "HTTP/1.1 307 Temporary Redirect"
-2026-01-10 22:13:24 [INFO] Eliminando Workspace(47)...
-2026-01-10 22:13:24 [INFO] Workspace(47) eliminado correctamente.
-2026-01-10 22:13:24 [INFO] HTTP Request: DELETE http://testserver/workspaces/47 "HTTP/1.1 200 OK"
+2026-01-11 00:35:44 [INFO] Obteniendo listado de Lead Lead...
+2026-01-11 00:35:44 [INFO] HTTP Request: GET http://testserver/leads/?campaign_id=37 "HTTP/1.1 200 OK"
+2026-01-11 00:35:44 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 400 Bad Request"
+2026-01-11 00:35:45 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 200 OK"
+2026-01-11 00:35:45 [INFO] Creando Regla ValidationRule...
+2026-01-11 00:35:45 [INFO] ValidationRule creado correctamente (ID=None).
+2026-01-11 00:35:45 [INFO] HTTP Request: POST http://testserver/validation_rules/ "HTTP/1.1 200 OK"
+2026-01-11 00:35:45 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 200 OK"
+2026-01-11 00:35:45 [INFO] Creando Regla ValidationRule...
+2026-01-11 00:35:45 [INFO] ValidationRule creado correctamente (ID=None).
+2026-01-11 00:35:45 [INFO] HTTP Request: POST http://testserver/validation_rules/ "HTTP/1.1 200 OK"
+2026-01-11 00:35:45 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 400 Bad Request"
+2026-01-11 00:35:45 [INFO] Creando Regla ValidationRule...
+2026-01-11 00:35:45 [INFO] ValidationRule creado correctamente (ID=None).
+2026-01-11 00:35:45 [INFO] HTTP Request: POST http://testserver/validation_rules/ "HTTP/1.1 200 OK"
+2026-01-11 00:35:45 [INFO] Eliminando ValidationRule(10)...
+2026-01-11 00:35:45 [INFO] ValidationRule(10) eliminado correctamente.
+2026-01-11 00:35:45 [INFO] HTTP Request: DELETE http://testserver/validation_rules/10 "HTTP/1.1 200 OK"
+2026-01-11 00:35:45 [INFO] Obteniendo ValidationRule(10)...
+2026-01-11 00:35:45 [INFO] HTTP Request: GET http://testserver/validation_rules/10 "HTTP/1.1 404 Not Found"
+2026-01-11 00:35:45 [INFO] Creando Regla ValidationRule...
+2026-01-11 00:35:45 [INFO] ValidationRule creado correctamente (ID=None).
+2026-01-11 00:35:45 [INFO] HTTP Request: POST http://testserver/validation_rules/ "HTTP/1.1 200 OK"
+2026-01-11 00:35:45 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 200 OK"
+2026-01-11 00:35:45 [INFO] Creando Regla ValidationRule...
+2026-01-11 00:35:45 [INFO] ValidationRule creado correctamente (ID=None).
+2026-01-11 00:35:45 [INFO] HTTP Request: POST http://testserver/validation_rules/ "HTTP/1.1 200 OK"
+2026-01-11 00:35:45 [INFO] HTTP Request: POST http://testserver/leads/ "HTTP/1.1 400 Bad Request"
+2026-01-11 00:35:45 [INFO] Creando Workspace...
+2026-01-11 00:35:45 [INFO] Workspace creado correctamente (ID=None).
+2026-01-11 00:35:45 [INFO] HTTP Request: POST http://testserver/workspaces/ "HTTP/1.1 200 OK"
+2026-01-11 00:35:45 [INFO] Creando Workspace...
+2026-01-11 00:35:45 [INFO] Workspace creado correctamente (ID=None).
+2026-01-11 00:35:45 [INFO] HTTP Request: POST http://testserver/workspaces/ "HTTP/1.1 200 OK"
+2026-01-11 00:35:45 [INFO] HTTP Request: DELETE http://testserver/workspaces/45/ "HTTP/1.1 307 Temporary Redirect"
+2026-01-11 00:35:45 [INFO] Eliminando Workspace(45)...
+2026-01-11 00:35:45 [INFO] Workspace(45) eliminado correctamente.
+2026-01-11 00:35:45 [INFO] HTTP Request: DELETE http://testserver/workspaces/45 "HTTP/1.1 200 OK"
+2026-01-11 00:35:45 [INFO] Creando Workspace...
+2026-01-11 00:35:45 [INFO] Workspace creado correctamente (ID=None).
+2026-01-11 00:35:45 [INFO] HTTP Request: POST http://testserver/workspaces/ "HTTP/1.1 200 OK"
+2026-01-11 00:35:45 [INFO] HTTP Request: PUT http://testserver/workspaces/46/ "HTTP/1.1 307 Temporary Redirect"
+2026-01-11 00:35:45 [INFO] Actualizando Workspace(46)...
+2026-01-11 00:35:45 [INFO] Workspace(46) actualizado correctamente.
+2026-01-11 00:35:45 [INFO] HTTP Request: PUT http://testserver/workspaces/46 "HTTP/1.1 200 OK"
+2026-01-11 00:35:45 [INFO] Creando Workspace...
+2026-01-11 00:35:45 [INFO] Workspace creado correctamente (ID=None).
+2026-01-11 00:35:45 [INFO] HTTP Request: POST http://testserver/workspaces/ "HTTP/1.1 200 OK"
+2026-01-11 00:35:45 [INFO] Creando Campaign...
+2026-01-11 00:35:45 [INFO] Campaign creado correctamente (ID=None).
+2026-01-11 00:35:45 [INFO] HTTP Request: POST http://testserver/campaigns/ "HTTP/1.1 200 OK"
+2026-01-11 00:35:45 [INFO] HTTP Request: DELETE http://testserver/workspaces/47/ "HTTP/1.1 307 Temporary Redirect"
+2026-01-11 00:35:45 [INFO] Eliminando Workspace(47)...
+2026-01-11 00:35:45 [INFO] Workspace(47) eliminado correctamente.
+2026-01-11 00:35:45 [INFO] HTTP Request: DELETE http://testserver/workspaces/47 "HTTP/1.1 200 OK"

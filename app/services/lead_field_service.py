@@ -81,6 +81,7 @@ class LeadFieldService(BaseService):
                 field_type_code = data.get("field_type_code")
                 subtype_code = data.get("field_subtype_code")
                 nomenclator_id = data.get("nomenclator_id")
+                calc_expr = data.get("calculation_expression")
 
                 if nomenclator_id:
                     if field_type_code:
@@ -144,6 +145,13 @@ class LeadFieldService(BaseService):
 
                     if not data.get("name"):
                         data["name"] = nomenclator.name
+                
+                if field_type_code == "CALCULATED":
+                    if not calc_expr:
+                        raise ValueError("Los campos de tipo 'CALCULATED' requieren una expresión de cálculo ('calculation_expression').")
+                else:
+                    if calc_expr:
+                         raise ValueError("No se puede asignar una expresión de cálculo a un campo que no sea 'CALCULATED'.")
 
                 # -------------------------------------------------------
                 # 2. VALIDACIONES DE INTEGRIDAD (Básicas)
@@ -264,6 +272,19 @@ class LeadFieldService(BaseService):
                      check_pri = new_primary if new_primary is not None else current_field.is_primary
                      
                      cls._validate_historic_constraints(uow.session, current_field, check_req, check_pri)
+
+                # 5. Validación de calculo
+                new_expr = data.get("calculation_expression")
+                
+                # Caso 1: Intentan poner fórmula a un campo que NO es calculado
+                if new_expr and current_field.field_type_code != "CALCULATED":
+                    raise ValueError("No se puede asignar una expresión de cálculo a este campo porque no es de tipo 'CALCULATED'.")
+
+                # Caso 2: Es calculado y le quieren borrar la fórmula (enviando string vacío o None explícito)
+                # Nota: 'calculation_expression' en DB es nullable, pero por regla de negocio no queremos calculados rotos.
+                if current_field.field_type_code == "CALCULATED" and "calculation_expression" in data:
+                    if not new_expr: # Si es None o ""
+                        raise ValueError("No se puede eliminar la expresión de un campo 'CALCULATED'.")
 
             except ValueError as ve:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
