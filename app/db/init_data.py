@@ -142,6 +142,7 @@ def seed_lead_field_types(db):
         {"code": "CHECKBOX", "description": "Casilla de verificación"},
         {"code": "FILE", "description": "Archivo"},
         {"code": "CALCULATED", "description": "Campo calculado"},
+        {"code": "LEAD", "description": "Lead"}
     ]
     seed_generic(db, model=LeadFieldType, items=datos, unique_by=["code"])
 

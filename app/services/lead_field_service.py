@@ -93,6 +93,10 @@ class LeadFieldService(BaseService):
                         raise ValueError(
                             "Si especificas 'nomenclator_id', el 'field_type_code' debe ser uno de {NOMENCLATOR_FIELD_TYPES}."
                         )
+                
+                if field_type_code == "LEAD":
+                    if not data.get("related_campaign_id"):
+                        raise ValueError("Para campos tipo 'LEAD' debe especificar 'related_campaign_id'.")
 
                 if field_type_code:
                     field_type = uow.session.query(LeadFieldType).filter_by(code=field_type_code).first()

@@ -19,6 +19,7 @@ class LeadField(BaseModelDB):
     #relations
     campaign_id = Column(Integer, ForeignKey("campaign.id"), nullable=False)
     nomenclator_id = Column(Integer, ForeignKey("nomenclator.id"), nullable=True)
+    related_campaign_id = Column(Integer, ForeignKey("campaign.id"), nullable=True)
     field_template_code = Column(String, nullable=True)
     field_type_code = Column(String, ForeignKey("lead_field_type.code"), nullable=False)
     lead_field_section_id = Column(Integer, ForeignKey("lead_field_section.id"), nullable=False)
@@ -31,3 +32,4 @@ class LeadField(BaseModelDB):
     campaign = relationship("Campaign", foreign_keys=[campaign_id])
     nomenclator = relationship("Nomenclator", foreign_keys=[nomenclator_id])
     lead_field_section = relationship("LeadFieldSection", foreign_keys=[lead_field_section_id])
+    related_campaign = relationship("Campaign", foreign_keys=[related_campaign_id])
