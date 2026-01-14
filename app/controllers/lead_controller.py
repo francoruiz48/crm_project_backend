@@ -1,5 +1,6 @@
+import json
 from typing import List, Union, Optional
-from fastapi import Body, Depends, Query
+from fastapi import Body, Depends, HTTPException, Query, Request, UploadFile
 from app.controllers.base_controller import BaseController
 from app.core.constans import DEFAULT_PAGE_SIZE, PAGE_SIZE_LIMIT
 from app.core.security import PermissionChecker, get_current_user
@@ -23,8 +24,7 @@ class LeadController(BaseController):
         (Lead.field_values, LeadFieldValue.field, LeadField.campaign)
     ]
     
-    # Quitamos "GET_ALL" de aquí para que BaseController NO genere el default
-    enabled_methods = {"GET_ONE", "POST", "PUT", "DELETE"}
+    enabled_methods = {"GET_ONE", "DELETE"}
 
     @classmethod
     def get_router(cls):
@@ -38,6 +38,53 @@ class LeadController(BaseController):
             ResponseModelItem = cls.schema_out
             
         ResponseModelPaginated = PaginatedResponse[ResponseModelItem]
+
+        # ---------------------------------------------------------------------
+        # HELPER PRIVADO: Parsea Request (JSON o Multipart)
+        # ---------------------------------------------------------------------
+        async def _parse_hybrid_request(request: Request):
+            """
+            Detecta si es JSON o Multipart y devuelve (obj_dict, files_map)
+            """
+            content_type = request.headers.get("content-type", "")
+            
+            # CASO 1: JSON (Tests y llamadas normales)
+            if "application/json" in content_type:
+                try:
+                    data = await request.json()
+                    return data, None # No hay archivos
+                except Exception:
+                    raise HTTPException(400, "JSON inválido en el cuerpo del request.")
+
+            # CASO 2: Multipart (Subida de archivos)
+            elif "multipart/form-data" in content_type:
+                form = await request.form()
+                
+                # A. Extraer JSON
+                data_str = form.get("data")
+                lead_data = {}
+                if data_str:
+                    try:
+                        lead_data = json.loads(data_str)
+                    except Exception as e:
+                        raise HTTPException(400, f"JSON Error: {str(e)}")
+                
+                # B. Extraer Archivos
+                files_map = {}
+                for key, value in form.items():
+                    # --- CAMBIO AQUÍ: Usamos hasattr en lugar de isinstance ---
+                    # Verificamos si tiene 'filename', lo cual confirma que es un UploadFile
+                    if key.startswith("file_") and hasattr(value, "filename"):
+                        try:
+                            field_id = int(key.replace("file_", ""))
+                            files_map[field_id] = value
+                        except ValueError:
+                            continue 
+                
+                return lead_data, files_map
+
+            else:
+                raise HTTPException(400, f"Content-Type no soportado: {content_type}")
 
         @router.post("/search", 
             response_model=ResponseModelPaginated,
@@ -91,6 +138,51 @@ class LeadController(BaseController):
             )
    
 
-        return router
+        @router.post("/", response_model=LeadResponse, dependencies=cls._get_deps("create"))
+        async def create_lead(
+            request: Request,
+            current_user = Depends(get_current_user)
+        ):
+            # 1. Usamos el helper para obtener datos sin importar el formato
+            lead_dict, files_map = await _parse_hybrid_request(request)
+            
+            # 2. Validamos con Pydantic
+            try:
+                obj_in = cls.schema_in(**lead_dict)
+            except Exception as e:
+                # Capturamos error de validación de Pydantic si faltan campos
+                raise HTTPException(422, detail=str(e))
 
+            # 3. Llamamos al servicio
+            return cls.service.create(obj_in, created_by=current_user.id, files_map=files_map)
+
+
+        # --- UPDATE HÍBRIDO ---
+        @router.put("/{id}", response_model=LeadResponse, dependencies=cls._get_deps("update"))
+        async def update_lead(
+            id: int,
+            request: Request,
+            current_user = Depends(get_current_user)
+        ):
+            # 1. Usamos el helper
+            lead_dict, files_map = await _parse_hybrid_request(request)
+            
+            # 2. Validación parcial para Update
+            # Si vino JSON, lo validamos. Si no vino (solo archivos), obj_in es None (parcial)
+            obj_in = None
+            if lead_dict:
+                try:
+                    obj_in = cls.schema_in(**lead_dict)
+                except Exception as e:
+                    raise HTTPException(422, detail=str(e))
+            
+            # Si no hay nada, error
+            if not obj_in and not files_map:
+                raise HTTPException(400, "Debe enviar datos JSON o archivos para actualizar.")
+
+            # 3. Llamamos al servicio
+            return cls.service.update(id, obj_in, files_map=files_map)
+
+        return router
+    
 router = LeadController.get_router()

@@ -11,6 +11,13 @@ lead_field_value_nomenclator_assoc = Table(
     Column('nomenclator_item_id', Integer, ForeignKey('nomenclator_item.id'), primary_key=True)
 )
 
+lead_field_value_leads_assoc = Table(
+    'lead_field_value_leads',
+    Base.metadata,
+    Column('lead_field_value_id', Integer, ForeignKey('lead_field_value.id', ondelete="CASCADE"), primary_key=True),
+    Column('related_lead_id', Integer, ForeignKey('lead.id', ondelete="CASCADE"), primary_key=True)
+)
+
 class LeadFieldValue(BaseModelDB):
     __tablename__ = "lead_field_value"
     lead_id = Column(Integer, ForeignKey("lead.id"), nullable=False)
@@ -24,5 +31,11 @@ class LeadFieldValue(BaseModelDB):
         "NomenclatorItem",
         secondary=lead_field_value_nomenclator_assoc,
         lazy="selectin" # Cargamos la lista automáticamente
+    )
+
+    related_leads = relationship(
+        "Lead", 
+        secondary=lead_field_value_leads_assoc,
+        lazy="joined"
     )
 

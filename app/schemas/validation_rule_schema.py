@@ -14,12 +14,7 @@ class ValidationRuleBase(BaseModel):
     template_params: Optional[Dict[str, Any]] = None
 
 
-class ValidationTemplateResponse(BaseModel):
-    code: str
-    name: str
-    description: str
-    required_params: List[str]
-    error_message: str
+
 
 class ValidationRuleCreate(ValidationRuleBase, BaseCreate):
     @model_validator(mode='before')

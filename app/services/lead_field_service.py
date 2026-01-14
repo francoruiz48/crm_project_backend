@@ -81,6 +81,7 @@ class LeadFieldService(BaseService):
                 field_type_code = data.get("field_type_code")
                 subtype_code = data.get("field_subtype_code")
                 nomenclator_id = data.get("nomenclator_id")
+                calc_expr = data.get("calculation_expression")
 
                 if nomenclator_id:
                     if field_type_code:
@@ -92,6 +93,10 @@ class LeadFieldService(BaseService):
                         raise ValueError(
                             "Si especificas 'nomenclator_id', el 'field_type_code' debe ser uno de {NOMENCLATOR_FIELD_TYPES}."
                         )
+                
+                if field_type_code == "LEAD":
+                    if not data.get("related_campaign_id"):
+                        raise ValueError("Para campos tipo 'LEAD' debe especificar 'related_campaign_id'.")
 
                 if field_type_code:
                     field_type = uow.session.query(LeadFieldType).filter_by(code=field_type_code).first()
@@ -129,8 +134,7 @@ class LeadFieldService(BaseService):
                     if not data.get("name"):
                         data["name"] = template.name
 
-                    if not data.get("field_type_code"):
-                        data["field_type_code"] = template.field_type_code
+                    data["field_type_code"] = template.field_type_code
 
                     # Preparamos las reglas para crearlas después
                     rules_to_create = template.rules
@@ -144,6 +148,13 @@ class LeadFieldService(BaseService):
 
                     if not data.get("name"):
                         data["name"] = nomenclator.name
+                
+                if field_type_code == "CALCULATED":
+                    if not calc_expr:
+                        raise ValueError("Los campos de tipo 'CALCULATED' requieren una expresión de cálculo ('calculation_expression').")
+                else:
+                    if calc_expr:
+                         raise ValueError("No se puede asignar una expresión de cálculo a un campo que no sea 'CALCULATED'.")
 
                 # -------------------------------------------------------
                 # 2. VALIDACIONES DE INTEGRIDAD (Básicas)
@@ -213,7 +224,13 @@ class LeadFieldService(BaseService):
                 for rule_cfg in rules_to_create:
                     rule_payload = rule_cfg.copy()
                     rule_payload["field_id"] = new_field.id
-                    ValidationRuleService.create_within_session(uow.session, rule_payload, created_by)
+                    
+                    ValidationRuleService.create_within_session(
+                        session=uow.session, 
+                        obj_data=rule_payload, 
+                        created_by=created_by,
+                        field_type_code=new_field.field_type_code 
+                    )
 
                 return new_field
             except Exception as e:
@@ -264,6 +281,45 @@ class LeadFieldService(BaseService):
                      check_pri = new_primary if new_primary is not None else current_field.is_primary
                      
                      cls._validate_historic_constraints(uow.session, current_field, check_req, check_pri)
+
+                if not "related_campaign_id" in data and current_field.related_campaign is not None:
+                    raise ValueError("El obligatorio el atributo 'related_campaign_id'.")
+
+                if "related_campaign_id" in data:
+                    new_rel_id = data["related_campaign_id"]
+                    old_rel_id = current_field.related_campaign.id
+                    
+                    if new_rel_id != old_rel_id:
+                        
+                        # A. Prohibido dejar null un campo tipo LEAD
+                        if new_rel_id is None and current_field.field_type_code == "LEAD":
+                            raise ValueError("El campo de tipo LEAD requiere obligatoriamente una 'related_campaign_id'.")
+
+                        # B. Verificar si hay datos existentes (Integridad)
+                        # Buscamos si existe al menos UN valor de lead asociado a este campo.
+                        # Si existe, significa que hay leads "usando" esta configuración.
+                        has_data = uow.session.query(LeadFieldValue).filter(
+                            LeadFieldValue.field_id == obj_id
+                        ).first()
+
+                        if has_data:
+                            raise ValueError(
+                                f"No se puede cambiar la campaña relacionada (de {old_rel_id} a {new_rel_id}) "
+                                "porque ya existen leads con datos/asociaciones en este campo."
+                            )
+
+                # 5. Validación de calculo
+                new_expr = data.get("calculation_expression")
+                
+                # Caso 1: Intentan poner fórmula a un campo que NO es calculado
+                if new_expr and current_field.field_type_code != "CALCULATED":
+                    raise ValueError("No se puede asignar una expresión de cálculo a este campo porque no es de tipo 'CALCULATED'.")
+
+                # Caso 2: Es calculado y le quieren borrar la fórmula (enviando string vacío o None explícito)
+                # Nota: 'calculation_expression' en DB es nullable, pero por regla de negocio no queremos calculados rotos.
+                if current_field.field_type_code == "CALCULATED" and "calculation_expression" in data:
+                    if not new_expr: # Si es None o ""
+                        raise ValueError("No se puede eliminar la expresión de un campo 'CALCULATED'.")
 
             except ValueError as ve:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))

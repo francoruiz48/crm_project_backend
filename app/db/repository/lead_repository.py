@@ -1,14 +1,11 @@
 from sqlalchemy.orm import aliased
-from sqlalchemy import cast, Float, or_
-from app.core.constans import DEFAULT_PAGE_SIZE
+from sqlalchemy import cast, Float, or_, and_, func, insert, delete
 from app.db.repository.base_repository import BaseRepository
 from app.models.lead import Lead
 from app.models.nomenclator_item import NomenclatorItem
 from app.schemas.lead_schema import LeadDetailedResponse, LeadResponse
-from app.models.lead_field_value import LeadFieldValue
+from app.models.lead_field_value import LeadFieldValue, lead_field_value_leads_assoc
 from app.models.lead_field import LeadField
-from sqlalchemy import and_
-from sqlalchemy import func
 
 class LeadRepository(BaseRepository):
     model = Lead
@@ -180,34 +177,51 @@ class LeadRepository(BaseRepository):
             field_id = item_proxy.field_id
             new_val_str = item_proxy.value
             
-            # Obtenemos la lista de IDs (puede venir vacía)
-            new_ids_list = getattr(item_proxy, 'nomenclator_ids_list', [])
-
+            # Recuperamos el objeto de la DB o creamos uno nuevo
             if field_id in existing_map:
-                # --- UPDATE ---
                 field_val_obj = existing_map[field_id]
                 field_val_obj.value = new_val_str
-                
-                # Si es un campo de nomenclador (la lista no es None, aunque esté vacía)
-                if new_ids_list is not None:
-                    if new_ids_list:
-                        items_objs = session.query(NomenclatorItem).filter(NomenclatorItem.id.in_(new_ids_list)).all()
-                        field_val_obj.nomenclator_items = items_objs
-                    else:
-                        field_val_obj.nomenclator_items = [] # Limpiar selección
-                
-                session.add(field_val_obj)
             else:
-                # --- CREATE ---
-                new_obj = LeadFieldValue(lead_id=lead_id, field_id=field_id, value=new_val_str)
-                
+                field_val_obj = LeadFieldValue(lead_id=lead_id, field_id=field_id, value=new_val_str)
+                session.add(field_val_obj)
+            
+            # FLUSH CRÍTICO: Necesitamos que field_val_obj tenga ID para las relaciones M2M
+            session.flush() 
+            
+            # -------------------------------------------------------------
+            # A. NOMENCLADORES
+            # -------------------------------------------------------------
+            new_ids_list = getattr(item_proxy, 'nomenclator_ids_list', None)
+            if new_ids_list is not None: # Solo si viene la lista (vacía o llena)
                 if new_ids_list:
                     items_objs = session.query(NomenclatorItem).filter(NomenclatorItem.id.in_(new_ids_list)).all()
-                    new_obj.nomenclator_items = items_objs
+                    field_val_obj.nomenclator_items = items_objs
+                else:
+                    field_val_obj.nomenclator_items = []
+
+            # -------------------------------------------------------------
+            # B. LEADS RELACIONADOS
+            # -------------------------------------------------------------
+            related_ids = getattr(item_proxy, 'related_lead_ids_list', None)
+            
+            # Solo actuamos si related_ids no es None (es decir, es un campo tipo LEAD)
+            if related_ids is not None:
+                # 1. Limpiamos relaciones anteriores (Estrategia segura: Delete + Insert)
+                # Esto es más eficiente que comparar conjuntos en Python para listas grandes
+                session.execute(
+                    delete(lead_field_value_leads_assoc)
+                    .where(lead_field_value_leads_assoc.c.lead_field_value_id == field_val_obj.id)
+                )
                 
-                session.add(new_obj)
-        
-        session.flush()
+                # 2. Insertamos las nuevas (si hay)
+                if related_ids:
+                    insert_stmts = []
+                    for rid in related_ids:
+                        insert_stmts.append({
+                            "lead_field_value_id": field_val_obj.id, # Ahora seguro tiene ID gracias al flush
+                            "related_lead_id": rid
+                        })
+                    session.execute(insert(lead_field_value_leads_assoc), insert_stmts)
 
     @classmethod
     def has_leads_in_campaign(cls, session, campaign_id: int) -> bool:

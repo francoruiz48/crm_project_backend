@@ -31,7 +31,7 @@ STANDARD_FIELD_TEMPLATES = {
     "PASSWORD_STRONG": FieldTemplate(
         code="PASSWORD_STRONG",
         name="Contraseña Segura",
-        field_type_code="STRING", # Tip: En el frontend usar input type='password'
+        field_type_code="STRING",
         rules=[
             {
                 "template_code": "MIN_LENGTH",
@@ -41,11 +41,12 @@ STANDARD_FIELD_TEMPLATES = {
             {
                 # Requiere al menos un número y una mayúscula
                 "template_code": "REGEX_MATCH",
+                # Regex para Excel: (?=.*[A-Z])(?=.*\d)
                 "template_params": {"pattern": "^(?=.*[A-Z])(?=.*\\d).+$"},
                 "error_message": "La contraseña debe contener al menos una mayúscula y un número."
             },
             {
-                # Validar Carácter Especial (Ej: !@#$%^&*)
+                # Validar Carácter Especial
                 "template_code": "REGEX_MATCH",
                 "template_params": {"pattern": "[^a-zA-Z0-9]"}, 
                 "error_message": "Debe contener al menos un carácter especial (ej: ! @ # $ %)."
@@ -65,7 +66,7 @@ STANDARD_FIELD_TEMPLATES = {
             { "template_code": "MAX_LENGTH", "template_params": {"limit": 50} },
             {
                 "template_code": "REGEX_MATCH",
-                # Permite letras, acentos, espacios, guiones y apóstrofes (O'Connor)
+                # Permite letras, acentos, espacios, guiones y apóstrofes
                 "template_params": {"pattern": "^[a-zA-ZáéíóúÁÉÍÓÚñÑ\\s\\-\\']+$"},
                 "error_message": "El nombre contiene caracteres inválidos."
             }
@@ -121,7 +122,6 @@ STANDARD_FIELD_TEMPLATES = {
         field_type_code="STRING",
         rules=[
             {
-                # ID Genérico: Alfanumérico (Pasaportes suelen tener letras)
                 "template_code": "ALPHANUMERIC", 
                 "template_params": {},
                 "error_message": "El ID solo puede contener letras y números."
@@ -132,9 +132,7 @@ STANDARD_FIELD_TEMPLATES = {
                 "error_message": "El ID no debe contener espacios."
             },
             {
-                "template_code": "RANGE", 
-                # Usamos min/max length aproximado mundial
-                "expression": "len(str(value)) >= 5 and len(str(value)) <= 20",
+                "expression": "AND(LEN(value) >= 5, LEN(value) <= 20)",
                 "name": "Longitud ID",
                 "error_message": "El documento debe tener entre 5 y 20 caracteres."
             }
@@ -143,7 +141,7 @@ STANDARD_FIELD_TEMPLATES = {
     "DNI_ARG": FieldTemplate(
         code="DNI_ARG",
         name="DNI (Argentina)",
-        field_type_code="STRING", # String para permitir ceros a la izquierda si fuera necesario
+        field_type_code="STRING",
         rules=[
             {
                 "template_code": "ONLY_DIGITS",
@@ -151,8 +149,6 @@ STANDARD_FIELD_TEMPLATES = {
                 "error_message": "El DNI solo debe contener números."
             },
             {
-                "template_code": "RANGE", # Usamos range length o numeric value
-                # Si lo tratamos como string length:
                 "template_code": "MIN_LENGTH",
                 "template_params": {"limit": 7}
             },
@@ -179,19 +175,7 @@ STANDARD_FIELD_TEMPLATES = {
             }
         ]
     ),
-    "GENDER_SELECT": FieldTemplate(
-        code="GENDER_SELECT",
-        name="Género",
-        field_type_code="STRING",
-        rules=[
-            {
-                "template_code": "IN_LIST",
-                "template_params": {"options": "Masculino,Femenino,No Binario,Otro"},
-                "error_message": "Seleccione una opción válida."
-            }
-        ]
-    ),
-
+    
     # =========================================================================
     # 3. DATOS DE CONTACTO
     # =========================================================================
@@ -201,7 +185,6 @@ STANDARD_FIELD_TEMPLATES = {
         field_type_code="STRING",
         rules=[
             {
-                # Regex para celulares Argentina (ej: 1122334455 o +549...)
                 "template_code": "REGEX_MATCH",
                 "template_params": {"pattern": "^(?:(?:00)?549?)?0?(?:11|[2368]\\d)(?:(?=\\d{0,2}15)\\d{2})??\\d{8}$"},
                 "name": "Formato Celular",
@@ -276,7 +259,7 @@ STANDARD_FIELD_TEMPLATES = {
     "APPOINTMENT_DATE": FieldTemplate(
         code="APPOINTMENT_DATE",
         name="Fecha de Cita / Turno",
-        field_type_code="DATETIME",
+        field_type_code="DATE_TIME",
         rules=[
             {
                 "template_code": "DATE_FUTURE",
@@ -301,12 +284,12 @@ STANDARD_FIELD_TEMPLATES = {
         rules=[
             {
                 "template_code": "MIN_LENGTH",
-                "template_params": {"limit": 6}, # Alias corto
+                "template_params": {"limit": 6}, 
                 "error_message": "Muy corto para ser un Alias o CBU."
             },
             {
                 "template_code": "MAX_LENGTH",
-                "template_params": {"limit": 22}, # CBU largo
+                "template_params": {"limit": 22},
                 "error_message": "No debe exceder los 22 caracteres."
             }
         ]
@@ -314,7 +297,7 @@ STANDARD_FIELD_TEMPLATES = {
     "SALARY_EXPECTATION": FieldTemplate(
         code="SALARY_EXPECTATION",
         name="Remuneración Pretendida",
-        field_type_code="NUMBER", # FLOAT
+        field_type_code="NUMBER",
         rules=[
             {
                 "template_code": "MIN_VALUE",
@@ -338,10 +321,8 @@ STANDARD_FIELD_TEMPLATES = {
                 "error_message": "Ingrese solo los números de la tarjeta."
             },
             {
-                "template_code": "RANGE", # Usando como longitud aproximada
-                # Nota: Idealmente usar MIN_LENGTH / MAX_LENGTH
-                # Pero si queremos forzar rango de longitud con validacion manual de string length:
-                "expression": "len(str(value)) >= 13 and len(str(value)) <= 19",
+                # Validación de longitud manual
+                "expression": "AND(LEN(value) >= 13, LEN(value) <= 19)",
                 "name": "Longitud Tarjeta",
                 "error_message": "La tarjeta debe tener entre 13 y 19 dígitos."
             }

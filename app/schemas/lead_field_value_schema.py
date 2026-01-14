@@ -1,13 +1,23 @@
 from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
 from app.schemas.lead_field_schema import LeadFieldDetailedResponse, LeadFieldResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import List, Optional, Union
 from app.schemas.nomenclator_item_schema import NomenclatorItemResponse
 
+class LeadFieldValueBasicResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
+    field_id: int
+    value: Optional[Union[str, int, float, List[int]]] = None
+
+class RelatedLeadResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    field_values: List[LeadFieldValueBasicResponse] = []
 
 class LeadFieldValueBase(BaseModel):
     field_id: int
-    value: Optional[Union[str, int, float, List[int]]] = None
+    value: Optional[Union[List[int], float, int, str]] = None
 
 
 class LeadFieldValueCreate(LeadFieldValueBase, BaseCreate):
@@ -18,9 +28,10 @@ class LeadFieldValueResponse(LeadFieldValueBase, BaseResponse):
     lead_id: int
     field: Optional[LeadFieldResponse] = None
     nomenclator_items: List[NomenclatorItemResponse] = []
-
+    related_leads: List[RelatedLeadResponse] = []
 
 class LeadFieldValueDetailedResponse(LeadFieldValueBase, BaseDetailResponse):
     lead_id: int
     field: Optional[LeadFieldDetailedResponse] = None
     nomenclator_items: List[NomenclatorItemResponse] = []
+    related_leads: List[RelatedLeadResponse] = []
