@@ -10,7 +10,7 @@ run_tests() {
     
     set +e 
     
-    PYTHONPATH=/code pytest -v > /code/test_results.log 2>&1
+    PYTHONPATH=/code pytest -vv > /code/test_results.log 2>&1
     
     TEST_EXIT_CODE=$?
     set -e

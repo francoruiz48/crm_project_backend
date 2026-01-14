@@ -17,7 +17,7 @@ class RelatedLeadResponse(BaseModel):
 
 class LeadFieldValueBase(BaseModel):
     field_id: int
-    value: Optional[Union[str, int, float, List[int]]] = None
+    value: Optional[Union[List[int], float, int, str]] = None
 
 
 class LeadFieldValueCreate(LeadFieldValueBase, BaseCreate):

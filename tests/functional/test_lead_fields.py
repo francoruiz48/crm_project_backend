@@ -26,7 +26,7 @@ def test_lead_field_lifecycle_no_data(client, db_session, initial_structure):
     res_del = client.delete(f"/lead_fields/{field_id}")
     
     assert res_del.status_code == 200
-    assert res_del.json()["action"] == "deleted" # <--- CLAVE: Borrado físico
+    assert res_del.json()["action"] == "deleted"
     
     # 3. Verificar en DB que no existe
     # Limpiamos la sesión para asegurar lectura fresca

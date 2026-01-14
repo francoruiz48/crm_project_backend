@@ -282,6 +282,32 @@ class LeadFieldService(BaseService):
                      
                      cls._validate_historic_constraints(uow.session, current_field, check_req, check_pri)
 
+                if not "related_campaign_id" in data and current_field.related_campaign is not None:
+                    raise ValueError("El obligatorio el atributo 'related_campaign_id'.")
+
+                if "related_campaign_id" in data:
+                    new_rel_id = data["related_campaign_id"]
+                    old_rel_id = current_field.related_campaign.id
+                    
+                    if new_rel_id != old_rel_id:
+                        
+                        # A. Prohibido dejar null un campo tipo LEAD
+                        if new_rel_id is None and current_field.field_type_code == "LEAD":
+                            raise ValueError("El campo de tipo LEAD requiere obligatoriamente una 'related_campaign_id'.")
+
+                        # B. Verificar si hay datos existentes (Integridad)
+                        # Buscamos si existe al menos UN valor de lead asociado a este campo.
+                        # Si existe, significa que hay leads "usando" esta configuración.
+                        has_data = uow.session.query(LeadFieldValue).filter(
+                            LeadFieldValue.field_id == obj_id
+                        ).first()
+
+                        if has_data:
+                            raise ValueError(
+                                f"No se puede cambiar la campaña relacionada (de {old_rel_id} a {new_rel_id}) "
+                                "porque ya existen leads con datos/asociaciones en este campo."
+                            )
+
                 # 5. Validación de calculo
                 new_expr = data.get("calculation_expression")
                 

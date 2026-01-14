@@ -15,3 +15,4 @@ supabase
 python-multipart
 faker
 pytest-sugar
+pytest-clarity
