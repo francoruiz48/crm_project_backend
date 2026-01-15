@@ -4,7 +4,7 @@ from sqlalchemy.orm import selectinload
 from app.core.exceptions import AppException, NotFoundException
 from app.core.error_messages import ERROR_DATABASE, ERROR_NOT_FOUND
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import inspect
+from sqlalchemy import inspect, or_
 from sqlalchemy.orm.interfaces import ONETOMANY
 
 class BaseRepository:
@@ -163,11 +163,39 @@ class BaseRepository:
         order_by = kwargs.pop('order_by', None)
         ascending = kwargs.pop('ascending', True)
 
-        for field_name, value in kwargs.items():
-            # Si el valor no es None y el modelo tiene ese atributo...
-            if value is not None and hasattr(cls.model, field_name):
-                # ...aplicamos el filtro: WHERE columna = valor
-                query = query.filter(getattr(cls.model, field_name) == value)
+        # Extraemos parámetros especiales de búsqueda
+        search_query = kwargs.pop('search', None)
+        search_fields = kwargs.pop('search_fields', [])
+
+        for key, value in kwargs.items():
+            if value is None:
+                continue
+
+            # Verificamos si la clave tiene el sufijo magico "__ilike"
+            if "__ilike" in key:
+                field_name = key.replace("__ilike", "") # Obtenemos el nombre real del campo
+                print("ENTRE")
+                if hasattr(cls.model, field_name):
+                    column = getattr(cls.model, field_name)
+                    # Aplicamos ilike con % automático para que sea "contiene"
+                    query = query.filter(column.ilike(f"%{value}%"))
+            
+            # Comportamiento normal (Igualdad exacta)
+            elif hasattr(cls.model, key):
+                query = query.filter(getattr(cls.model, key) == value)
+
+        # Lógica para Búsqueda Global (OR)
+        if search_query and search_fields:
+            search_conditions = []
+            for field in search_fields:
+                if hasattr(cls.model, field):
+                    column = getattr(cls.model, field)
+                    # Preparamos la condición ILIKE
+                    search_conditions.append(column.ilike(f"%{search_query}%"))
+            
+            # Si encontramos campos válidos, aplicamos un OR (uno u otro)
+            if search_conditions:
+                query = query.filter(or_(*search_conditions))
 
         if order_by and hasattr(cls.model, order_by):
             column = getattr(cls.model, order_by)

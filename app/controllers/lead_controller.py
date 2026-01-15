@@ -119,7 +119,8 @@ class LeadController(BaseController):
             page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=PAGE_SIZE_LIMIT),
             only_active: bool = True, 
             detailed: bool = Query(False),
-            campaign_id: Optional[int] = Query(None, description="Filtrar por ID de campaña")
+            campaign_id: Optional[int] = Query(None, description="Filtrar por ID de campaña"),
+            query: Optional[str] = Query(None, description="Buscar leads")
         ):
 
             total, items_pydantic = cls.service.get_all(
@@ -127,6 +128,7 @@ class LeadController(BaseController):
                     page_size=page_size, 
                     only_active=only_active,
                     detailed=detailed,
+                    query=query,
                     campaign_id=campaign_id
                 )
 

@@ -632,7 +632,7 @@ class LeadService(BaseService):
         )
     
     @classmethod
-    def get_all(cls, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, only_active: bool = True, detailed: bool = False, **kwargs):
+    def get_all(cls, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, only_active: bool = True, detailed: bool = False, query=None, **kwargs):
         total, items = cls._execute(
             action=f"Obteniendo listado de leads",
             func=lambda uow: cls.repository.get_all(
@@ -641,6 +641,7 @@ class LeadService(BaseService):
                 page_size=page_size,
                 only_active=only_active,
                 detailed=detailed,
+                search=query,
                 **kwargs
             ))
 

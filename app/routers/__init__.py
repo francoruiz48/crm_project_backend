@@ -14,6 +14,7 @@ from app.controllers.storage_controller import router as storage_router
 from app.controllers.lead_field_section_controller import router as lead_field_section_router
 from app.controllers.lead_field_subtype_controller import router as lead_field_subtype_router
 from app.controllers.template_controller import router as template_router
+from app.controllers.search_controller import router as search_router
 
 router = APIRouter()
 
@@ -32,3 +33,4 @@ router.include_router(storage_router)
 router.include_router(lead_field_section_router)
 router.include_router(lead_field_subtype_router)
 router.include_router(template_router)
+router.include_router(search_router)

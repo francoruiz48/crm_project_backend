@@ -11,7 +11,7 @@ class NomenclatorRepository(BaseRepository):
 
     @classmethod
     def get_all(cls, session, page: int = 0, page_size: int = 0, only_active: bool = True, detailed: bool = False, 
-                campaign_id: int = None, global_nomenclator: bool = None):
+                campaign_id: int = None, global_nomenclator: bool = None, search: str = None, search_fields: list = None, **kwargs):
 
         query = session.query(cls.model)
 
@@ -28,6 +28,25 @@ class NomenclatorRepository(BaseRepository):
 
         if only_active and hasattr(cls.model, "active"):
             query = query.filter(cls.model.active.is_(True))
+
+        # 2. Lógica de Búsqueda Global (SEARCH)
+        if search and search_fields:
+            search_conditions = []
+            for field in search_fields:
+                if hasattr(cls.model, field):
+                    column = getattr(cls.model, field)
+                    # Preparamos la condición ILIKE
+                    search_conditions.append(column.ilike(f"%{search}%"))
+            if search_conditions:
+                query = query.filter(or_(*search_conditions))
+
+        # 3. Filtros Estándar (kwargs) - Ej: campaign_id=5
+        for key, value in kwargs.items():
+            if value is not None and hasattr(cls.model, key):
+                query = query.filter(getattr(cls.model, key) == value)
+
+        # 4. Ordenamiento (Default por ID descendente)
+        query = query.order_by(cls.model.id.desc())
 
         total, query = cls._paginate(query, page, page_size)
         
