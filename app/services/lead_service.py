@@ -2,6 +2,7 @@ from datetime import date, datetime
 import re
 from fastapi import HTTPException, UploadFile, status
 from app.core.constans import ALLOWED_DOCUMENT_TYPES, ALLOWED_IMAGE_TYPES, DATE_FORMAT, DATE_TIME_FORMAT, DEFAULT_PAGE_SIZE, NOMENCLATOR_FIELD_TYPES
+from app.models.lead import Lead
 from app.services.base_service import BaseService
 from app.db.repository.lead_repository import LeadRepository
 from app.db.repository.lead_field_repository import LeadFieldRepository
@@ -283,7 +284,7 @@ class LeadService(BaseService):
                 raise ValueError(f"El campo '{field.name}' espera formato '{DATE_TIME_FORMAT}' (Ej: 2026-01-30 14:30:00), pero recibió '{value}'.")
 
     @classmethod
-    def _validate_processed_data(cls, full_context, field_defs_list, current_lead_id=None):
+    def _validate_processed_data(cls, uow, full_context, field_defs_list, current_lead_id=None):
         all_defs = {f.id: f for f in field_defs_list}
         
         for field in field_defs_list:
@@ -309,19 +310,28 @@ class LeadService(BaseService):
 
                 if field.field_type_code == "LEAD":
                     if val is None: continue
+                
+                    val = val if isinstance(val, list) else [val]
+                    val = set(val)
+                    val = list(val)
+                    full_context[field.id] = val
                     
-                    ids_list = val if isinstance(val, list) else [val]
+                    ids_list = val
                     
                     # 1. Validar Auto-referencia
                     if current_lead_id and current_lead_id in ids_list:
                         raise ValueError(f"El campo '{field.name}' no puede referenciarse a sí mismo.")
 
                     # 2. Validar Existencia y Campaña
-                    # Hacemos una query para ver si esos leads existen y pertenecen a related_campaign_id
-                    # Nota: Esto requiere acceso a session. Podríamos moverlo fuera o inyectar session.
-                    # Para simplificar aquí, asumimos validación básica de enteros.
                     if not all(isinstance(x, int) for x in ids_list):
                         raise ValueError(f"IDs inválidos para campo '{field.name}'.")
+                    
+                    for x in ids_list:
+                        lead = uow.session.query(Lead).filter_by(id=x).first()
+                        if lead is None:
+                            raise ValueError(f"El lead({x}) no existe.")
+                        elif field.related_campaign_id != lead.campaign_id:
+                            raise ValueError(f"El lead({x}) no pertenece a la campaña {field.related_campaign_id}.")
             
                 # Paso 1: Validar definición básica
                 cls._check_field_definition(field, val)
@@ -501,7 +511,7 @@ class LeadService(BaseService):
             cls._check_duplicates(uow.session, campaign_id, context_data, current_campaign_defs)
             
             # 6. Validar (Ahora checkeará tipos estrictos y requeridos sobre todos los campos)
-            cls._validate_processed_data(context_data, current_campaign_defs)
+            cls._validate_processed_data(uow, context_data, current_campaign_defs)
             
             # 7. Preparar para guardar (incluye los campos que el usuario no mandó)
             clean_values = cls._reconstruct_items_for_repo(context_data, current_campaign_defs)
@@ -588,7 +598,7 @@ class LeadService(BaseService):
                     incoming_data[cf.id] = full_context.get(cf.id)
 
                 # 5. Validar Reglas
-                cls._validate_processed_data(full_context, field_defs, current_lead_id=obj_id)
+                cls._validate_processed_data(uow, full_context, field_defs, current_lead_id=obj_id)
                 
                 # 6. Preparar items para upsert (Solo lo nuevo/modificado)
                 clean_values = cls._reconstruct_items_for_repo(incoming_data, field_defs)

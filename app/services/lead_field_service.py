@@ -97,6 +97,9 @@ class LeadFieldService(BaseService):
                 if field_type_code == "LEAD":
                     if not data.get("related_campaign_id"):
                         raise ValueError("Para campos tipo 'LEAD' debe especificar 'related_campaign_id'.")
+                else:
+                    if data.get("related_campaign_id"):
+                        raise ValueError("Si especifica 'related_campaign_id' entonces 'field_type_code' debe ser LEAD.")
 
                 if field_type_code:
                     field_type = uow.session.query(LeadFieldType).filter_by(code=field_type_code).first()
@@ -152,6 +155,10 @@ class LeadFieldService(BaseService):
                 if field_type_code == "CALCULATED":
                     if not calc_expr:
                         raise ValueError("Los campos de tipo 'CALCULATED' requieren una expresión de cálculo ('calculation_expression').")
+                    else:
+                        #Establecemos que no sea requerido para que luego no nos pida el dato al ser calculado.
+                        data["required"] = False
+                        data["is_primary"] = False
                 else:
                     if calc_expr:
                          raise ValueError("No se puede asignar una expresión de cálculo a un campo que no sea 'CALCULATED'.")
@@ -178,6 +185,7 @@ class LeadFieldService(BaseService):
                 if has_existing_leads:
                     if data.get("required") is True: raise ValueError("No se puede crear Required con Leads existentes.")
                     if data.get("is_primary") is True: raise ValueError("No se puede crear Primary con Leads existentes.")
+
 
                 # 3. Validar Orden
                 order = data.get("order")
