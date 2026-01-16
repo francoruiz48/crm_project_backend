@@ -15,6 +15,7 @@ from app.controllers.lead_field_section_controller import router as lead_field_s
 from app.controllers.lead_field_subtype_controller import router as lead_field_subtype_router
 from app.controllers.template_controller import router as template_router
 from app.controllers.search_controller import router as search_router
+from app.controllers.import_export_controller import router as import_export_router
 
 router = APIRouter()
 
@@ -34,3 +35,4 @@ router.include_router(lead_field_section_router)
 router.include_router(lead_field_subtype_router)
 router.include_router(template_router)
 router.include_router(search_router)
+router.include_router(import_export_router)

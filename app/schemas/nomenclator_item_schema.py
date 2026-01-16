@@ -19,4 +19,4 @@ class NomenclatorItemResponse(NomenclatorItemBase, BaseResponse):
     pass
 
 class NomenclatorItemDetailResponse(NomenclatorItemBase, BaseDetailResponse):
-    sub_items: List["NomenclatorItemResponse"] = Field(default_factory=list)
+    parent_item: Optional["NomenclatorItemResponse"] = None
