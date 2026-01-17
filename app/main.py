@@ -6,6 +6,9 @@ from app.db.init_data import run_seeds
 from fastapi import FastAPI
 from app.routers import router as api_router
 from contextlib import asynccontextmanager
+from fastapi.exceptions import RequestValidationError
+from app.core.exceptions.exceptions import ValidationError
+from app.core.exceptions.handlers import pydantic_exception_handler, custom_validation_exception_handler
 
 wait_for_db()
 
@@ -29,6 +32,9 @@ app = FastAPI(
     title="CRM Backend",
     lifespan=lifespan
 )
+
+app.add_exception_handler(RequestValidationError, pydantic_exception_handler)
+app.add_exception_handler(ValidationError, custom_validation_exception_handler)
 
 setup_cors(app)
 

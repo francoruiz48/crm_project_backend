@@ -1,7 +1,7 @@
 import re
 from typing import Dict, Any
 from sqlalchemy.orm import selectinload
-from app.core.exceptions import AppException, NotFoundException
+from app.core.exceptions.exceptions import AppException, NotFoundException
 from app.core.error_messages import ERROR_DATABASE, ERROR_NOT_FOUND
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import inspect, or_

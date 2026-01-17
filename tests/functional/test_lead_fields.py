@@ -231,7 +231,7 @@ def test_create_lead_fails_no_fields_defined(client, initial_structure):
     response = client.post("/leads/", json=payload)
     
     assert response.status_code == 400
-    assert "no tiene campos activos" in response.text.lower()
+    assert "no tiene campos" in response.text.lower()
 
 
 def test_create_lead_fails_all_fields_disabled(client, db_session, initial_structure):
@@ -257,7 +257,7 @@ def test_create_lead_fails_all_fields_disabled(client, db_session, initial_struc
     response = client.post("/leads/", json=payload)
     
     assert response.status_code == 400
-    assert "no tiene campos activos" in response.text.lower()
+    assert "no tiene campos" in response.text.lower()
 
 
 def test_create_lead_success_empty_values_optional_fields(client, db_session, initial_structure):
@@ -390,7 +390,7 @@ def test_create_field_fail_missing_subtype(client, initial_structure):
     
     res = client.post("/lead_fields/", json=payload)
     assert res.status_code == 400
-    assert "requiere especificar un subtipo" in res.text.lower()
+    assert "obligatorio" in res.text.lower()
 
 
 def test_create_field_fail_primary_with_existing_leads(client, db_session, initial_structure):
@@ -631,5 +631,5 @@ def test_update_field_fail_required_with_existing_nulls(client, db_session, init
     assert res_update.status_code in [400, 422], \
         "El sistema debió impedir el cambio a requerido porque hay leads con valores nulos."
         
-    error_msg = res_update.json().get("detail", "").lower()
-    assert "null" in error_msg or "exist" in error_msg
+    error_msg = res_update.json().get("detail", "").get("message", "").lower()
+    assert "no se puede" in error_msg or "requerido" in error_msg
