@@ -19,6 +19,71 @@ class LeadRepository(BaseRepository):
     ]
 
     @classmethod
+    def get_all(cls, session, only_active: bool = True, detailed: bool = False, search: str = None, search_fields: list = None, **kwargs):
+        """
+        Sobrescribe get_all para manejar la búsqueda compleja en tablas relacionadas.
+        """
+        query = session.query(cls.model)
+
+        # 1. Filtro Active (Base)
+        if only_active:
+            query = query.filter(cls.model.active.is_(True))
+
+        # 2. Lógica de Búsqueda Global (SEARCH)
+        if search:
+            # Hacemos JOIN con los valores
+            query = query.join(LeadFieldValue, cls.model.field_values)
+            
+            # Condiciones de búsqueda
+            conditions = []
+
+            # A. Buscar en el valor de texto directo (ej: Nombre, Email, Teléfono guardados como string)
+            conditions.append(LeadFieldValue.value.ilike(f"%{search}%"))
+
+            # B. (Opcional pero recomendado) Buscar dentro de Nomencladores
+            # Si el usuario busca "Mendoza", y eso es un ítem de un select, hay que buscarlo por relación
+            # Hacemos Left Join para no perder los que no tienen nomencladores
+            query = query.outerjoin(LeadFieldValue.nomenclator_items)
+            conditions.append(NomenclatorItem.value.ilike(f"%{search}%"))
+
+            # C. Filtrar por columnas específicas si se pidieron (search_fields)
+            # Esto permite decir: "Busca 'Juan' pero solo en campos que se llamen 'Nombre' o 'Apellido'"
+            if search_fields:
+                query = query.join(LeadField, LeadFieldValue.field)
+                # Filtramos que el CAMPO tenga uno de los nombres permitidos
+                # Y que el VALOR coincida con el texto
+                query = query.filter(
+                    LeadField.name.in_(search_fields), # El nombre del campo (ej: 'Nombre')
+                    or_(*conditions)                   # El valor contiene 'Juan'
+                )
+            else:
+                # Si no hay restricción de campos, buscamos en todo
+                query = query.filter(or_(*conditions))
+
+            # IMPORTANTE: Como un Lead tiene muchos valores, el JOIN puede devolver
+            # el mismo lead varias veces si matchea en varios campos. Usamos distinct.
+            query = query.distinct()
+
+        # 3. Filtros Estándar (kwargs) - Ej: campaign_id=5
+        for key, value in kwargs.items():
+            if value is not None and hasattr(cls.model, key):
+                query = query.filter(getattr(cls.model, key) == value)
+
+        # 4. Ordenamiento (Default por ID descendente)
+        query = query.order_by(cls.model.id.desc())
+
+        # 5. Paginación
+        page = kwargs.get('page', 0)
+        page_size = kwargs.get('page_size', 0)
+        
+        total, query = cls._paginate(query, page, page_size)
+        items = cls._execute_read_query(query, detailed)
+
+        if page:
+            return total, items
+        return items
+
+    @classmethod
     def search(cls, session, search_params, detailed: bool = False, page: int = 0, page_size: int = 0):
         query = session.query(cls.model)
 

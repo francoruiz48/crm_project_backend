@@ -1,5 +1,49 @@
 import pytest
 
+def test_calculated_field_intent_to_assign_a_value(client, initial_structure):
+    """
+    Intento asignar valor al campo que se define como CALCULATED
+    """
+    camp_id = initial_structure["campaign"].id
+    
+    # 1. Crear campos base
+    f_precio = client.post("/lead_fields/", json={
+        "name": "Precio", "field_type_code": "NUMBER", "campaign_id": camp_id, "order": 1, "lead_field_section_id": 1
+    }).json()
+    
+    f_cantidad = client.post("/lead_fields/", json={
+        "name": "Cantidad", "field_type_code": "INT", "campaign_id": camp_id, "order": 2, "lead_field_section_id": 1
+    }).json()
+
+    # 2. Crear campo calculado
+    f_total = client.post("/lead_fields/", json={
+        "name": "Total", 
+        "field_type_code": "CALCULATED", 
+        "campaign_id": camp_id, 
+        "order": 3, 
+        "lead_field_section_id": 1,
+        # Fórmula Excel
+        "calculation_expression": "Precio * Cantidad"
+    }).json()
+
+    # 3. Crear Lead
+    payload = {
+        "campaign_id": camp_id,
+        "values": [
+            {"field_id": f_precio["id"], "value": 5},
+            {"field_id": f_cantidad["id"], "value": 4},
+            {"field_id": f_total["id"], "value": 1}  #Intento asignar valor al campo.
+        ]
+    }
+    res = client.post("/leads/", json=payload)
+    assert res.status_code == 200
+    
+    # 4. Verificar cálculo (5 * 4 = 20)
+    values = res.json()["field_values"]
+    val_total = next(v for v in values if v["field_id"] == f_total["id"])
+    assert float(val_total["value"]) == 20.0  
+
+
 def test_calculated_field_arithmetic(client, initial_structure):
     """
     Prueba aritmética simple: Total = Precio * Cantidad

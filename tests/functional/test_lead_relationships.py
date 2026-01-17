@@ -246,3 +246,119 @@ def test_update_field_change_related_campaign_success(client, db_session, initia
     # La respuesta detallada devuelve un objeto, no el ID plano en la raíz
     resp_json = res_ok.json()
     assert resp_json["related_campaign"]["id"] == camp_new.id
+
+
+def test_create_lead_fail_cross_campaign_id(client, db_session, relationship_setup, initial_structure):
+    """
+    Intento de vincular un Lead de una campaña incorrecta.
+    El campo espera leads de 'Camp_Target', pero enviamos uno de 'Camp_Extra'.
+    """
+    setup = relationship_setup
+    
+    # 1. Crear una Tercera Campaña "Extra" y un Lead ahí
+    ws_id = initial_structure["workspace"].id
+    camp_extra = Campaign(name="Campaña Extra", workspace_id=ws_id)
+    db_session.add(camp_extra)
+    db_session.commit()
+    
+    f_dummy = LeadField(name="Dummy", field_type_code="STRING", campaign_id=camp_extra.id, order=1, lead_field_section_id=1)
+    db_session.add(f_dummy)
+    db_session.commit()
+
+    res_l3 = client.post("/leads/", json={
+        "campaign_id": camp_extra.id,
+        "values": [{"field_id": f_dummy.id, "value": "Lead Intruso"}]
+    })
+    lead_intruso_id = res_l3.json()["id"]
+
+    # 2. Intentar relacionar el Lead Intruso (Campaña Extra) en el campo que espera Campaña Target
+    res_fail = client.post("/leads/", json={
+        "campaign_id": setup["camp_source_id"],
+        "values": [{
+            "field_id": setup["field_rel_id"], 
+            "value": [lead_intruso_id] # <--- ID Válido, pero campaña incorrecta
+        }]
+    })
+
+    # Esperamos 400 Bad Request o 422 Unprocessable Entity
+    # (Depende de si tu validación lanza ValueError o HTTPException)
+    assert res_fail.status_code == 400
+    assert "campaña" in res_fail.text.lower() # Mensaje esperado: "ID inválidos... campaña incorrecta"
+
+def test_create_lead_fail_non_existent_id(client, relationship_setup):
+    """
+    Intento de vincular un ID que no existe en la BD.
+    """
+    setup = relationship_setup
+    fake_id = 999999
+
+    res_fail = client.post("/leads/", json={
+        "campaign_id": setup["camp_source_id"],
+        "values": [{
+            "field_id": setup["field_rel_id"], 
+            "value": [fake_id] 
+        }]
+    })
+
+    assert res_fail.status_code == 400
+    assert "inválidos" in res_fail.text.lower() or "no existe" in res_fail.text.lower()
+
+def test_update_lead_fail_self_reference(client, relationship_setup):
+    """
+    Un lead no puede ser padre de sí mismo.
+    """
+    setup = relationship_setup
+    
+    # 1. Crear el Lead primero (sin relaciones)
+    res_create = client.post("/leads/", json={
+        "campaign_id": setup["camp_source_id"],
+        "values": [] # Sin valores
+    })
+    lead_self_id = res_create.json()["id"]
+
+    # 2. Intentar actualizarlo poniendo SU PROPIO ID en la relación
+    # Nota: Esto solo es posible si el campo apunta a la MISMA campaña (Source == Target).
+    # Si relationship_setup usa campañas distintas, este test requiere un setup diferente.
+    # ASUMIMOS que para este test, modificamos el campo para que apunte a sí misma o creamos uno nuevo.
+    
+    # Creamos un campo autoreferencial rápido en la Source Campaign
+    res_field = client.post("/lead_fields/", json={
+        "name": "Auto Referencia", "field_type_code": "LEAD",
+        "campaign_id": setup["camp_source_id"], 
+        "related_campaign_id": setup["camp_source_id"], # Apunta a sí misma
+        "order": 99, "lead_field_section_id": 1
+    })
+    f_auto_id = res_field.json()["id"]
+
+    # Intentamos el loop
+    res_fail = client.put(f"/leads/{lead_self_id}", json={
+        "campaign_id": setup["camp_source_id"],
+        "values": [{"field_id": f_auto_id, "value": [lead_self_id]}]
+    })
+
+    assert res_fail.status_code == 400
+    assert "a sí mismo" in res_fail.text.lower()
+
+def test_create_lead_handle_duplicate_ids(client, relationship_setup):
+    """
+    Si envío [ID_A, ID_A], el sistema debe ser robusto (deduplicar o fallar controlado).
+    Lo ideal es que lo guarde una sola vez.
+    """
+    setup = relationship_setup
+    target_id = setup["target_ids"][0]
+
+    res = client.post("/leads/", json={
+        "campaign_id": setup["camp_source_id"],
+        "values": [{
+            "field_id": setup["field_rel_id"], 
+            "value": [target_id, target_id] # Duplicado
+        }]
+    })
+
+    assert res.status_code == 200 # Debería pasar limpiándolo
+    
+    data = res.json()
+    field_val = next(v for v in data["field_values"] if v["field_id"] == setup["field_rel_id"])
+    # Verificar que solo se guardó 1
+    assert len(field_val["related_leads"]) == 1
+    assert field_val["related_leads"][0]["id"] == target_id
