@@ -115,8 +115,7 @@ def create_field(campaign_id, section_id, name=None, type_code=None, subtype_cod
         "lead_field_section_id": section_id,
         "required": required,
         "is_primary": False,
-        "is_visible": True,
-        "order": random.randint(1, 100)
+        "is_visible": True
     }
     
     if template_code:

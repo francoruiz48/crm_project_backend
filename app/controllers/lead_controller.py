@@ -185,6 +185,28 @@ class LeadController(BaseController):
             # 3. Llamamos al servicio
             return cls.service.update(id, obj_in, files_map=files_map)
 
-        return router
     
+        @router.post("/simulate", response_model=LeadResponse) # O usa un schema específico si prefieres
+        async def simulate_lead_creation(
+            request: Request,
+            current_user = Depends(get_current_user)
+        ):
+            """
+            Simula la creación de un lead para probar validaciones y campos calculados.
+            No guarda nada en la base de datos.
+            """
+            # 1. Parsing (igual que create)
+            lead_dict, files_map = await _parse_hybrid_request(request)
+            
+            try:
+                obj_in = cls.schema_in(**lead_dict)
+            except Exception as e:
+                raise HTTPException(422, detail=str(e))
+
+            # 2. Llamada a Servicio de Simulación
+            result = cls.service.simulate_create(obj_in, created_by=current_user.id, files_map=files_map)
+            return result
+        
+        return router
+
 router = LeadController.get_router()

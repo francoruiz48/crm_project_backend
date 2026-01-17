@@ -341,7 +341,7 @@ class LeadService(BaseService):
     # HELPER DE ARCHIVOS
     # ---------------------------------------------------------
     @classmethod
-    def _handle_file_uploads(cls, context_data: dict, files_map: dict[int, UploadFile], field_defs_list: list):
+    def _handle_file_uploads(cls, context_data: dict, files_map: dict[int, UploadFile], field_defs_list: list, is_simulation: bool = False):
         if not files_map: return context_data
 
         fields_by_id = {f.id: f for f in field_defs_list}
@@ -365,9 +365,16 @@ class LeadService(BaseService):
                 allowed_types = ALLOWED_IMAGE_TYPES + ALLOWED_DOCUMENT_TYPES
 
             try:
+                # 1. Validar siempre (Tamaño, MimeType)
                 StorageService.validate_file(file, allowed_types)
-                path = StorageService.upload_file(file, folder="leads")
-                context_data[field_id] = path
+                
+                if is_simulation:
+                    # En simulación NO subimos nada. Ponemos un placeholder.
+                    context_data[field_id] = f"simulated_path/{file.filename}"
+                else:
+                    # En real, subimos.
+                    path = StorageService.upload_file(file, folder="leads")
+                    context_data[field_id] = path
                 
             except ValidationError as ve:
                 # Asignamos el error al campo específico
@@ -387,77 +394,153 @@ class LeadService(BaseService):
                     fv.value = StorageService.get_public_url(fv.value)
         return lead
 
+
+    # ---------------------------------------------------------
+    # LÓGICA CENTRAL DE PREPARACIÓN
+    # ---------------------------------------------------------
+    @classmethod
+    def _prepare_creation_data(cls, uow, obj_in, files_map, created_by, is_simulation=False):
+        """
+        Ejecuta toda la lógica de negocio (Validaciones, Cálculos, Defaults) sin guardar.
+        Devuelve: (clean_values_list, context_data_dict, field_defs_list)
+        """
+        campaign_id = obj_in.campaign_id
+        all_field_defs = cls.field_repository.get_all_active_with_rules(uow.session)
+        
+        # 1. Validación inicial de existencia de campos
+        defs_map = {f.id: f for f in all_field_defs}
+        incoming_field_ids = [v.get('field_id') if isinstance(v, dict) else v.field_id for v in obj_in.values]
+        
+        for fid in incoming_field_ids:
+            field_def = defs_map.get(fid)
+            if not field_def: 
+                raise ValidationError(f"El campo con ID {fid} no existe en el sistema.")
+            if field_def.campaign_id != campaign_id: 
+                raise ValidationError(f"Este campo no pertenece a la campaña seleccionada.", field=field_def.name)
+
+        current_campaign_defs = [f for f in all_field_defs if f.campaign_id == campaign_id]
+
+        if not current_campaign_defs:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="La campaña no tiene campos configurados.")
+        
+        # 2. Input -> Dict
+        context_data = cls._prepare_context_dict(obj_in.values)
+
+        # 3. Archivos (Pasamos flag is_simulation)
+        if files_map:
+            context_data = cls._handle_file_uploads(context_data, files_map, current_campaign_defs, is_simulation=is_simulation)
+
+        # 4. Completar y Default
+        context_data = cls._fill_missing_fields(context_data, current_campaign_defs)
+        context_data = cls._apply_defaults(context_data, current_campaign_defs)
+
+        # 5. Calcular
+        context_data = cls._evaluate_calculated_fields(context_data, current_campaign_defs)
+
+        # 6. Chequear Duplicados
+        cls._check_duplicates(uow.session, campaign_id, context_data, current_campaign_defs)
+        
+        # 7. Validar Reglas
+        # Pasamos current_lead_id=None porque es creación
+        cls._validate_processed_data(uow, context_data, current_campaign_defs, current_lead_id=None)
+        
+        # 8. Preparar estructura para repo (o para devolver en simulación)
+        clean_values = cls._reconstruct_items_for_repo(context_data, current_campaign_defs)
+        
+        return clean_values, context_data, current_campaign_defs
+
     # ---------------------------------------------------------
     # Métodos CRUD Públicos
     # ---------------------------------------------------------
 
     @classmethod
     def create(cls, obj_in, created_by=None, files_map: dict = None):
-        campaign_id = obj_in.campaign_id
-        
         try:
             with UnitOfWork() as uow:
-                all_field_defs = cls.field_repository.get_all_active_with_rules(uow.session)
+                # Usamos la lógica compartida
+                clean_values, _, _ = cls._prepare_creation_data(uow, obj_in, files_map, created_by, is_simulation=False)
                 
-                # 1. Validación inicial de existencia de campos
-                defs_map = {f.id: f for f in all_field_defs}
-                incoming_field_ids = [v.get('field_id') if isinstance(v, dict) else v.field_id for v in obj_in.values]
-                
-                for fid in incoming_field_ids:
-                    field_def = defs_map.get(fid)
-                    if not field_def: 
-                        # Error general si el ID no existe
-                        raise ValidationError(f"El campo con ID {fid} no existe en el sistema.")
-                    if field_def.campaign_id != campaign_id: 
-                        # Error asociado al campo específico (nombre)
-                        raise ValidationError(f"Este campo no pertenece a la campaña seleccionada.", field=field_def.name)
-
-                current_campaign_defs = [f for f in all_field_defs if f.campaign_id == campaign_id]
-
-                if not current_campaign_defs:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST, 
-                        detail="La campaña no tiene campos configurados."
-                    )
-                
-                # 2. Input -> Dict
-                context_data = cls._prepare_context_dict(obj_in.values)
-
-                # 3. Archivos
-                if files_map:
-                    context_data = cls._handle_file_uploads(context_data, files_map, current_campaign_defs)
-
-                # 4. Completar y Default
-                context_data = cls._fill_missing_fields(context_data, current_campaign_defs)
-                context_data = cls._apply_defaults(context_data, current_campaign_defs)
-
-                # 5. Calcular
-                context_data = cls._evaluate_calculated_fields(context_data, current_campaign_defs)
-
-                # 6. Chequear Duplicados (Lanza ValidationError con field si falla)
-                cls._check_duplicates(uow.session, campaign_id, context_data, current_campaign_defs)
-                
-                # 7. Validar Reglas (Lanza ValidationError con field si falla)
-                cls._validate_processed_data(uow, context_data, current_campaign_defs)
-                
-                # 8. Persistir
-                clean_values = cls._reconstruct_items_for_repo(context_data, current_campaign_defs)
-                
-                lead = cls.repository.create(uow.session, {'campaign_id': campaign_id}, created_by=created_by)
+                # Persistencia Real
+                lead = cls.repository.create(uow.session, {'campaign_id': obj_in.campaign_id}, created_by=created_by)
                 cls.repository.upsert_values(uow.session, lead.id, clean_values)
                 lead_id = lead.id
             
             return cls.get_by_id(lead_id, detailed=True)
 
-        # --- CAPTURA DE ERRORES ESTRUCTURADA ---
         except ValidationError as ve:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, 
                 detail={"message": ve.message, "field": ve.field}
             )
         except ValueError as ve:
-            # Fallback para errores genéricos
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"message": str(ve), "field": None})
+
+    @classmethod
+    def simulate_create(cls, obj_in, created_by=None, files_map: dict = None):
+        """
+        Simula la creación ejecutando todas las validaciones y cálculos.
+        Rellena datos 'dummy' para satisfacer el esquema de respuesta estricto.
+        """
+        try:
+            with UnitOfWork() as uow:
+                clean_values, context_data, field_defs = cls._prepare_creation_data(uow, obj_in, files_map, created_by, is_simulation=True)
+                
+                simulated_values = []
+                fields_map = {f.id: f for f in field_defs}
+
+                # Generamos un ID de Lead falso negativo para indicar que es temporal
+                dummy_lead_id = -1 
+
+                for item_proxy in clean_values:
+                    data = item_proxy._data
+                    fid = data['field_id']
+                    field_def = fields_map.get(fid)
+                    
+                    val_display = data.get('value')
+                    
+                    # --- CORRECCIÓN: Rellenar datos obligatorios ---
+                    simulated_values.append({
+                        "id": -1 * fid, # ID falso para el valor
+                        "lead_id": dummy_lead_id,
+                        "field_id": fid,
+                        "value": val_display,
+                        "nomenclator_items": [], 
+                        "related_leads": [],
+                        
+                        # Reconstruimos el objeto Field completo para el frontend
+                        "field": {
+                            "id": field_def.id,
+                            "name": field_def.name,
+                            "field_type": {"code": field_def.field_type_code},
+                            # Rellenamos lo que falta para el Schema
+                            "campaign_id": field_def.campaign_id,
+                            "lead_field_section": {
+                                "id": field_def.lead_field_section_id,
+                                "name": "Simulated Section" # O traer el real si es crítico
+                            } if field_def.lead_field_section_id else None,
+                            "active": True
+                        }
+                    })
+
+                return {
+                    "id": dummy_lead_id,
+                    "campaign_id": obj_in.campaign_id,
+                    "active": True,
+                    "created_at": datetime.now(),
+                    "updated_at": datetime.now(),
+                    "field_values": simulated_values,
+                    # Datos extra que pueda pedir el schema base
+                    "created_by": created_by
+                }
+
+        except ValidationError as ve:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, 
+                detail={"message": ve.message, "field": ve.field}
+            )
+        except ValueError as ve:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"message": str(ve), "field": None})
+
 
     @classmethod
     def update(cls, obj_id: int, obj_in, files_map: dict = None):
