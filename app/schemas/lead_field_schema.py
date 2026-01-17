@@ -16,7 +16,7 @@ class LeadFieldBase(BaseModel):
     input_mask: Optional[str] = None
     field_template_code: Optional[str] = None
     is_visible: bool = True
-    order: int
+    order: Optional[int] = None
     campaign_id: int
     calculation_expression: Optional[str] = None
 
