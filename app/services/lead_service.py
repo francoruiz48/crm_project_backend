@@ -2,13 +2,14 @@ from datetime import date, datetime
 import re
 from fastapi import HTTPException, UploadFile, status
 from app.core.constans import ALLOWED_DOCUMENT_TYPES, ALLOWED_IMAGE_TYPES, DATE_FORMAT, DATE_TIME_FORMAT, DEFAULT_PAGE_SIZE, NOMENCLATOR_FIELD_TYPES
+# Asegúrate de que ValidationError esté importado correctamente desde tu archivo de excepciones
+from app.core.exceptions.exceptions import ValidationError 
 from app.models.lead import Lead
 from app.services.base_service import BaseService
 from app.db.repository.lead_repository import LeadRepository
 from app.db.repository.lead_field_repository import LeadFieldRepository
 from app.db.unit_of_work import UnitOfWork
 from app.services.lead_validation_logic import LeadValidationLogic
-from app.core.error_messages import SUCCESS_DELETE
 from app.services.excel_formula_evaluator_service import ExcelFormulaEvaluatorService
 from app.services.storage_service import StorageService
 
@@ -36,17 +37,12 @@ class LeadService(BaseService):
             return self._data.get(item)
         
 
-
     # ---------------------------------------------------------
     # Helpers de Lógica de Negocio
     # ---------------------------------------------------------
 
     @classmethod
     def _convert_value_by_type(cls, value, field_def):
-        """
-        Convierte el valor crudo (generalmente string) al tipo de dato real de Python
-        según la definición del campo. Esto es vital para que las fórmulas funcionen.
-        """
         if value is None:
             return None
             
@@ -60,27 +56,22 @@ class LeadService(BaseService):
                 return float(value)
             
             if type_code == "BOOL":
-                # Manejo robusto de booleanos
                 if isinstance(value, bool): return value
                 return str(value).lower() in ("true", "1", "yes", "si")
 
             if type_code == "DATE":
-                # Si ya es date, lo devolvemos. Si es string, parseamos.
                 if isinstance(value, (datetime, date)): return value
-                # Asumimos ISO format YYYY-MM-DD
                 return datetime.strptime(str(value), "%Y-%m-%d").date()
             
             if type_code == "DATE_TIME":
                 if isinstance(value, datetime): return value
-                # Convertimos string "2026-01-10 22:00:00" a objeto datetime
                 return datetime.strptime(str(value), DATE_TIME_FORMAT)
 
-            # Si es STRING, TEXT, NOMENCLATOR, etc., devolvemos tal cual
             return value
 
         except (ValueError, TypeError):
-            # Si falla la conversión, devolvemos el valor original o None
-            # Esto evita que explote aquí, y deja que las validaciones posteriores capturen el error
+            # Si falla la conversión, devolvemos el valor original
+            # Las validaciones posteriores (check_field_definition) atraparán el error con mensaje limpio
             return value
 
     @classmethod
@@ -90,35 +81,30 @@ class LeadService(BaseService):
 
         fields_by_id = {f.id: f for f in field_defs_list}
         
-        # Construimos contexto (Nombres de variables -> Valores TIPADOS)
         context = {}
         for fid, val in input_data.items():
             field_def = fields_by_id.get(fid)
             if field_def:
-                # Convertimos el valor antes de meterlo al contexto ---
                 typed_value = cls._convert_value_by_type(val, field_def)
-                
-                # Normalizamos nombre (opcionalmente podrías hacer .upper() para estandarizar)
                 context[field_def.name] = typed_value
 
-        # Instanciamos NUESTRO evaluador
         evaluator = ExcelFormulaEvaluatorService(context=context)
 
         for field in calculated_fields:
             if not field.calculation_expression: continue
-            
-            # Resultado
-            result = evaluator.evaluate(field.calculation_expression)
-            input_data[field.id] = result
-            
-            # Actualizamos contexto para cálculos encadenados
-            context[field.name] = result
+            try:
+                result = evaluator.evaluate(field.calculation_expression)
+                input_data[field.id] = result
+                context[field.name] = result
+            except Exception:
+                # Si falla el cálculo, lo dejamos pasar o seteamos None,
+                # para no bloquear todo el proceso por una fórmula
+                input_data[field.id] = None
 
         return input_data
 
     @classmethod
     def _prepare_context_dict(cls, values_in):
-        """Convierte Input List -> Dict {field_id: valor_real}"""
         data = {}
         for v in values_in:
             if isinstance(v, dict):
@@ -133,21 +119,13 @@ class LeadService(BaseService):
 
     @classmethod
     def _fill_missing_fields(cls, input_data: dict, field_defs_list: list):
-        """
-        [NUEVO] Asegura que el diccionario tenga entradas para TODOS los campos 
-        de la campaña. Si falta alguno en el input, lo crea con valor None.
-        """
         for field in field_defs_list:
             if field.id not in input_data:
-                # Inyectamos el campo faltante con valor nulo
                 input_data[field.id] = None
         return input_data
 
     @classmethod
     def _apply_defaults(cls, input_data: dict, field_defs_list: list):
-        """
-        Aplica default_value si el valor es None/Vacío, no es Nomenclador y no es Required.
-        """
         for field in field_defs_list:
             if field.nomenclator_id is not None:
                 continue
@@ -175,9 +153,12 @@ class LeadService(BaseService):
 
         is_dup = cls.repository.find_duplicate(session, campaign_id, values_to_check)
         if is_dup:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Ya existe un Lead en esta campaña con los mismos datos identificatorios."
+            # Aquí podríamos intentar identificar cuál campo causó el duplicado, 
+            # pero suele ser una combinación. Devolvemos error general o al primer primary.
+            first_primary_name = primary_fields[0].name
+            raise ValidationError(
+                "Ya existe un Lead con estos datos identificatorios.", 
+                field=first_primary_name # Asignamos el error al primer campo primary para que se vea ahí
             )
         
     # ---------------------------------------------------------
@@ -185,37 +166,26 @@ class LeadService(BaseService):
     # ---------------------------------------------------------
     @classmethod
     def _validate_mask(cls, value: str, mask: str, field_name: str):
-        """
-        Convierte una máscara simple en Regex y valida el valor.
-        Convención típica:
-        # -> Número (\d)
-        A -> Letra ([a-zA-Z])
-        * -> Alfanumérico ([a-zA-Z0-9])
-        Cualquier otro caracter se trata como literal (ej: -, (, ), .)
-        """
         if not mask or value is None:
             return
 
-        # 1. Construir la Regex a partir de la máscara
         regex_pattern = "^"
         for char in mask:
             if char == "#":
-                regex_pattern += r"\d"       # Un dígito
+                regex_pattern += r"\d"
             elif char == "A":
-                regex_pattern += r"[a-zA-Z]" # Una letra
+                regex_pattern += r"[a-zA-Z]"
             elif char == "*":
-                regex_pattern += r"[a-zA-Z0-9]" # Alfanumérico
+                regex_pattern += r"[a-zA-Z0-9]"
             else:
-                # Escapamos caracteres especiales de regex (., (, ), etc.)
                 regex_pattern += re.escape(char)
         regex_pattern += "$"
 
-        # 2. Validar
-        # Convertimos value a string por seguridad
         val_str = str(value)
         if not re.match(regex_pattern, val_str):
-            raise ValueError(
-                f"El campo '{field_name}' no cumple con el formato requerido: {mask}"
+            raise ValidationError(
+                f"El formato no es válido. Se requiere: {mask}", 
+                field=field_name
             )
 
     # -------------------------------------------------------------------------
@@ -223,65 +193,51 @@ class LeadService(BaseService):
     # -------------------------------------------------------------------------
     @classmethod
     def _check_field_definition(cls, field, value):
-        """
-        Valida restricciones estáticas: Required, Is Primary y TIPO DE DATO.
-        """
-        # 1. Validar Obligatoriedad
         is_mandatory = field.required or field.is_primary
-        # Consideramos vacío si es None o string vacía (espacios cuentan como vacío)
         is_empty = value is None or (isinstance(value, str) and not value.strip())
 
         if is_empty:
             if is_mandatory:
-                raise ValueError(f"El campo '{field.name}' es obligatorio.")
-            return # Si está vacío y no es obligatorio, no validamos tipo (se guarda null)
+                raise ValidationError(f"Este campo es obligatorio.", field=field.name)
+            return 
 
-        # VALIDACIÓN: MÁSCARA
         if field.input_mask:
-            # Solo aplicamos máscaras a campos de tipo STRING o similar.
             cls._validate_mask(value, field.input_mask, field.name)
 
-        # 2. Validar Integridad de Tipos (Basic Type Check)
         type_code = field.field_type.code
         
-        # [MEJORA] Validaciones estrictas con mensajes claros
         if type_code == "INT":
             if isinstance(value, bool):
-                raise ValueError(f"El campo '{field.name}' espera un número entero, recibió un valor booleano.")
-            
+                raise ValidationError("Se espera un número entero.", field=field.name)
             if isinstance(value, float) and not value.is_integer():
-                 raise ValueError(f"El campo '{field.name}' espera un número entero, recibió un decimal '{value}'.")
-            
+                 raise ValidationError("Se espera un número entero, no decimal.", field=field.name)
             try:
-                # Intentamos convertir. Si es "Pedro", fallará.
                 int(value)
             except (ValueError, TypeError):
-                raise ValueError(f"El campo '{field.name}' espera un número entero (INT), pero recibió '{value}'.")
+                raise ValidationError("Valor inválido para número entero.", field=field.name)
         
         elif type_code == "NUMBER":
             try:
                 float(value)
             except (ValueError, TypeError):
-                raise ValueError(f"El campo '{field.name}' espera un número decimal, pero recibió '{value}'.")
+                raise ValidationError("Valor inválido para número decimal.", field=field.name)
         
         elif type_code == "BOOL":
-            # Aceptamos True/False nativos o strings "true"/"false"/"1"/"0"
             s_val = str(value).lower()
             if s_val not in ("true", "false", "1", "0"):
-                raise ValueError(f"El campo '{field.name}' espera un booleano (true/false), pero recibió '{value}'.")
+                raise ValidationError("Se espera Verdadero o Falso.", field=field.name)
         
         elif type_code == "DATE":
             try:
-                # Asumimos formato ISO YYYY-MM-DD
                 datetime.strptime(str(value), "%Y-%m-%d")
             except ValueError:
-                raise ValueError(f"El campo '{field.name}' espera formato de fecha '{DATE_FORMAT}', pero recibió '{value}'.")
+                raise ValidationError(f"Formato inválido. Use {DATE_FORMAT}", field=field.name)
+        
         elif type_code == "DATE_TIME":
             try:
-                # Validamos contra el formato con horas/min/seg
                 datetime.strptime(str(value), DATE_TIME_FORMAT)
             except ValueError:
-                raise ValueError(f"El campo '{field.name}' espera formato '{DATE_TIME_FORMAT}' (Ej: 2026-01-30 14:30:00), pero recibió '{value}'.")
+                raise ValidationError(f"Formato inválido. Use {DATE_TIME_FORMAT}", field=field.name)
 
     @classmethod
     def _validate_processed_data(cls, uow, full_context, field_defs_list, current_lead_id=None):
@@ -290,62 +246,63 @@ class LeadService(BaseService):
         for field in field_defs_list:
             val = full_context.get(field.id)
 
-            try:
+            # Validaciones de Nomencladores y Leads Relacionados
+            if field.field_type_code in NOMENCLATOR_FIELD_TYPES:
                 if val is None:
-                    if field.required: raise ValueError(f"Campo '{field.name}' es obligatorio.")
+                    if field.required: raise ValidationError("Campo obligatorio.", field=field.name)
                     continue
 
-                if field.field_type_code in NOMENCLATOR_FIELD_TYPES:
-                    if isinstance(val, list):
-                        items_ids = val
-                    else:
-                        items_ids = [val]
-                    
-                    if field.field_subtype_code == f"{field.field_type_code}_SINGLE":
-                        if len(items_ids) > 1:
-                            raise ValueError(f"El campo '{field.name}' solo acepta una opción, recibidos: {len(items_ids)}")
-                    
-                    if not all(isinstance(x, int) for x in items_ids):
-                        raise ValueError(f"Campo '{field.name}': IDs inválidos.")
-
-                if field.field_type_code == "LEAD":
-                    if val is None: continue
+                items_ids = val if isinstance(val, list) else [val]
                 
-                    val = val if isinstance(val, list) else [val]
-                    val = set(val)
-                    val = list(val)
-                    full_context[field.id] = val
-                    
-                    ids_list = val
-                    
-                    # 1. Validar Auto-referencia
-                    if current_lead_id and current_lead_id in ids_list:
-                        raise ValueError(f"El campo '{field.name}' no puede referenciarse a sí mismo.")
+                if field.field_subtype_code == f"{field.field_type_code}_SINGLE":
+                    if len(items_ids) > 1:
+                        raise ValidationError("Solo se permite una opción.", field=field.name)
+                
+                if not all(isinstance(x, int) for x in items_ids):
+                    raise ValidationError("IDs de opción inválidos.", field=field.name)
 
-                    # 2. Validar Existencia y Campaña
-                    if not all(isinstance(x, int) for x in ids_list):
-                        raise ValueError(f"IDs inválidos para campo '{field.name}'.")
+            if field.field_type_code == "LEAD":
+                if val is None: 
+                    if field.required: raise ValidationError("Campo obligatorio.", field=field.name)
+                    continue
+                
+                val_list = val if isinstance(val, list) else [val]
+                # Deduplicar
+                val_list = list(set(val_list))
+                full_context[field.id] = val_list # Guardamos lista limpia
+                
+                # 1. Validar Auto-referencia
+                if current_lead_id and current_lead_id in val_list:
+                    raise ValidationError("Un lead no puede relacionarse consigo mismo.", field=field.name)
+
+                # 2. Validar Existencia
+                for x in val_list:
+                    if not isinstance(x, int): raise ValidationError("ID de lead inválido.", field=field.name)
                     
-                    for x in ids_list:
-                        lead = uow.session.query(Lead).filter_by(id=x).first()
-                        if lead is None:
-                            raise ValueError(f"El lead({x}) no existe.")
-                        elif field.related_campaign_id != lead.campaign_id:
-                            raise ValueError(f"El lead({x}) no pertenece a la campaña {field.related_campaign_id}.")
+                    related_lead = uow.session.query(Lead).filter_by(id=x).first()
+                    if related_lead is None:
+                        raise ValidationError(f"El lead relacionado ({x}) no existe.", field=field.name)
+                    elif field.related_campaign_id != related_lead.campaign_id:
+                        raise ValidationError(f"El lead ({x}) no pertenece a la campaña correcta.", field=field.name)
             
-                # Paso 1: Validar definición básica
-                cls._check_field_definition(field, val)
+            # Paso 1: Validar definición básica (Tipos, máscaras, required simple)
+            cls._check_field_definition(field, val)
 
-                # Paso 2: Validar reglas complejas
+            # Paso 2: Validar reglas complejas (ValidationRuleService)
+            # Nota: validation_rule_service debería lanzar ValidationError con 'field' seteado si falla.
+            try:
                 LeadValidationLogic.validate_rules(
                     current_field=field,
                     raw_value=val,
                     all_values=full_context,
                     all_fields_defs=all_defs
                 )
-
-            except ValueError as e:
-                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e))
+            except ValidationError as ve:
+                # Si viene de logic, ya trae el field, lo re-lanzamos tal cual
+                raise ve
+            except ValueError as ve:
+                # Si viene un ValueError genérico, lo convertimos y asignamos al campo actual
+                raise ValidationError(str(ve), field=field.name)
             
 
     @classmethod
@@ -358,18 +315,16 @@ class LeadService(BaseService):
             item_dict = {'field_id': fid}
             
             if field_def.field_type_code in NOMENCLATOR_FIELD_TYPES:
-                # Normalizamos a lista
                 ids_list = val if isinstance(val, list) else [val]
-                if not val: ids_list = [] # Manejo de None/Vacío
+                if not val: ids_list = []
                 
-                # Pasamos la LISTA de IDs en una clave especial temporal para el repo
                 item_dict['nomenclator_ids_list'] = ids_list 
                 item_dict['value'] = None
             elif field_def.field_type_code == "LEAD":
                 ids_list = val if isinstance(val, list) else [val]
                 if not val: ids_list = []
                 
-                item_dict['value'] = None # El valor texto es null
+                item_dict['value'] = None
                 item_dict['nomenclator_ids_list'] = []
                 item_dict['related_lead_ids_list'] = ids_list
             else:
@@ -377,7 +332,7 @@ class LeadService(BaseService):
                     item_dict['value'] = str(val) 
                 else:
                     item_dict['value'] = None
-                item_dict['nomenclator_ids_list'] = [] # Vacío
+                item_dict['nomenclator_ids_list'] = []
             
             items_for_repo.append(cls.ItemProxy(item_dict))
         return items_for_repo
@@ -387,79 +342,49 @@ class LeadService(BaseService):
     # ---------------------------------------------------------
     @classmethod
     def _handle_file_uploads(cls, context_data: dict, files_map: dict[int, UploadFile], field_defs_list: list):
-        """
-        1. Itera sobre los archivos recibidos.
-        2. Valida que el campo exista y sea de tipo FILE.
-        3. Valida el subtipo (IMAGEN vs DOCUMENTO).
-        4. Sube a Supabase.
-        5. Inyecta el PATH resultante en context_data para que se guarde en la BD.
-        """
-        print(f"📂 _handle_file_uploads invocado con: {files_map.keys()}")
-        if not files_map:
-            print("⚠️ files_map vacío, saliendo.")
-            return context_data
+        if not files_map: return context_data
 
         fields_by_id = {f.id: f for f in field_defs_list}
 
         for field_id, file in files_map.items():
-            print(f"➡️ Procesando archivo para field_id: {field_id}, Filename: {file.filename}") # DEBUG
             field_def = fields_by_id.get(field_id)
             
-            # Validación básica de existencia y tipo
             if not field_def:
-                print(f"❌ Campo {field_id} no encontrado en definiciones.")
-                raise HTTPException(400, f"Se intentó subir archivo para un campo inexistente (ID: {field_id})")
+                # Error general (no de campo específico porque el ID no existe)
+                raise ValidationError(f"Se intentó subir archivo para un campo inexistente (ID: {field_id})")
             
-            print(f"ℹ️ Tipo de campo: {field_def.field_type_code}") # DEBUG
-
             if field_def.field_type_code != "FILE":
-                raise HTTPException(400, f"El campo '{field_def.name}' no acepta archivos.")
+                raise ValidationError("Este campo no acepta archivos.", field=field_def.name)
 
-            # Validación de Subtipo (Imagen vs Documento)
             allowed_types = []
             if field_def.field_subtype_code == "FILE_IMAGE":
                 allowed_types = ALLOWED_IMAGE_TYPES
             elif field_def.field_subtype_code == "FILE_DOCUMENT":
                 allowed_types = ALLOWED_DOCUMENT_TYPES
             else:
-                # Si no tiene subtipo, permitimos ambos por defecto (o restringimos)
                 allowed_types = ALLOWED_IMAGE_TYPES + ALLOWED_DOCUMENT_TYPES
 
-            # Validar Mime Type
-            StorageService.validate_file(file, allowed_types)
-
-            # Subir
             try:
-                # Usamos una carpeta organizada por campaña o fecha si quisieras
+                StorageService.validate_file(file, allowed_types)
                 path = StorageService.upload_file(file, folder="leads")
-                print(f"✅ Archivo subido a Supabase en: {path}")
-                # INYECCIÓN: Guardamos el path como si fuera el valor de texto del campo
                 context_data[field_id] = path
                 
+            except ValidationError as ve:
+                # Asignamos el error al campo específico
+                raise ValidationError(ve.message, field=field_def.name)
             except Exception as e:
-                print(f"🔥 Error en subida: {e}")
-                raise HTTPException(500, f"Fallo al procesar archivo para campo {field_def.name}: {str(e)}")
+                raise HTTPException(500, f"Error al subir archivo: {str(e)}")
 
         return context_data
 
     @classmethod
     def _enrich_lead_with_urls(cls, lead):
-        """
-        Recorre los valores del Lead. Si encuentra un campo tipo FILE,
-        transforma el PATH relativo (DB) en URL pública (Display).
-        Funciona sobre objetos ORM o Pydantic que tengan estructura de objetos.
-        """
-        if not lead or not lead.field_values:
-            return lead
+        if not lead or not lead.field_values: return lead
 
         for fv in lead.field_values:
-            # Verificamos si tenemos acceso a la definición del campo y si es FILE
-            # Nota: Al usar ORM 'joinedload', fv.field debería estar cargado.
             if fv.field and fv.field.field_type_code == "FILE":
-                if fv.value: # Si hay path guardado
-                    # Transformamos Path -> URL solo para la vista (en memoria)
+                if fv.value: 
                     fv.value = StorageService.get_public_url(fv.value)
-        
         return lead
 
     # ---------------------------------------------------------
@@ -469,146 +394,133 @@ class LeadService(BaseService):
     @classmethod
     def create(cls, obj_in, created_by=None, files_map: dict = None):
         campaign_id = obj_in.campaign_id
-        with UnitOfWork() as uow:
-            all_field_defs = cls.field_repository.get_all_active_with_rules(uow.session)
+        
+        try:
+            with UnitOfWork() as uow:
+                all_field_defs = cls.field_repository.get_all_active_with_rules(uow.session)
+                
+                # 1. Validación inicial de existencia de campos
+                defs_map = {f.id: f for f in all_field_defs}
+                incoming_field_ids = [v.get('field_id') if isinstance(v, dict) else v.field_id for v in obj_in.values]
+                
+                for fid in incoming_field_ids:
+                    field_def = defs_map.get(fid)
+                    if not field_def: 
+                        # Error general si el ID no existe
+                        raise ValidationError(f"El campo con ID {fid} no existe en el sistema.")
+                    if field_def.campaign_id != campaign_id: 
+                        # Error asociado al campo específico (nombre)
+                        raise ValidationError(f"Este campo no pertenece a la campaña seleccionada.", field=field_def.name)
+
+                current_campaign_defs = [f for f in all_field_defs if f.campaign_id == campaign_id]
+
+                if not current_campaign_defs:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST, 
+                        detail="La campaña no tiene campos configurados."
+                    )
+                
+                # 2. Input -> Dict
+                context_data = cls._prepare_context_dict(obj_in.values)
+
+                # 3. Archivos
+                if files_map:
+                    context_data = cls._handle_file_uploads(context_data, files_map, current_campaign_defs)
+
+                # 4. Completar y Default
+                context_data = cls._fill_missing_fields(context_data, current_campaign_defs)
+                context_data = cls._apply_defaults(context_data, current_campaign_defs)
+
+                # 5. Calcular
+                context_data = cls._evaluate_calculated_fields(context_data, current_campaign_defs)
+
+                # 6. Chequear Duplicados (Lanza ValidationError con field si falla)
+                cls._check_duplicates(uow.session, campaign_id, context_data, current_campaign_defs)
+                
+                # 7. Validar Reglas (Lanza ValidationError con field si falla)
+                cls._validate_processed_data(uow, context_data, current_campaign_defs)
+                
+                # 8. Persistir
+                clean_values = cls._reconstruct_items_for_repo(context_data, current_campaign_defs)
+                
+                lead = cls.repository.create(uow.session, {'campaign_id': campaign_id}, created_by=created_by)
+                cls.repository.upsert_values(uow.session, lead.id, clean_values)
+                lead_id = lead.id
             
-            # Validación: Campos pertenecen a la campaña
-            defs_map = {f.id: f for f in all_field_defs}
-            incoming_field_ids = [v.get('field_id') if isinstance(v, dict) else v.field_id for v in obj_in.values]
-            
-            for fid in incoming_field_ids:
-                field_def = defs_map.get(fid)
-                if not field_def: raise HTTPException(status.HTTP_400_BAD_REQUEST, f"ID {fid} no existe.")
-                if field_def.campaign_id != campaign_id: raise HTTPException(status.HTTP_400_BAD_REQUEST, f"El campo {fid} no es de la campaña {campaign_id}.")
+            return cls.get_by_id(lead_id, detailed=True)
 
-            # Filtramos solo los campos de ESTA campaña
-            current_campaign_defs = [f for f in all_field_defs if f.campaign_id == campaign_id]
-
-            if not current_campaign_defs:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST, 
-                    detail="La campaña no tiene campos activos configurados. Debe crear al menos un campo antes de cargar Leads."
-                )
-            
-            # 2. Input -> Dict
-            context_data = cls._prepare_context_dict(obj_in.values)
-
-            # Esto subirá los archivos y agregará sus paths al context_data
-            if files_map:
-                context_data = cls._handle_file_uploads(context_data, files_map, current_campaign_defs)
-
-            # 3. Rellenar campos faltantes con None
-            # Esto asegura que si el user no manda un campo opcional, lo tengamos en el dict como None
-            context_data = cls._fill_missing_fields(context_data, current_campaign_defs)
-
-            # 4. Aplicar Defaults (Ahora verá los Nones creados arriba y aplicará default si corresponde)
-            context_data = cls._apply_defaults(context_data, current_campaign_defs)
-
-            # 4.5. EVALUAR CAMPOS CALCULADOS
-            context_data = cls._evaluate_calculated_fields(context_data, current_campaign_defs)
-
-            # 5. Chequear Duplicados
-            cls._check_duplicates(uow.session, campaign_id, context_data, current_campaign_defs)
-            
-            # 6. Validar (Ahora checkeará tipos estrictos y requeridos sobre todos los campos)
-            cls._validate_processed_data(uow, context_data, current_campaign_defs)
-            
-            # 7. Preparar para guardar (incluye los campos que el usuario no mandó)
-            clean_values = cls._reconstruct_items_for_repo(context_data, current_campaign_defs)
-            
-            # 8. Guardar
-            lead = cls.repository.create(uow.session, {'campaign_id': campaign_id}, created_by=created_by)
-            cls.repository.upsert_values(uow.session, lead.id, clean_values)
-            lead_id = lead.id
-        return cls.get_by_id(lead_id, detailed=True)
+        # --- CAPTURA DE ERRORES ESTRUCTURADA ---
+        except ValidationError as ve:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, 
+                detail={"message": ve.message, "field": ve.field}
+            )
+        except ValueError as ve:
+            # Fallback para errores genéricos
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"message": str(ve), "field": None})
 
     @classmethod
     def update(cls, obj_id: int, obj_in, files_map: dict = None):
-        # 1. Usamos UOW para la escritura
-        with UnitOfWork() as uow:
-            # A. Obtener Lead
-            current_lead = cls.repository.get_by_id(uow.session, obj_id)
-            if not current_lead:
-                cls._not_found(obj_id)
-            
-            # B. Update Campos Base (active, campaign_id)
-            lead_data = obj_in.model_dump(exclude_unset=True, exclude={"values"})
-            if lead_data:
-                cls.repository.update(uow.session, obj_id, lead_data)
-
-            # C. Update Valores Dinámicos
-            if obj_in.values is not None:
-                # 1. Definiciones
-                field_defs = cls.field_repository.get_all_active_with_rules(uow.session)
-                defs_map = {f.id: f for f in field_defs}
+        try:
+            with UnitOfWork() as uow:
+                current_lead = cls.repository.get_by_id(uow.session, obj_id)
+                if not current_lead: cls._not_found(obj_id)
                 
-                # 2. Validación rápida de existencia
-                incoming_ids = [v.get('field_id') if isinstance(v, dict) else v.field_id for v in obj_in.values]
-                for fid in incoming_ids:
-                    if fid not in defs_map: raise HTTPException(400, f"Campo {fid} no existe")
-                    if defs_map[fid].campaign_id != current_lead.campaign_id: raise HTTPException(400, f"Campo {fid} campaña incorrecta")
+                # Update base
+                lead_data = obj_in.model_dump(exclude_unset=True, exclude={"values"})
+                if lead_data:
+                    cls.repository.update(uow.session, obj_id, lead_data)
 
-                # 3. Merge de datos (DB + Nuevos)
-                incoming_data = cls._prepare_context_dict(obj_in.values)
-
-                # --- PROCESAMIENTO DE ARCHIVOS ---
-                if files_map:
-                    # Validar que los archivos pertenezcan a la campaña correcta
-                    for fid in files_map.keys():
-                        if fid not in defs_map: raise HTTPException(400, f"Campo {fid} no existe")
+                if obj_in.values is not None:
+                    field_defs = cls.field_repository.get_all_active_with_rules(uow.session)
+                    defs_map = {f.id: f for f in field_defs}
+                    
+                    # Validaciones previas
+                    incoming_ids = [v.get('field_id') if isinstance(v, dict) else v.field_id for v in obj_in.values]
+                    for fid in incoming_ids:
+                        if fid not in defs_map: raise ValidationError(f"Campo {fid} no existe.")
+                        # Validación de campaña cruzada
                         if defs_map[fid].campaign_id != current_lead.campaign_id: 
-                            raise HTTPException(400, f"El campo {fid} no pertenece a la campaña del lead.")
+                             raise ValidationError("El campo no pertenece a esta campaña.", field=defs_map[fid].name)
+
+                    incoming_data = cls._prepare_context_dict(obj_in.values)
+
+                    if files_map:
+                        incoming_data = cls._handle_file_uploads(incoming_data, files_map, field_defs)
                     
-                    # Subir e inyectar paths en incoming_data (sobrescribe lo que había)
-                    incoming_data = cls._handle_file_uploads(incoming_data, files_map, field_defs)
-                
-                db_values = {}
-                for v in current_lead.field_values:
+                    # Reconstruir estado actual DB
+                    db_values = {}
+                    for v in current_lead.field_values:
+                        val = getattr(v, "value", None)
+                        if val is None:
+                            if hasattr(v, "nomenclator_items") and v.nomenclator_items:
+                                val = [item.id for item in v.nomenclator_items]
+                            elif hasattr(v, "related_leads") and v.related_leads:
+                                val = [l.id for l in v.related_leads]
+                            elif hasattr(v, "nomenclator_item_id") and v.nomenclator_item_id:
+                                val = v.nomenclator_item_id
+                        db_values[v.field_id] = val
                     
-                    # A. Intentar obtener valor simple
-                    val = getattr(v, "value", None)
+                    full_context = {**db_values, **incoming_data}
                     
-                    # B. Si no hay valor simple, revisar si es Nomenclador (Lista de items)
-                    # El modelo de respuesta ahora tiene 'nomenclator_items', no 'nomenclator_item_id'
-                    if val is None:
-                        if hasattr(v, "nomenclator_items") and v.nomenclator_items:
-                            val = [item.id for item in v.nomenclator_items]
-                        
-                        # 2. Leads Relacionados (NUEVO)
-                        elif hasattr(v, "related_leads") and v.related_leads:
-                            val = [l.id for l in v.related_leads]
+                    # Calcular y Validar
+                    full_context = cls._evaluate_calculated_fields(full_context, field_defs)
+                    
+                    # Importante: Pasar current_lead_id para excluirse a sí mismo en validaciones unique/related
+                    cls._validate_processed_data(uow, full_context, field_defs, current_lead_id=obj_id)
+                    
+                    clean_values = cls._reconstruct_items_for_repo(incoming_data, field_defs)
+                    cls.repository.upsert_values(uow.session, obj_id, clean_values)
 
-                        # 3. Fallback compatibilidad (Nomenclador simple viejo)
-                        elif hasattr(v, "nomenclator_item_id") and v.nomenclator_item_id:
-                            val = v.nomenclator_item_id
+            return cls.get_by_id(obj_id, detailed=True)
 
-                    db_values[v.field_id] = val
-                
-                full_context = {**db_values, **incoming_data}
-                
-                # 4. EVALUAR CAMPOS CALCULADOS (Sobre el contexto completo)
-                full_context = cls._evaluate_calculated_fields(full_context, field_defs)
-
-                # [CRÍTICO] Actualizar 'incoming_data' con los resultados calculados.
-                # Si el usuario cambió 'Precio', el campo 'Total' (calculado) cambió en full_context,
-                # pero debemos decirle al repo que lo guarde.
-                calculated_fields = [f for f in field_defs if f.field_type_code == "CALCULATED"]
-                for cf in calculated_fields:
-                    # Sobrescribimos/Agregamos el valor calculado a lo que vamos a guardar
-                    incoming_data[cf.id] = full_context.get(cf.id)
-
-                # 5. Validar Reglas
-                cls._validate_processed_data(uow, full_context, field_defs, current_lead_id=obj_id)
-                
-                # 6. Preparar items para upsert (Solo lo nuevo/modificado)
-                clean_values = cls._reconstruct_items_for_repo(incoming_data, field_defs)
-                
-                # 7. Ejecutar Upsert
-                cls.repository.upsert_values(uow.session, obj_id, clean_values)
-
-        return cls.get_by_id(obj_id, detailed=True)
-            
-        
+        except ValidationError as ve:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, 
+                detail={"message": ve.message, "field": ve.field}
+            )
+        except ValueError as ve:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"message": str(ve), "field": None})
 
     @classmethod
     def search(cls, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, detailed: bool = False, search_req=None):

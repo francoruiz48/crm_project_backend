@@ -1,6 +1,6 @@
 from app.core.constans import DEFAULT_PAGE_SIZE
 from app.core.logger import logger
-from app.core.exceptions import AppException, NotFoundException
+from app.core.exceptions.exceptions import AppException, NotFoundException
 from app.core.error_messages import (
     ERROR_NOT_FOUND, ERROR_DATABASE,
     SUCCESS_CREATE, SUCCESS_UPDATE, SUCCESS_DELETE

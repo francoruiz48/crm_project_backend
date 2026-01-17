@@ -20,3 +20,8 @@ class AlreadyExistsException(AppException):
 class InvalidDataException(AppException):
     def __init__(self, detail=None):
         super().__init__(status.HTTP_422_UNPROCESSABLE_ENTITY, detail or errors.ERROR_INVALID_DATA)
+
+class ValidationError(Exception):
+    def __init__(self, message: str, field: str = None):
+        self.message = message
+        self.field = field
