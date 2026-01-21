@@ -5,11 +5,11 @@ from typing import List, Dict, Any, Optional
 
 
 class NomenclatorItemBase(BaseModel):
-    code: str
-    value: str
-    nomenclator_id: int
-    parent_item_id: Optional[int] = None
-
+    code: str = Field(..., min_length=2, max_length=50)
+    value: str = Field(..., min_length=2, max_length=100)
+    nomenclator_id: int = Field(gt=0)
+    parent_item_id: Optional[int] = Field(default=None, gt=0)
+    
 
 class NomenclatorItemCreate(NomenclatorItemBase, BaseCreate):
     pass

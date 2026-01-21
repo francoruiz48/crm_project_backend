@@ -1,6 +1,6 @@
 
 from app.models.base_model import BaseModelDB
-from sqlalchemy import Column, ForeignKey, String,Integer
+from sqlalchemy import Column, ForeignKey, String,Integer, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 

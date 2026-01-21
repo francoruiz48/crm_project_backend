@@ -163,7 +163,7 @@ def test_cannot_add_required_field_to_campaign_with_leads(client, db_session, in
     camp_id = initial_structure["campaign"].id
     
     # 1. Crear Lead en la campaña (Campana sucia)
-    f_existente = LeadField(name="A", field_type_code="STRING", campaign_id=camp_id, order=1, lead_field_section_id=1)
+    f_existente = LeadField(name="AAA", field_type_code="STRING", campaign_id=camp_id, order=1, lead_field_section_id=1)
     db_session.add(f_existente)
     db_session.commit()
     

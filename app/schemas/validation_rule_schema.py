@@ -1,20 +1,17 @@
 import datetime
 from typing import Optional, Dict, Any, List
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
 
 
 class ValidationRuleBase(BaseModel):
-    name: Optional[str] = None
-    expression: Optional[str] = None
-    error_message: Optional[str] = None
-    field_id : Optional[int] = None
+    name: Optional[str] = Field(default=None, min_length=3, max_length=100)
+    expression: Optional[str] = Field(default=None, min_length=1)
+    error_message: Optional[str] = Field(default=None, max_length=255)
+    field_id: Optional[int] = Field(default=None, gt=0)
 
     template_code: Optional[str] = None
     template_params: Optional[Dict[str, Any]] = None
-
-
-
 
 class ValidationRuleCreate(ValidationRuleBase, BaseCreate):
     @model_validator(mode='before')

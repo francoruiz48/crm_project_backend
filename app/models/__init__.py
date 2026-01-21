@@ -1,3 +1,4 @@
+from app.models.lead_comment import LeadComment
 from app.models.lead import Lead
 from app.models.lead_field_type import LeadFieldType
 from app.models.lead_field import LeadField
@@ -10,4 +11,4 @@ from app.models.workspace import Workspace
 from app.models.lead_field_section import LeadFieldSection
 from app.models.lead_field_subtype import LeadFieldSubtype
 
-__all__ = ["Lead", "LeadFieldType", "LeadField", "LeadFieldValue", "Campaign", "Nomenclator", "NomenclatorItem", "ValidationRule", "Workspace", "LeadFieldSection", "LeadFieldSubtype"]
+__all__ = ["Lead", "LeadFieldType", "LeadField", "LeadFieldValue", "Campaign", "Nomenclator", "NomenclatorItem", "ValidationRule", "Workspace", "LeadFieldSection", "LeadFieldSubtype", "LeadComment"]
