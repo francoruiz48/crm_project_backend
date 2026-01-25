@@ -33,3 +33,6 @@ class LeadField(BaseModelDB):
     nomenclator = relationship("Nomenclator", foreign_keys=[nomenclator_id])
     lead_field_section = relationship("LeadFieldSection", foreign_keys=[lead_field_section_id])
     related_campaign = relationship("Campaign", foreign_keys=[related_campaign_id])
+
+    organization_id = Column(Integer, ForeignKey("organization.id"), nullable=False)
+    organization = relationship("Organization", foreign_keys=[organization_id])

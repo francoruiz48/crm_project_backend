@@ -43,9 +43,10 @@ def test_lead_field_backfill_existing_leads(client, db_session, initial_structur
     3. Verificar que los leads viejos tengan ese campo (con valor None o Default).
     """
     camp_id = initial_structure["campaign"].id
+    org_id = initial_structure["organization"].id
     
     # Setup: Crear campo base y un Lead
-    f_base = LeadField(name="Base", field_type_code="STRING", campaign_id=camp_id, order=1, lead_field_section_id=1)
+    f_base = LeadField(name="Base", field_type_code="STRING", campaign_id=camp_id, order=1, lead_field_section_id=1, organization_id=org_id)
     db_session.add(f_base)
     db_session.commit()
 
@@ -92,9 +93,10 @@ def test_lead_field_delete_with_data_soft_delete(client, db_session, initial_str
     Action: disabled.
     """
     camp_id = initial_structure["campaign"].id
+    org_id = initial_structure["organization"].id
     
     # 1. Crear Campo y Lead que lo usa
-    f_dato = LeadField(name="Dato Importante", field_type_code="INT", campaign_id=camp_id, order=1, lead_field_section_id=1)
+    f_dato = LeadField(name="Dato Importante", field_type_code="INT", campaign_id=camp_id, order=1, lead_field_section_id=1, organization_id=org_id)
     db_session.add(f_dato)
     db_session.commit()
 
@@ -125,13 +127,14 @@ def test_create_lead_ignores_disabled_required_field(client, db_session, initial
     porque está inactivo.
     """
     camp_id = initial_structure["campaign"].id
+    org_id = initial_structure["organization"].id
     
     # 1. Crear Campo Requerido
-    f_req = LeadField(name="Campo Obligatorio", field_type_code="STRING", campaign_id=camp_id, required=True, order=1, lead_field_section_id=1)
+    f_req = LeadField(name="Campo Obligatorio", field_type_code="STRING", campaign_id=camp_id, required=True, order=1, lead_field_section_id=1 ,organization_id=org_id)
     db_session.add(f_req)
     db_session.commit()
 
-    f_no_req = LeadField(name="Campo No Obligatorio", field_type_code="STRING", campaign_id=camp_id, required=False, order=2, lead_field_section_id=1)
+    f_no_req = LeadField(name="Campo No Obligatorio", field_type_code="STRING", campaign_id=camp_id, required=False, order=2, lead_field_section_id=1, organization_id=org_id)
     db_session.add(f_no_req)
     db_session.commit()
 
@@ -161,9 +164,10 @@ def test_cannot_add_required_field_to_campaign_with_leads(client, db_session, in
     porque los leads viejos quedarían inválidos (valor nulo en campo required).
     """
     camp_id = initial_structure["campaign"].id
+    org_id = initial_structure["organization"].id
     
     # 1. Crear Lead en la campaña (Campana sucia)
-    f_existente = LeadField(name="A", field_type_code="STRING", campaign_id=camp_id, order=1, lead_field_section_id=1)
+    f_existente = LeadField(name="AAA", field_type_code="STRING", campaign_id=camp_id, order=1, lead_field_section_id=1, organization_id=org_id)
     db_session.add(f_existente)
     db_session.commit()
     
@@ -190,13 +194,14 @@ def test_reactivate_field(client, db_session, initial_structure):
     Caso: Reactivar un campo previamente eliminado (Soft Deleted).
     """
     camp_id = initial_structure["campaign"].id
+    org_id = initial_structure["organization"].id
     
     # 1. Setup: Campo con datos -> Soft Delete
-    f_test = LeadField(name="Zombie Field", field_type_code="STRING", campaign_id=camp_id, order=1, lead_field_section_id=1)
+    f_test = LeadField(name="Zombie Field", field_type_code="STRING", campaign_id=camp_id, order=1, lead_field_section_id=1, organization_id=org_id)
     db_session.add(f_test)
     db_session.commit()
 
-    f_test_2 = LeadField(name="Zombie Field 2", field_type_code="STRING", campaign_id=camp_id, order=2, lead_field_section_id=1)
+    f_test_2 = LeadField(name="Zombie Field 2", field_type_code="STRING", campaign_id=camp_id, order=2, lead_field_section_id=1, organization_id=org_id)
     db_session.add(f_test_2)
     db_session.commit()
     
@@ -240,9 +245,10 @@ def test_create_lead_fails_all_fields_disabled(client, db_session, initial_struc
     Resultado: 400 Bad Request (Estructuralmente está vacía para el usuario).
     """
     camp_id = initial_structure["campaign"].id
+    org_id = initial_structure["organization"].id
     
     # 1. Crear un campo
-    f_temp = LeadField(name="Campo X", field_type_code="STRING", campaign_id=camp_id, order=1, lead_field_section_id=1)
+    f_temp = LeadField(name="Campo X", field_type_code="STRING", campaign_id=camp_id, order=1, lead_field_section_id=1, organization_id=org_id)
     db_session.add(f_temp)
     db_session.commit()
     
@@ -267,6 +273,7 @@ def test_create_lead_success_empty_values_optional_fields(client, db_session, in
     Resultado: 200 OK.
     """
     camp_id = initial_structure["campaign"].id
+    org_id = initial_structure["organization"].id
     
     # 1. Crear Campo Opcional
     f_opcional = LeadField(
@@ -275,7 +282,8 @@ def test_create_lead_success_empty_values_optional_fields(client, db_session, in
         campaign_id=camp_id, 
         required=False, # <--- CLAVE
         order=1,
-        lead_field_section_id=1
+        lead_field_section_id=1,
+        organization_id=org_id
     )
     db_session.add(f_opcional)
     db_session.commit()
@@ -399,9 +407,10 @@ def test_create_field_fail_primary_with_existing_leads(client, db_session, initi
     Esto debe fallar porque no podemos garantizar que los leads viejos sean únicos retrospectivamente.
     """
     camp_id = initial_structure["campaign"].id
+    org_id = initial_structure["organization"].id
     
     # 1. Crear un campo base y un lead (para ensuciar la campaña)
-    f_base = LeadField(name="Base", field_type_code="STRING", campaign_id=camp_id, order=1, lead_field_section_id=1)
+    f_base = LeadField(name="Base", field_type_code="STRING", campaign_id=camp_id, order=1, lead_field_section_id=1, organization_id=org_id)
     db_session.add(f_base)
     db_session.commit()
     
@@ -462,9 +471,10 @@ def test_update_field_fail_required_with_null_values(client, db_session, initial
     Debe fallar por integridad de datos.
     """
     camp_id = initial_structure["campaign"].id
+    org_id = initial_structure["organization"].id
     
     # 1. Crear Campo Opcional y un Lead sin valor (Null)
-    f_opcional = LeadField(name="Opcional", field_type_code="STRING", campaign_id=camp_id, required=False, order=1, lead_field_section_id=1)
+    f_opcional = LeadField(name="Opcional", field_type_code="STRING", campaign_id=camp_id, required=False, order=1, lead_field_section_id=1, organization_id=org_id)
     db_session.add(f_opcional)
     db_session.commit()
     
@@ -488,10 +498,11 @@ def test_get_fields_filtering_active(client, db_session, initial_structure):
     por defecto.
     """
     camp_id = initial_structure["campaign"].id
+    org_id = initial_structure["organization"].id
     
     # 1. Crear Campo A (Activo) y B (Inactivo)
-    f_active = LeadField(name="Visible", field_type_code="STRING", campaign_id=camp_id, active=True, order=1, lead_field_section_id=1)
-    f_inactive = LeadField(name="Oculto", field_type_code="STRING", campaign_id=camp_id, active=False, order=2, lead_field_section_id=1) # Simulamos soft delete
+    f_active = LeadField(name="Visible", field_type_code="STRING", campaign_id=camp_id, active=True, order=1, lead_field_section_id=1, organization_id=org_id)
+    f_inactive = LeadField(name="Oculto", field_type_code="STRING", campaign_id=camp_id, active=False, order=2, lead_field_section_id=1, organization_id=org_id) # Simulamos soft delete
     db_session.add_all([f_active, f_inactive])
     db_session.commit()
 
@@ -536,15 +547,16 @@ def test_delete_field_cascades_validation_rules(client, db_session, initial_stru
     se borren (o desactiven) para no dejar huérfanos.
     """
     camp_id = initial_structure["campaign"].id
+    org_id = initial_structure["organization"].id
     
     # 1. Crear Campo y Regla
-    f_con_regla = LeadField(name="Con Regla", field_type_code="INT", campaign_id=camp_id, order=1, lead_field_section_id=1)
+    f_con_regla = LeadField(name="Con Regla", field_type_code="INT", campaign_id=camp_id, order=1, lead_field_section_id=1, organization_id=org_id)
     db_session.add(f_con_regla)
     db_session.commit()
     
     # Crear regla manualmente (o via servicio)
     from app.models.validation_rule import ValidationRule
-    rule = ValidationRule(field_id=f_con_regla.id, name="Regla Test", expression="value > 0", error_message="Error")
+    rule = ValidationRule(field_id=f_con_regla.id, name="Regla Test", expression="value > 0", error_message="Error", organization_id=org_id)
     db_session.add(rule)
     db_session.commit()
     
@@ -572,9 +584,10 @@ def test_reactivate_field_name_conflict(client, db_session, initial_structure):
     por otro campo activo mientras el primero estaba 'muerto' (soft deleted).
     """
     camp_id = initial_structure["campaign"].id
+    org_id = initial_structure["organization"].id
     
     # 1. Crear Campo A (El original)
-    field_a = LeadField(name="DNI_Duplicado", field_type_code="STRING", campaign_id=camp_id, order=1, lead_field_section_id=1)
+    field_a = LeadField(name="DNI_Duplicado", field_type_code="STRING", campaign_id=camp_id, order=1, lead_field_section_id=1, organization_id=org_id)
     db_session.add(field_a)
     db_session.commit()
 
@@ -611,9 +624,10 @@ def test_update_field_fail_required_with_existing_nulls(client, db_session, init
     que tienen ese valor vacío (NULL) en la base de datos.
     """
     camp_id = initial_structure["campaign"].id
+    org_id = initial_structure["organization"].id
     
     # 1. Crear campo Opcional
-    f_opcional = LeadField(name="Edad_Opcional", field_type_code="INT", required=False, campaign_id=camp_id, order=1, lead_field_section_id=1)
+    f_opcional = LeadField(name="Edad_Opcional", field_type_code="INT", required=False, campaign_id=camp_id, order=1, lead_field_section_id=1, organization_id=org_id)
     db_session.add(f_opcional)
     db_session.commit()
     

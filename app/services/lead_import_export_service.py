@@ -3,7 +3,6 @@ import io
 import json
 from fastapi import UploadFile, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, func
 from app.db.repository.lead_field_repository import LeadFieldRepository
 from app.db.repository.lead_repository import LeadRepository
 from app.db.repository.nomenclator_item_repository import NomenclatorItemRepository
@@ -11,7 +10,6 @@ from app.services.lead_service import LeadService
 from app.schemas.lead_schema import LeadCreate, LeadFieldValueCreate
 from app.models.lead import Lead
 from app.models.lead_field_value import LeadFieldValue
-from app.models.lead_field import LeadField
 
 class LeadImportExportService:
 

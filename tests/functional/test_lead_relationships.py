@@ -17,16 +17,17 @@ def relationship_setup(client, db_session, initial_structure):
     - 2 Leads en Destino
     - 1 Campo 'LEAD' en Origen apuntando a Destino
     """
+    org_id = initial_structure["organization"].id
     ws_id = initial_structure["workspace"].id
     camp_source = initial_structure["campaign"]
     
     # Campaña Destino
-    camp_target = Campaign(name="Campaña Destino (Pool)", workspace_id=ws_id)
+    camp_target = Campaign(name="Campaña Destino (Pool)", workspace_id=ws_id, organization_id=org_id)
     db_session.add(camp_target)
     db_session.commit()
 
     # Campo simple en target para crear leads
-    f_target_name = LeadField(name="Nombre Target", field_type_code="STRING", campaign_id=camp_target.id, order=1, lead_field_section_id=1)
+    f_target_name = LeadField(name="Nombre Target", field_type_code="STRING", campaign_id=camp_target.id, order=1, lead_field_section_id=1, organization_id=org_id)
     db_session.add(f_target_name)
     db_session.commit()
 
@@ -217,6 +218,7 @@ def test_update_field_change_related_campaign_constraints(client, relationship_s
 
 def test_update_field_change_related_campaign_success(client, db_session, initial_structure):
     camp_source = initial_structure["campaign"]
+    org_id = initial_structure["organization"].id
     
     # Crear campo virgen
     res_f = client.post("/lead_fields/", json={
@@ -227,7 +229,7 @@ def test_update_field_change_related_campaign_success(client, db_session, initia
     f_id = res_f.json()["id"]
 
     # Nueva campaña
-    camp_new = Campaign(name="Otra", workspace_id=initial_structure["workspace"].id)
+    camp_new = Campaign(name="Otra", workspace_id=initial_structure["workspace"].id, organization_id=org_id)
     db_session.add(camp_new)
     db_session.commit()
 
@@ -254,14 +256,16 @@ def test_create_lead_fail_cross_campaign_id(client, db_session, relationship_set
     El campo espera leads de 'Camp_Target', pero enviamos uno de 'Camp_Extra'.
     """
     setup = relationship_setup
+
     
     # 1. Crear una Tercera Campaña "Extra" y un Lead ahí
     ws_id = initial_structure["workspace"].id
-    camp_extra = Campaign(name="Campaña Extra", workspace_id=ws_id)
+    org_id = initial_structure["organization"].id
+    camp_extra = Campaign(name="Campaña Extra", workspace_id=ws_id, organization_id=org_id)
     db_session.add(camp_extra)
     db_session.commit()
     
-    f_dummy = LeadField(name="Dummy", field_type_code="STRING", campaign_id=camp_extra.id, order=1, lead_field_section_id=1)
+    f_dummy = LeadField(name="Dummy", field_type_code="STRING", campaign_id=camp_extra.id, order=1, lead_field_section_id=1, organization_id=org_id)
     db_session.add(f_dummy)
     db_session.commit()
 

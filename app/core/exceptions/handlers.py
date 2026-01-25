@@ -5,8 +5,7 @@ from app.core.exceptions.exceptions import ValidationError
 
 async def pydantic_exception_handler(request: Request, exc: RequestValidationError):
     """
-    Captura errores de validación de esquema (Pydantic) y los formatea 
-    al estándar { detail: { message: "...", field: "..." } }
+    Convierte errores de Pydantic a español y formato estándar.
     """
     errors = exc.errors()
     
@@ -14,22 +13,49 @@ async def pydantic_exception_handler(request: Request, exc: RequestValidationErr
         first_error = errors[0]
         
         # 1. Obtener nombre del campo
-        # loc suele ser ('body', 'nombre_campo') -> tomamos el último
+        # loc suele ser ('body', 'nombre') -> tomamos el último
         field_name = str(first_error["loc"][-1]) if first_error["loc"] else None
         
-        # 2. Personalizar mensaje según el tipo de error
+        # 2. Datos del error
         error_type = first_error["type"]
-        original_msg = first_error["msg"]
-        message = original_msg
+        ctx = first_error.get("ctx", {}) # Contexto (ej: límite de caracteres)
         
+        # 3. Traducción
+        message = first_error["msg"] # Fallback: mensaje original en inglés
+        
+        # --- DICCIONARIO DE TRADUCCIÓN ---
         if error_type == "missing":
             message = "Este campo es obligatorio."
-        elif error_type == "int_type":
-            message = "Se esperaba un número entero."
+            
         elif error_type == "string_type":
-            message = "Se esperaba un texto."
+            message = "Se espera un valor de texto."
+            
+        elif error_type == "int_type":
+            message = "Se espera un número entero."
+            
+        elif error_type == "bool_type":
+            message = "Se espera un valor booleano (true/false)."
+            
+        # Validaciones de longitud (String)
+        elif error_type == "string_too_short":
+            limit = ctx.get("min_length")
+            message = f"El texto debe tener al menos {limit} caracteres."
+            
+        elif error_type == "string_too_long":
+            limit = ctx.get("max_length")
+            message = f"El texto no puede superar los {limit} caracteres."
+
+        # Validaciones numéricas (gt, ge, lt, le)
+        elif error_type == "greater_than":
+            limit = ctx.get("gt")
+            message = f"El valor debe ser mayor a {limit}."
+            
+        elif error_type == "greater_than_equal":
+            limit = ctx.get("ge")
+            message = f"El valor debe ser mayor o igual a {limit}."
+
         elif error_type == "value_error":
-             message = original_msg.replace("Value error, ", "")
+             message = message.replace("Value error, ", "")
 
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,

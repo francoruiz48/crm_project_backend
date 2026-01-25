@@ -12,11 +12,13 @@ from app.db.unit_of_work import UnitOfWork
 from app.services.lead_validation_logic import LeadValidationLogic
 from app.services.excel_formula_evaluator_service import ExcelFormulaEvaluatorService
 from app.services.storage_service import StorageService
+from app.db.repository.campaign_repository import CampaignRepository
 
 
 class LeadService(BaseService):
     repository = LeadRepository
     field_repository = LeadFieldRepository
+    campaign_repository = CampaignRepository
 
     # ---------------------------------------------------------
     # Clase Auxiliar (ItemProxy)
@@ -460,8 +462,23 @@ class LeadService(BaseService):
                 # Usamos la lógica compartida
                 clean_values, _, _ = cls._prepare_creation_data(uow, obj_in, files_map, created_by, is_simulation=False)
                 
+                # Inferencia de organization
+                # Buscamos la campaña para saber de qué organización es este Lead
+                campaign = cls.campaign_repository.get_by_id(uow.session, obj_in.campaign_id)
+                if not campaign:
+                    raise ValidationError("La campaña no existe.", field="campaign_id")
+                
+                org_id = campaign.organization_id
+
+                # 3. Persistencia Real
+                # Pasamos el org_id inferido al repositorio
+                lead_data = {
+                    'campaign_id': obj_in.campaign_id,
+                    'organization_id': org_id 
+                }
+
                 # Persistencia Real
-                lead = cls.repository.create(uow.session, {'campaign_id': obj_in.campaign_id}, created_by=created_by)
+                lead = cls.repository.create(uow.session, lead_data, created_by=created_by)
                 cls.repository.upsert_values(uow.session, lead.id, clean_values)
                 lead_id = lead.id
             

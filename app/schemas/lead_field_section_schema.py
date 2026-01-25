@@ -1,17 +1,18 @@
+from typing import Optional
 from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class LeadFieldSectionBase(BaseModel):
-    name: str
+    name: str = Field(min_length=3, max_length=100)
 
 class LeadFieldSectionCreate(LeadFieldSectionBase, BaseCreate):
-    pass
+    organization_id: int = Field(gt=0)
 
 class LeadFieldSectionResponse(LeadFieldSectionBase, BaseResponse):
-    pass
+    organization_id: Optional[int]
 
 class LeadFieldSectionDetailedResponse(LeadFieldSectionBase, BaseDetailResponse):
-    pass
+    organization_id: Optional[int]
 
 

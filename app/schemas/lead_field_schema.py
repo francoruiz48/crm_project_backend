@@ -1,5 +1,5 @@
 from app.schemas.base_schema import BaseCreate, BaseDetailResponse, BaseResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from app.schemas.nomenclator_schema import NomenclatorResponse
 from app.schemas.validation_rule_schema import ValidationRuleResponse
@@ -7,33 +7,35 @@ from app.schemas.lead_field_section_schema import LeadFieldSectionDetailedRespon
 from app.schemas.campaign_schema import CampaignResponse
 
 class LeadFieldBase(BaseModel):
-    name: Optional[str] = None
-    field_type_code: Optional[str] = None
-    field_subtype_code: Optional[str] = None
+    name: Optional[str] = Field(default=None, min_length=3, max_length=150)
+    field_type_code: Optional[str] = Field(default=None, min_length=2, max_length=100)
+    field_subtype_code: Optional[str] = Field(default=None, min_length=2, max_length=100)
     required: bool = False
-    default_value: Optional[str] = None
+    default_value: Optional[str] = Field(default=None, min_length=2, max_length=500)
     is_primary: bool = False
-    input_mask: Optional[str] = None
+    input_mask: Optional[str] = Field(default=None, min_length=2, max_length=150)
     field_template_code: Optional[str] = None
     is_visible: bool = True
-    order: Optional[int] = None
-    campaign_id: int
-    calculation_expression: Optional[str] = None
+    order: Optional[int] = Field(default=None, gt=0)
+    campaign_id: int = Field(gt=0)
+    calculation_expression: Optional[str] = Field(default=None, min_length=2, max_length=1000)
 
 class LeadFieldCreate(LeadFieldBase, BaseCreate):
-    field_template_code: Optional[str] = None
-    nomenclator_id: Optional[int] = None
-    related_campaign_id: Optional[int] = None
-    lead_field_section_id: int = None
+    field_template_code: Optional[str] = Field(default=None, min_length=2, max_length=100)
+    nomenclator_id: Optional[int] = Field(default=None, gt=0)
+    related_campaign_id: Optional[int] = Field(default=None, gt=0)
+    lead_field_section_id: int = Field(default=None, gt=0)
 
 class LeadFieldResponse(LeadFieldBase, BaseResponse):
     nomenclator_id: Optional[int] = None
     related_campaign_id: Optional[int] = None
     lead_field_section: LeadFieldSectionResponse
+    organization_id : int
 
 class LeadFieldDetailedResponse(LeadFieldBase, BaseDetailResponse):
     validation_rules: List[ValidationRuleResponse] = []
     nomenclator: Optional[NomenclatorResponse]
     lead_field_section: LeadFieldSectionDetailedResponse
     related_campaign: Optional[CampaignResponse]
+    organization_id : int
 

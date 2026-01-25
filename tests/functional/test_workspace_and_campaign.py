@@ -1,8 +1,10 @@
-def test_workspace_create(client):
+def test_workspace_create(client, initial_structure):
+    org_id = initial_structure["organization"].id
 
     payload = {
         "name": "Workspace Test Create",
-        "description": "Descripción del workspace de prueba"
+        "description": "Descripción del workspace de prueba",
+        "organization_id": org_id
     }
 
     response = client.post("/workspaces/", json=payload)
@@ -18,11 +20,13 @@ def test_workspace_create(client):
     assert val_nombre == "Workspace Test Create"
 
 
-def test_workspace_delete(client):
+def test_workspace_delete(client, initial_structure):
+    org_id = initial_structure["organization"].id
 
     payload = {
         "name": "Workspace Test Create",
-        "description": "Descripción del workspace de prueba"
+        "description": "Descripción del workspace de prueba",
+        "organization_id": org_id
     }
 
     response = client.post("/workspaces/", json=payload)
@@ -32,11 +36,13 @@ def test_workspace_delete(client):
     assert response.status_code == 200, f"Error: {response.text}"
     assert response.json()["action"] == "deleted"
 
-def test_workspace_update(client):
+def test_workspace_update(client, initial_structure):
+    org_id = initial_structure["organization"].id
 
     payload = {
         "name": "Workspace Test Create",
-        "description": "Descripción del workspace de prueba"
+        "description": "Descripción del workspace de prueba",
+        "organization_id": org_id
     }
 
     response = client.post("/workspaces/", json=payload)
@@ -47,7 +53,8 @@ def test_workspace_update(client):
 
     payload_updated = {
         "name": "Workspace Test Updated",
-        "description": "Descripción del workspace de prueba"
+        "description": "Descripción del workspace de prueba",
+        "organization_id": org_id
     }
 
     response = client.put(f"/workspaces/{workspace_id}/", json=payload_updated)
@@ -55,11 +62,13 @@ def test_workspace_update(client):
     assert response.status_code == 200, f"Error: {response.text}"
     assert response.json()["name"] == "Workspace Test Updated"
 
-def test_workspace_delete_when_exists_campaign(client):
+def test_workspace_delete_when_exists_campaign(client, initial_structure):
+    org_id = initial_structure["organization"].id
 
     payload = {
         "name": "Workspace Test Create",
-        "description": "Descripción del workspace de prueba"
+        "description": "Descripción del workspace de prueba",
+        "organization_id": org_id
     }
 
     response = client.post("/workspaces/", json=payload)

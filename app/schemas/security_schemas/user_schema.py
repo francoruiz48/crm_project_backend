@@ -1,5 +1,5 @@
 from typing import List, Optional, Any
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from app.schemas.base_schema import BaseCreate, BaseDetailResponse
 from app.schemas.security_schemas.permission_schema import PermissionResponse
 from app.schemas.security_schemas.role_schema import RoleDetailResponse, RoleResponse
@@ -10,9 +10,11 @@ class UserBase(BaseModel):
 
 class UserResponse(UserBase, BaseDetailResponse):
     roles: Optional[list[RoleResponse]] = []
+    organization_id: int = Field(default=None, gt=0)
 
 class UserDetailResponse(UserResponse):
     permission_objects: List[PermissionResponse] = []
+    organization_id: int = Field(default=None, gt=0)
 
     @field_validator('permission_objects', mode='before')
     @classmethod
@@ -29,6 +31,6 @@ class UserDetailResponse(UserResponse):
         return v
 
 class UserCreate(UserBase, BaseCreate):
-    pass
+    organization_id: int = Field(gt=0)
 
 

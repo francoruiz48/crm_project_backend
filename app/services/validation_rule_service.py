@@ -1,16 +1,15 @@
-import re
-from fastapi import HTTPException, status
 from app.core.error_messages import SUCCESS_CREATE, SUCCESS_UPDATE
 from app.core.templates.rule_templates import STANDARD_RULES
 from app.db.repository.validation_rule_repository import ValidationRuleRepository
 from app.services.base_service import BaseService
 from datetime import date, datetime
 from app.core.exceptions.exceptions import ValidationError
-
 from app.services.excel_formula_evaluator_service import ExcelFormulaEvaluatorService
+from app.db.repository.lead_field_repository import LeadFieldRepository
 
 class ValidationRuleService(BaseService):
     repository = ValidationRuleRepository
+    lead_field_repository = LeadFieldRepository
     
     @classmethod
     def _get_dummy_value_for_type(cls, field_type_code: str):
@@ -75,6 +74,7 @@ class ValidationRuleService(BaseService):
         tmpl_code = get("template_code")
         tmpl_params = get("template_params") or {}
 
+
         # 1. LÓGICA DE PLANTILLA
         if tmpl_code:
             template = STANDARD_RULES.get(tmpl_code)
@@ -103,16 +103,40 @@ class ValidationRuleService(BaseService):
         # También lanza ValidationError sobre 'expression' si falla
         cls._validate_expression_syntax(expr, field_type_code=field_type_code)
 
+
         # 3. CREAR
         return cls.repository.create(session, obj_data, created_by)
 
     @classmethod
     def create(cls, obj_data, created_by=None):
+        """
+        Método público para crear reglas sueltas (Endpoint).
+        """
         def do_create(uow):
-            return cls.create_within_session(uow.session, obj_data, created_by)
+            if hasattr(obj_data, "model_dump"):
+                data = obj_data.model_dump()
+            else:
+                data = obj_data.copy()
 
-        # Nota: El decorador _execute atrapa excepciones generales, pero deja pasar HTTPException
-        # o excepciones registradas en main.py (como ValidationError)
+            # --- INFERENCIA DE CONTEXTO ---
+            field_id = data.get("field_id")
+            if not field_id:
+                raise ValidationError("El ID del campo es obligatorio.", field="field_id")
+
+            # Buscamos el campo padre
+            lead_field = cls.lead_field_repository.get_by_id(uow.session, field_id)
+            if not lead_field:
+                raise ValidationError(f"El campo {field_id} no existe.", field="field_id")
+            
+            # 2. Inyectamos la organización en el diccionario local 'data'
+            data['organization_id'] = lead_field.organization_id
+            
+            # Obtenemos el tipo de dato para validar mejor la sintaxis
+            ft_code = lead_field.field_type_code
+            
+            # 3. Llamamos a la lógica interna pasando 'data' (que ya tiene el ID)
+            return cls.create_within_session(uow.session, data, created_by, field_type_code=ft_code)
+
         return cls._execute(
             action="Creando Regla",
             func=do_create,

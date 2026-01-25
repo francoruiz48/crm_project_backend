@@ -152,7 +152,7 @@ STANDARD_RULES = {
         code="NO_SPACES",
         name="Sin Espacios",
         description="El texto no puede contener espacios en blanco.",
-        expression_fmt='REGEXMATCH(value, "\s") = FALSE',
+        expression_fmt='NOT(REGEXMATCH(value, "\\s"))',
         params=[],
         error_message="El valor no puede contener espacios."
     ),

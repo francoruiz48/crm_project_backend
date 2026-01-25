@@ -7,3 +7,6 @@ from sqlalchemy.orm import relationship
 class LeadFieldSection(BaseModelDB):
     __tablename__ = "lead_field_section"
     name = Column(String, nullable=False)
+
+    organization_id = Column(Integer, ForeignKey("organization.id"), nullable=True)
+    organization = relationship("Organization", foreign_keys=[organization_id])

@@ -15,4 +15,7 @@ class NomenclatorItem(BaseModelDB):
     parent_item_id = Column(Integer, ForeignKey("nomenclator_item.id"), nullable=True)
     parent_item = relationship("NomenclatorItem", remote_side=lambda: [NomenclatorItem.id], backref="sub_items")
 
+    organization_id = Column(Integer, ForeignKey("organization.id"), nullable=True)
+    organization = relationship("Organization", foreign_keys=[organization_id])
+
     
