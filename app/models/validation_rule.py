@@ -15,3 +15,6 @@ class ValidationRule(BaseModelDB):
     #relationships
     field_id = Column(Integer, ForeignKey("lead_field.id"), nullable=False)
     field = relationship("LeadField", back_populates="validation_rules", foreign_keys=[field_id])
+
+    organization_id = Column(Integer, ForeignKey("organization.id"), nullable=False)
+    organization = relationship("Organization", foreign_keys=[organization_id])

@@ -16,11 +16,13 @@ class LeadResponse(LeadBase, BaseResponse):
     field_values: List[LeadFieldValueResponse] = Field(
         default_factory=list
     )
+    organization_id : int
 
 class LeadDetailedResponse(LeadBase, BaseDetailResponse):
     field_values: List[LeadFieldValueDetailedResponse] = Field(
         default_factory=list
     )
     comments: List[LeadCommentDetailedResponse] = None
+    organization_id : int
 
 

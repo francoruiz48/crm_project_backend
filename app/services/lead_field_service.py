@@ -12,11 +12,13 @@ from app.models.lead_field_type import LeadFieldType
 from app.core.constans import DEFAULT_PAGE_SIZE, NOMENCLATOR_FIELD_TYPES
 from app.models.lead_field_value import LeadFieldValue
 from app.core.error_messages import SUCCESS_UPDATE
-from app.models.lead_field import LeadField 
+from app.models.lead_field import LeadField
+from app.db.repository.campaign_repository import CampaignRepository 
 
 class LeadFieldService(BaseService):
     repository = LeadFieldRepository
     nomenclatorService = NomenclatorService
+    campaign_repository = CampaignRepository
     
     # =========================================================================
     # HELPERS DE VALIDACIÓN
@@ -83,6 +85,18 @@ class LeadFieldService(BaseService):
                 subtype_code = data.get("field_subtype_code")
                 nomenclator_id = data.get("nomenclator_id")
                 calc_expr = data.get("calculation_expression")
+
+                # --- INFERENCIA DE CONTEXTO ---
+                campaign_id = data.get("campaign_id")
+                if not campaign_id:
+                    raise ValidationError("El ID de campaña es obligatorio.", field="campaign_id")
+
+                campaign = cls.campaign_repository.get_by_id(uow.session, campaign_id)
+                if not campaign:
+                    raise ValidationError(f"La campaña {campaign_id} no existe.", field="campaign_id")
+                
+                # Inyectamos la organización de la campaña al campo nuevo
+                data['organization_id'] = campaign.organization_id
 
                 if nomenclator_id:
                     if field_type_code:
@@ -237,12 +251,13 @@ class LeadFieldService(BaseService):
                 for rule_cfg in rules_to_create:
                     rule_payload = rule_cfg.copy()
                     rule_payload["field_id"] = new_field.id
+                    rule_payload["organization_id"] = data['organization_id']
                     
                     ValidationRuleService.create_within_session(
                         session=uow.session, 
-                        obj_data=rule_payload, 
+                        obj_data=rule_payload,
                         created_by=created_by,
-                        field_type_code=new_field.field_type_code 
+                        field_type_code=new_field.field_type_code
                     )
 
                 return new_field

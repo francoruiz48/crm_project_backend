@@ -9,7 +9,6 @@ class ValidationRuleBase(BaseModel):
     expression: Optional[str] = Field(default=None, min_length=1)
     error_message: Optional[str] = Field(default=None, max_length=255)
     field_id: Optional[int] = Field(default=None, gt=0)
-
     template_code: Optional[str] = None
     template_params: Optional[Dict[str, Any]] = None
 

@@ -15,3 +15,6 @@ class Campaign(BaseModelDB):
 
     workspace_id = Column(Integer, ForeignKey("workspace.id"), nullable=False)
     workspace = relationship("Workspace", back_populates="campaigns")
+
+    organization_id = Column(Integer, ForeignKey("organization.id"), nullable=False)
+    organization = relationship("Organization", foreign_keys=[organization_id])

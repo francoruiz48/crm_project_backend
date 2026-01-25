@@ -10,6 +10,7 @@ from app.models.security_models import Permission, Role, User
 from app.models.workspace import Workspace
 from app.models.lead_field_subtype import LeadFieldSubtype
 from app.models.lead_field_section import LeadFieldSection
+from app.models.organization import Organization
 
 # -----------------------------------------------------------------------------
 # HELPER GENÉRICO
@@ -117,7 +118,7 @@ def run_seeds(db=None):
 
 
 def seed_lead_field_sections(db):
-    print("🔹 Procesando Secciones de Campos...")
+    print("Procesando Secciones de Campos...")
     datos = [
         {"name": "Datos Personales"},       
         {"name": "Información de Contacto"},
@@ -130,7 +131,7 @@ def seed_lead_field_sections(db):
 # 1. SEED LEAD FIELD TYPES
 # -----------------------------------------------------------------------------
 def seed_lead_field_types(db):
-    print("🔹 Procesando LeadFieldTypes...")
+    print("Procesando LeadFieldTypes...")
     datos = [
         {"code": "STRING", "description": "Texto"},
         {"code": "INT", "description": "Número entero"},
@@ -147,7 +148,7 @@ def seed_lead_field_types(db):
     seed_generic(db, model=LeadFieldType, items=datos, unique_by=["code"])
 
 def seed_lead_field_subtypes(db):
-    print("🔹 Procesando LeadFieldSubTypes...")
+    print("Procesando LeadFieldSubTypes...")
     datos = [
         {"code": "SELECTOR_MULTIPLE", "description": "Multiple", "lead_field_type_code": "SELECTOR"},
         {"code": "SELECTOR_SIMPLE", "description": "Simple", "lead_field_type_code": "SELECTOR"},
@@ -162,7 +163,7 @@ def seed_lead_field_subtypes(db):
 # 2. SEED RBAC (Corregido con validaciones)
 # -----------------------------------------------------------------------------
 def seed_rbac(db):
-    print("🔹 Procesando RBAC Automático...")
+    print("Procesando RBAC Automático...")
 
     ENTITIES = [
         "lead",
@@ -179,6 +180,7 @@ def seed_rbac(db):
         "lead_field_section",
         "lead_field_subtype",
         "lead_comment",
+        "organization"
     ]
 
     # 2. Definimos las acciones estándar
@@ -220,6 +222,8 @@ def seed_rbac(db):
 
     db.flush() # Guardamos los permisos para tener IDs
 
+    
+
     # --- Roles ---
     def _get_or_create_role(name, code):
         role = db.query(Role).filter_by(code=code).first()
@@ -230,53 +234,28 @@ def seed_rbac(db):
         return role
 
     r_admin = _get_or_create_role("Admin", "admin")
-    r_agent = _get_or_create_role("Vendedor", "agent")
 
     # --- Asignación de Permisos ---
     
-    # 1. Admin: Tiene TODO
+    # Admin: Tiene TODO
     all_db_perms = db.query(Permission).all()
     r_admin.permissions = all_db_perms
-
-    # 2. Vendedor: Lógica específica (Solo Leads operativamente)
-    # Filtramos permisos que empiecen con 'lead:' pero NO 'delete' ni 'view_all'
-    agent_perms = [
-        p for p in all_db_perms 
-        if p.codename.startswith("lead:") 
-        and "delete" not in p.codename 
-        and "view_all" not in p.codename
-        and "field" not in p.codename # Que no toque lead_fields
-    ]
-    r_agent.permissions = agent_perms
 
     # --- Usuarios ---
     def _get_or_create_user(email, roles_list):
         user = db.query(User).filter_by(email=email).first()
         if not user:
-            user = User(email=email)
+            user = User(email=email, is_superuser=True)
             # Asignamos la lista de roles
             user.roles = roles_list
             db.add(user)
             db.flush()
         return user
 
-    # Creamos un rol extra para probar la asignación múltiple
-    p_delete = next((p for p in all_db_perms if p.codename == "lead:delete"), None)
-    r_super = _get_or_create_role("Supervisor", "supervisor")
-
-    if p_delete:
-        r_super.permissions = [p_delete]
-
     # Admin tiene Rol Admin
     _get_or_create_user("admin@crm.com", [r_admin])
     
-    # Vendedor tiene Rol Vendedor
-    _get_or_create_user("vendedor@crm.com", [r_agent])
-
-    # Ejemplo Multi-Rol: Un "Jefe de Ventas" que es Vendedor + Supervisor
-    _get_or_create_user("jefe@crm.com", [r_agent, r_super])
-    
-    db.commit() # Guardamos todo al final
+    db.commit() 
 
 
 def get_or_create_nomenclator(db, name):
@@ -361,7 +340,7 @@ def seed_geography_separated(db):
 
 
 def seed_nomenclator_sex(db):
-    print("🔹 Procesando Nomenclador 'Sexo'...")
+    print("Procesando Nomenclador 'Sexo'...")
     datos = [
         {"code": "MALE", "value": "Masculino"},
         {"code": "FEMALE", "value": "Femenino"},

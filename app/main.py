@@ -1,38 +1,49 @@
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from app.core.middlewares import setup_cors
 from app.core.wait_for_db import wait_for_db
 from app.db.base_sql import Base
 from app.db.session import engine
 from app.db.init_data import run_seeds
-from fastapi import FastAPI
 from app.routers import router as api_router
-from contextlib import asynccontextmanager
-from fastapi.exceptions import RequestValidationError
 from app.core.exceptions.exceptions import ValidationError
 from app.core.exceptions.handlers import pydantic_exception_handler, custom_validation_exception_handler
 
-wait_for_db()
-
-Base.metadata.create_all(bind=engine)
-
+# --- CICLO DE VIDA (LIFESPAN) ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Esto se ejecuta al iniciar la app
-    print("🚀 Ejecutando tareas de inicio...")
+    # 1. Esperar DB (Bloqueante pero seguro)
+    print("⏳ Esperando base de datos...")
+    wait_for_db()
+
+    # 2. Crear Tablas
+    print("🔄 Creando tablas en la base de datos...")
+    Base.metadata.create_all(bind=engine)
+    print("✅ Tablas listas.")
+
+    # 3. Correr Seeders
+    print("🌱 Ejecutando seeds...")
     try:
         run_seeds()
+        print("✅ Seeds completados.")
     except Exception as e:
         print(f"⚠️ Error en seeds al inicio: {e}")
     
+    # 4. Iniciar App
+    print("🚀 Aplicación lista para recibir peticiones.")
     yield
     
-    # Esto se ejecuta al apagar la app
+    # 5. Apagar
     print("🛑 Apagando aplicación...")
 
+# --- DEFINICIÓN APP ---
 app = FastAPI(
     title="CRM Backend",
-    lifespan=lifespan
+    lifespan=lifespan # <--- Todo lo anterior ocurre aquí, UNA sola vez.
 )
 
+# --- HANDLERS Y MIDDLEWARES ---
 app.add_exception_handler(RequestValidationError, pydantic_exception_handler)
 app.add_exception_handler(ValidationError, custom_validation_exception_handler)
 

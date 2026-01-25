@@ -85,8 +85,15 @@ def get_lead_field_section(name):
         pass
     return 1
 
-def create_workspace(name):
-    resp = session.post(f"{BASE_URL}/workspaces/", json={"name": name, "description": "Auto Generated"})
+def create_organization(name, description=None):
+    resp = session.post(f"{BASE_URL}/organizations/", json={"name": name, "description": description})
+    if resp.status_code in [200, 201]:
+        return resp.json()['id']
+    print(f"❌ Error creando Organization: {resp.text}")
+    return None
+
+def create_workspace(name, organization_id):
+    resp = session.post(f"{BASE_URL}/workspaces/", json={"name": name, "description": "Auto Generated", "organization_id": organization_id})
     if resp.status_code in [200, 201]:
         return resp.json()['id']
     print(f"❌ Error creando Workspace: {resp.text}")
@@ -264,7 +271,9 @@ def run_seed():
 
     if not nom_data['paises']: print("⚠️ Advertencia: Nomenclador 1 (Países) vacío.")
 
-    ws_id = create_workspace(f"Demo Suite {datetime.now().strftime('%H:%M:%S')}")
+    org_id = create_organization("Prueba")
+
+    ws_id = create_workspace(f"Demo Suite {datetime.now().strftime('%H:%M:%S')}", org_id)
     if not ws_id: return
 
     log(f"Workspace creado: ID {ws_id}")

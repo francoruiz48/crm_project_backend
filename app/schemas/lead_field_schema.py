@@ -30,10 +30,12 @@ class LeadFieldResponse(LeadFieldBase, BaseResponse):
     nomenclator_id: Optional[int] = None
     related_campaign_id: Optional[int] = None
     lead_field_section: LeadFieldSectionResponse
+    organization_id : int
 
 class LeadFieldDetailedResponse(LeadFieldBase, BaseDetailResponse):
     validation_rules: List[ValidationRuleResponse] = []
     nomenclator: Optional[NomenclatorResponse]
     lead_field_section: LeadFieldSectionDetailedResponse
     related_campaign: Optional[CampaignResponse]
+    organization_id : int
 

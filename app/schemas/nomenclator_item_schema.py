@@ -9,14 +9,14 @@ class NomenclatorItemBase(BaseModel):
     value: str = Field(..., min_length=2, max_length=100)
     nomenclator_id: int = Field(gt=0)
     parent_item_id: Optional[int] = Field(default=None, gt=0)
-    
 
 class NomenclatorItemCreate(NomenclatorItemBase, BaseCreate):
-    pass
+    organization_id: int = Field(gt=0)
 
 
 class NomenclatorItemResponse(NomenclatorItemBase, BaseResponse):
-    pass
+    organization_id: int = Field(default=None, gt=0)
 
 class NomenclatorItemDetailResponse(NomenclatorItemBase, BaseDetailResponse):
     parent_item: Optional["NomenclatorItemResponse"] = None
+    organization_id: int = Field(default=None, gt=0)

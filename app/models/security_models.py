@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Table
+from sqlalchemy import Boolean, Column, Integer, String, ForeignKey, Table
 from sqlalchemy.orm import relationship
 from app.models.base_model import BaseModelDB
 
@@ -28,12 +28,20 @@ class Role(BaseModelDB):
     
     permissions = relationship("Permission", secondary=role_permissions, backref="roles")
 
+    organization_id = Column(Integer, ForeignKey("organization.id"), nullable=True)
+    organization = relationship("Organization", foreign_keys=[organization_id])
+
 class User(BaseModelDB):
     __tablename__ = "users"
     
     email = Column(String, unique=True, index=True, nullable=False)
     
     roles = relationship("Role", secondary=user_roles, backref="users")
+
+    organization_id = Column(Integer, ForeignKey("organization.id"), nullable=True)
+    organization = relationship("Organization", foreign_keys=[organization_id])
+
+    is_superuser = Column(Boolean, default=False)
 
     @property
     def permissions(self):

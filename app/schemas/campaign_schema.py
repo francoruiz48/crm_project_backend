@@ -9,15 +9,14 @@ class CampaignBase(BaseModel):
     description: Optional[str] = Field(..., max_length=500)
     workspace_id: int = Field(default=None, gt=0)
 
-
 class CampaignCreate(CampaignBase, BaseCreate):
     pass
 
 
 class CampaignResponse(CampaignBase, BaseResponse):
-    pass
+    organization_id : int
 
 class CampaignDetailedResponse(CampaignBase, BaseDetailResponse):
-    pass
+    organization_id : int
 
 
