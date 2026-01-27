@@ -7,14 +7,14 @@ from app.schemas.security_schemas.role_schema import RoleDetailResponse, RoleRes
 class UserBase(BaseModel):
     email: str
     active: bool = True
+    organization_id: Optional[int] = Field(default=None, gt=0)
 
 class UserResponse(UserBase, BaseDetailResponse):
     roles: Optional[list[RoleResponse]] = []
-    organization_id: int = Field(default=None, gt=0)
+    
 
 class UserDetailResponse(UserResponse):
     permission_objects: List[PermissionResponse] = []
-    organization_id: int = Field(default=None, gt=0)
 
     @field_validator('permission_objects', mode='before')
     @classmethod
@@ -31,6 +31,6 @@ class UserDetailResponse(UserResponse):
         return v
 
 class UserCreate(UserBase, BaseCreate):
-    organization_id: int = Field(gt=0)
+    pass
 
 

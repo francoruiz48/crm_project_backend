@@ -6,7 +6,7 @@ from typing import Optional
 
 class CampaignBase(BaseModel):
     name: str = Field(..., min_length=3, max_length=100)
-    description: Optional[str] = Field(..., max_length=500)
+    description: Optional[str] = Field(default=None, max_length=500)
     workspace_id: int = Field(default=None, gt=0)
 
 class CampaignCreate(CampaignBase, BaseCreate):
