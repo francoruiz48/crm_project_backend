@@ -451,15 +451,14 @@ def test_search_lead_by_nomenclator(client, db_session, initial_structure):
 
 def test_create_field_from_template(client, db_session, initial_structure):
     """
-    Crea un campo usando una plantilla (EMAIL) y verifica que:
+    Crea un campo usando una plantilla (POSTAL_CODE) y verifica que:
     1. Se cree el campo correctamente con las propiedades de la plantilla.
     """
     camp_id = initial_structure["campaign"].id
     
     payload_field = {
-        "field_template_code": "EMAIL",
+        "field_template_code": "POSTAL_CODE",
         "campaign_id": camp_id,
-        "order": 10,
         "required": True,
         "is_primary": False,
         "lead_field_section_id": 1
@@ -475,15 +474,15 @@ def test_create_field_from_template(client, db_session, initial_structure):
 
 def test_create_field_from_template_and_validate_success(client, db_session, initial_structure):
     """
-    Crea un campo usando una plantilla (EMAIL) y verifica que:
+    Crea un campo usando una plantilla (DNI_ARG) y verifica que:
     1. Se cree el campo correctamente.
     2. Se genere automáticamente una regla de validación.
-    3. El sistema rechace valores que no cumplan esa regla (Email inválido).
+    3. El sistema rechace valores que no cumplan esa regla (DNI inválido).
     """
     camp_id = initial_structure["campaign"].id
     
     payload_field = {
-        "field_template_code": "EMAIL",
+        "field_template_code": "DNI_ARG",
         "campaign_id": camp_id,
         "order": 10,
         "required": True,
@@ -495,24 +494,24 @@ def test_create_field_from_template_and_validate_success(client, db_session, ini
     field_id = res_field.json()["id"]
     
 
-    # 4. Validar: Intentar crear Lead con Email VÁLIDO
+    # 4. Validar: Intentar crear Lead con DNI VÁLIDO
     res_ok = client.post("/leads/", json={
         "campaign_id": camp_id,
-        "values": [{"field_id": field_id, "value": "test@crm.com"}]
+        "values": [{"field_id": field_id, "value": "46378765"}]
     })
     assert res_ok.status_code == 200
 
 def test_create_field_from_template_and_validate_failure(client, db_session, initial_structure):
     """
-    Crea un campo usando una plantilla (EMAIL) y verifica que:
+    Crea un campo usando una plantilla (DNI_ARG) y verifica que:
     1. Se cree el campo correctamente.
     2. Se genere automáticamente una regla de validación.
-    3. El sistema rechace valores que no cumplan esa regla (Email inválido).
+    3. El sistema rechace valores que no cumplan esa regla (Dni inválido).
     """
     camp_id = initial_structure["campaign"].id
     
     payload_field = {
-        "field_template_code": "EMAIL",
+        "field_template_code": "DNI_ARG",
         "campaign_id": camp_id,
         "order": 10,
         "required": True,
@@ -523,14 +522,14 @@ def test_create_field_from_template_and_validate_failure(client, db_session, ini
     assert res_field.status_code == 200
     field_id = res_field.json()["id"]
 
-    # 3. Validar: Intentar crear Lead con Email INVÁLIDO
+    # 3. Validar: Intentar crear Lead con DNI INVÁLIDO
     res_fail = client.post("/leads/", json={
         "campaign_id": camp_id,
-        "values": [{"field_id": field_id, "value": "no-es-un-mail"}]
+        "values": [{"field_id": field_id, "value": "32323DAD"}]
     })
     assert res_fail.status_code == 400
     
-    assert "formato" in res_fail.text.lower() or "válido" in res_fail.text.lower()
+    assert "números" in res_fail.text.lower() or "exceder" in res_fail.text.lower()
 
 
 def test_get_leads_filtering(client, db_session, initial_structure):

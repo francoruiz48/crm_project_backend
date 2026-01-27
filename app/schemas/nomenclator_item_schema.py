@@ -15,8 +15,8 @@ class NomenclatorItemCreate(NomenclatorItemBase, BaseCreate):
 
 
 class NomenclatorItemResponse(NomenclatorItemBase, BaseResponse):
-    organization_id: int = Field(default=None, gt=0)
+    organization_id: Optional[int] = Field(default=None, gt=0)
 
 class NomenclatorItemDetailResponse(NomenclatorItemBase, BaseDetailResponse):
     parent_item: Optional["NomenclatorItemResponse"] = None
-    organization_id: int = Field(default=None, gt=0)
+    organization_id: Optional[int] = Field(default=None, gt=0)

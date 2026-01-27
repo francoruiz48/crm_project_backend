@@ -13,7 +13,8 @@ from app.core.constans import DEFAULT_PAGE_SIZE, NOMENCLATOR_FIELD_TYPES
 from app.models.lead_field_value import LeadFieldValue
 from app.core.error_messages import SUCCESS_UPDATE
 from app.models.lead_field import LeadField
-from app.db.repository.campaign_repository import CampaignRepository 
+from app.db.repository.campaign_repository import CampaignRepository
+from app.core.templates.field_rules_map import DEFAULT_SUBTYPE_RULES, DEFAULT_TYPE_RULES 
 
 class LeadFieldService(BaseService):
     repository = LeadFieldRepository
@@ -222,7 +223,7 @@ class LeadFieldService(BaseService):
 
             try:
                 # -------------------------------------------------------
-                # 4. CREAR EL LEAD FIELD
+                # CREAR EL LEAD FIELD
                 # -------------------------------------------------------
                 new_field = cls.repository.create(uow.session, data, created_by)
                 
@@ -230,7 +231,7 @@ class LeadFieldService(BaseService):
                 uow.session.flush()
 
                 # -------------------------------------------------------
-                # 5. RELLENO (BACKFILL)
+                # RELLENO (BACKFILL)
                 # -------------------------------------------------------
                 if has_existing_leads:
                     # Determinamos si es un campo de nomenclador para saber dónde guardar el default
@@ -246,7 +247,7 @@ class LeadFieldService(BaseService):
                     )
 
                 # -------------------------------------------------------
-                # 6. CREAR LAS VALIDACIONES ASOCIADAS (Template)
+                # CREAR LAS VALIDACIONES ASOCIADAS (Template)
                 # -------------------------------------------------------
                 for rule_cfg in rules_to_create:
                     rule_payload = rule_cfg.copy()
@@ -259,6 +260,37 @@ class LeadFieldService(BaseService):
                         created_by=created_by,
                         field_type_code=new_field.field_type_code
                     )
+
+                # CREAR VALIDACIONES IMPLÍCITAS POR TIPO
+                # Solo si NO se usó un template que ya traiga sus propias reglas (para evitar duplicados)
+                if not data.get("field_template_code"):
+                    type_code = data.get("field_type_code")
+                    subtype_code = data.get("field_subtype_code")
+                    
+                    # 1. Obtener reglas del TIPO base
+                    implicit_rules = DEFAULT_TYPE_RULES.get(type_code, []).copy()
+                    
+                    # 2. Obtener reglas del SUBTIPO y sumarlas
+                    if subtype_code:
+                        subtype_rules = DEFAULT_SUBTYPE_RULES.get(subtype_code, [])
+                        implicit_rules.extend(subtype_rules)
+                    
+                    # 3. Crear las reglas acumuladas
+                    for rule_cfg in implicit_rules:
+                        rule_payload = rule_cfg.copy()
+                        rule_payload["field_id"] = new_field.id
+                        rule_payload["organization_id"] = data['organization_id']
+                        
+                        # Generamos un nombre descriptivo
+                        origin = subtype_code if rule_cfg in DEFAULT_SUBTYPE_RULES.get(subtype_code, []) else type_code
+                        rule_payload["name"] = f"Auto-Rule ({origin})" 
+                        
+                        ValidationRuleService.create_within_session(
+                            session=uow.session,
+                            obj_data=rule_payload,
+                            created_by=created_by,
+                            field_type_code=new_field.field_type_code
+                        )
 
                 return new_field
             except Exception as e:
