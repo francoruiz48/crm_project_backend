@@ -69,6 +69,14 @@ STANDARD_RULES = {
         params=[],
         error_message="El número debe ser par."
     ),
+    "IS_NUMBER": RuleTemplate(
+        code="IS_NUMBER",
+        name="Es Numérico",
+        description="Valida que el valor sea un número entero o decimal.",
+        expression_fmt="ISNUMBER(value)", 
+        params=[],
+        error_message="El valor debe ser un número válido."
+    ),
 
     # =========================================================================
     # 2. TEXTO (Longitud, Contenido y Patrones)
@@ -172,7 +180,7 @@ STANDARD_RULES = {
         code="ONLY_DIGITS",
         name="Solo Dígitos",
         description="El texto debe contener solo números.",
-        expression_fmt='REGEXMATCH(value, "^\d+$")',
+        expression_fmt='REGEXMATCH(value, "^[0-9]+$")',
         params=[],
         error_message="El campo solo debe contener números."
     ),

@@ -10,49 +10,6 @@ class FieldTemplate:
 
 # Definición de los campos estándar
 STANDARD_FIELD_TEMPLATES = {
-    # =========================================================================
-    # 1. ACCESO Y SEGURIDAD
-    # =========================================================================
-    "EMAIL": FieldTemplate(
-        code="EMAIL",
-        name="Correo Electrónico",
-        field_type_code="STRING",
-        rules=[
-            {
-                "template_code": "EMAIL_FORMAT", 
-                "template_params": {},         
-            },
-            {
-                "template_code": "MAX_LENGTH",
-                "template_params": {"limit": 100}
-            }
-        ]
-    ),
-    "PASSWORD_STRONG": FieldTemplate(
-        code="PASSWORD_STRONG",
-        name="Contraseña Segura",
-        field_type_code="STRING",
-        rules=[
-            {
-                "template_code": "MIN_LENGTH",
-                "template_params": {"limit": 8},
-                "error_message": "La contraseña debe tener al menos 8 caracteres."
-            },
-            {
-                # Requiere al menos un número y una mayúscula
-                "template_code": "REGEX_MATCH",
-                # Regex para Excel: (?=.*[A-Z])(?=.*\d)
-                "template_params": {"pattern": "^(?=.*[A-Z])(?=.*\\d).+$"},
-                "error_message": "La contraseña debe contener al menos una mayúscula y un número."
-            },
-            {
-                # Validar Carácter Especial
-                "template_code": "REGEX_MATCH",
-                "template_params": {"pattern": "[^a-zA-Z0-9]"}, 
-                "error_message": "Debe contener al menos un carácter especial (ej: ! @ # $ %)."
-            }
-        ]
-    ),
 
     # =========================================================================
     # 2. IDENTIDAD Y PERSONALES (Argentina / Latam)
@@ -93,26 +50,6 @@ STANDARD_FIELD_TEMPLATES = {
         rules=[
             { "template_code": "MIN_VALUE", "template_params": {"limit": 0} },
             { "template_code": "MAX_VALUE", "template_params": {"limit": 120} }
-        ]
-    ),
-    "FULL_NAME": FieldTemplate(
-        code="FULL_NAME",
-        name="Nombre Completo",
-        field_type_code="STRING",
-        rules=[
-            {
-                "template_code": "MIN_LENGTH",
-                "template_params": {"limit": 3}
-            },
-            {
-                "template_code": "MAX_LENGTH",
-                "template_params": {"limit": 80}
-            },
-            {
-                "template_code": "REGEX_MATCH",
-                "template_params": {"pattern": "^[a-zA-ZáéíóúÁÉÍÓÚñÑ\\s]+$"},
-                "error_message": "El nombre solo puede contener letras y espacios."
-            }
         ]
     ),
     # 3. DOCUMENTACIÓN (Nacional e Internacional)
@@ -179,19 +116,6 @@ STANDARD_FIELD_TEMPLATES = {
     # =========================================================================
     # 3. DATOS DE CONTACTO
     # =========================================================================
-    "PHONE_ARG": FieldTemplate(
-        code="PHONE_ARG",
-        name="Teléfono (Móvil Arg)",
-        field_type_code="STRING",
-        rules=[
-            {
-                "template_code": "REGEX_MATCH",
-                "template_params": {"pattern": "^(?:(?:00)?549?)?0?(?:11|[2368]\\d)(?:(?=\\d{0,2}15)\\d{2})??\\d{8}$"},
-                "name": "Formato Celular",
-                "error_message": "Formato inválido. Ej: 1112345678"
-            }
-        ]
-    ),
     "POSTAL_CODE": FieldTemplate(
         code="POSTAL_CODE",
         name="Código Postal",
@@ -205,21 +129,6 @@ STANDARD_FIELD_TEMPLATES = {
             {
                 "template_code": "MAX_LENGTH",
                 "template_params": {"limit": 8}
-            }
-        ]
-    ),
-    "ADDRESS": FieldTemplate(
-        code="ADDRESS",
-        name="Dirección / Domicilio",
-        field_type_code="STRING",
-        rules=[
-            {
-                "template_code": "MIN_LENGTH",
-                "template_params": {"limit": 5}
-            },
-            {
-                "template_code": "MAX_LENGTH",
-                "template_params": {"limit": 100}
             }
         ]
     ),
@@ -294,22 +203,6 @@ STANDARD_FIELD_TEMPLATES = {
             }
         ]
     ),
-    "SALARY_EXPECTATION": FieldTemplate(
-        code="SALARY_EXPECTATION",
-        name="Remuneración Pretendida",
-        field_type_code="NUMBER",
-        rules=[
-            {
-                "template_code": "MIN_VALUE",
-                "template_params": {"limit": 0},
-                "error_message": "El valor no puede ser negativo."
-            },
-            {
-                "template_code": "NOT_ZERO",
-                "template_params": {}
-            }
-        ]
-    ),
     "CREDIT_CARD_SIMPLE": FieldTemplate(
         code="CREDIT_CARD_SIMPLE",
         name="Tarjeta de Crédito (Simple)",
@@ -332,18 +225,6 @@ STANDARD_FIELD_TEMPLATES = {
     # =========================================================================
     # 6. WEB Y REDES SOCIALES
     # =========================================================================
-    "WEBSITE_URL": FieldTemplate(
-        code="WEBSITE_URL",
-        name="Sitio Web",
-        field_type_code="STRING",
-        rules=[
-            {
-                "template_code": "IS_URL",
-                "template_params": {},
-                "error_message": "Ingrese una URL válida (http://...)."
-            }
-        ]
-    ),
     "INSTAGRAM_USER": FieldTemplate(
         code="INSTAGRAM_USER",
         name="Usuario Instagram",

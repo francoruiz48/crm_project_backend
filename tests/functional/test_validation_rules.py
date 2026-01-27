@@ -241,7 +241,7 @@ def test_create_manual_validation_rule_failure(client, db_session, initial_struc
     assert res_impar.status_code == 400
     assert "par" in res_impar.text 
 
-# --- 1. PRUEBA DE MATEMÁTICAS (Template: AGE -> MIN_VALUE / MAX_VALUE) ---
+# --- PRUEBA DE MATEMÁTICAS (Template: AGE -> MIN_VALUE / MAX_VALUE) ---
 def test_validation_rule_math_min_max(client, initial_structure):
     camp_id = initial_structure["campaign"].id
     org_id = initial_structure["organization"].id
@@ -271,36 +271,7 @@ def test_validation_rule_math_min_max(client, initial_structure):
     assert res_fail.status_code == 400
     assert "mayor o igual" in res_fail.text.lower()
 
-# --- 2. PRUEBA DE REGEX (Template: EMAIL -> EMAIL_FORMAT) ---
-def test_validation_rule_regex_email(client, initial_structure):
-    camp_id = initial_structure["campaign"].id
-    org_id = initial_structure["organization"].id
-    
-    # Creamos campo Email
-    res_field = client.post("/lead_fields/", json={
-        "field_template_code": "EMAIL",
-        "campaign_id": camp_id,
-        "order": 2,
-        "lead_field_section_id": 1, "organization_id":org_id
-    })
-    f_id = res_field.json()["id"]
-
-    # Caso Éxito
-    res_ok = client.post("/leads/", json={
-        "campaign_id": camp_id,
-        "values": [{"field_id": f_id, "value": "usuario@test.com"}]
-    })
-    assert res_ok.status_code == 200
-
-    # Caso Fallo (Regex)
-    res_fail = client.post("/leads/", json={
-        "campaign_id": camp_id,
-        "values": [{"field_id": f_id, "value": "usuario-sin-arroba.com"}]
-    })
-    assert res_fail.status_code == 400
-    assert "formato" in res_fail.text.lower()
-
-# --- 3. PRUEBA DE FECHAS (Template: BIRTH_DATE -> DATE_PAST) ---
+# --- PRUEBA DE FECHAS (Template: BIRTH_DATE -> DATE_PAST) ---
 def test_validation_rule_date_logic(client, initial_structure):
     camp_id = initial_structure["campaign"].id
     org_id = initial_structure["organization"].id
@@ -330,7 +301,7 @@ def test_validation_rule_date_logic(client, initial_structure):
     assert res_fail.status_code == 400
     assert "pasado" in res_fail.text.lower()
 
-# --- 4. PRUEBA DE TEXTO (Template: CBU_ALIAS -> LEN / MIN_LENGTH) ---
+# --- PRUEBA DE TEXTO (Template: CBU_ALIAS -> LEN / MIN_LENGTH) ---
 def test_validation_rule_text_length(client, initial_structure):
     camp_id = initial_structure["campaign"].id
     org_id = initial_structure["organization"].id

@@ -19,6 +19,7 @@ class LeadFieldBase(BaseModel):
     order: Optional[int] = Field(default=None, gt=0)
     campaign_id: int = Field(gt=0)
     calculation_expression: Optional[str] = Field(default=None, min_length=2, max_length=1000)
+    configuration: Optional[Dict[str, Any]] = None
 
 class LeadFieldCreate(LeadFieldBase, BaseCreate):
     field_template_code: Optional[str] = Field(default=None, min_length=2, max_length=100)

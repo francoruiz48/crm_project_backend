@@ -143,7 +143,16 @@ def seed_lead_field_types(db):
         {"code": "CHECKBOX", "description": "Casilla de verificación"},
         {"code": "FILE", "description": "Archivo"},
         {"code": "CALCULATED", "description": "Campo calculado"},
-        {"code": "LEAD", "description": "Lead"}
+        {"code": "LEAD", "description": "Lead"},
+        {"code": "MONEY", "description": "Moneda"},
+        {"code": "EMAIL", "description": "Email"},
+        {"code": "URL", "description": "Enlace"},
+        {"code": "PHONE", "description": "Teléfono"},
+        {"code": "RATING", "description": "Rating"},
+        {"code": "ADDRESS", "description": "Dirección"},
+        {"code": "RICH_TEXT", "description": "Texto Enriquecido"},
+        {"code": "TAGS", "description": "Etiquetas"},
+        {"code": "PASSWORD", "description": "Contraseña"},
     ]
     seed_generic(db, model=LeadFieldType, items=datos, unique_by=["code"])
 
@@ -156,6 +165,19 @@ def seed_lead_field_subtypes(db):
         {"code": "CHECKBOX_SIMPLE", "description": "Simple", "lead_field_type_code": "CHECKBOX"},
         {"code": "FILE_IMAGE", "description": "Imagen", "lead_field_type_code": "FILE"},
         {"code": "FILE_DOCUMENT", "description": "Documento", "lead_field_type_code": "FILE"},
+        {"code": "WEBSITE", "description": "Sitio Web", "lead_field_type_code": "URL"},
+        {"code": "SOCIAL_MEDIA", "description": "Red Social", "lead_field_type_code": "URL"},
+        {"code": "WHATSAPP", "description": "WhatsApp", "lead_field_type_code": "PHONE"},
+        {"code": "MOBILE", "description": "Teléfono Movil", "lead_field_type_code": "PHONE"},
+        {"code": "LANDLINE", "description": "Teléfono Fijo", "lead_field_type_code": "PHONE"},
+        {"code": "STAR_RATING", "description": "Calificación de estrellas", "lead_field_type_code": "RATING"},
+        {"code": "NPS", "description": "Indicador del 1 al 10", "lead_field_type_code": "RATING"},
+        {"code": "SCORE", "description": "Valor del 0 al 100", "lead_field_type_code": "RATING"},
+        {"code": "SIMPLE_ADDRESS", "description": "Texto Plano multi-línea", "lead_field_type_code": "ADDRESS"},
+        {"code": "MAPS_URL", "description": "URL de Google Maps", "lead_field_type_code": "ADDRESS"},
+        {"code": "COORDINATES", "description": "Latitud y Longitud", "lead_field_type_code": "ADDRESS"},
+        {"code": "HTML", "description": "HTML", "lead_field_type_code": "RICH_TEXT"},
+        {"code": "MARKDOWN", "description": "MARKDOWN", "lead_field_type_code": "RICH_TEXT"},
     ]
     seed_generic(db, model=LeadFieldSubtype, items=datos, unique_by=["code"],resolve_fk={"lead_field_type_code": (LeadFieldType, "code")}
     )

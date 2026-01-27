@@ -205,6 +205,13 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         example="ABS(Saldo_Pendiente)",
         category="Matemáticas"
     ),
+    "ISNUMBER": ExcelFormula(
+        name_spanish="ESNUMERO",
+        name_english="ISNUMBER",
+        description="Devuelve True si es un número.",
+        example="ISNUMBER(5)",
+        category="Matemáticas"
+    ),
 
     # =========================================================================
     # FECHA Y HORA

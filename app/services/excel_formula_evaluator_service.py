@@ -11,8 +11,18 @@ class ExcelFormulaEvaluatorService:
         # Operadores soportados
         self.operators = {
             '+': operator.add, '-': operator.sub, '*': operator.mul, '/': operator.truediv,
-            '>': operator.gt, '<': operator.lt, '>=': operator.ge, '<=': operator.le,
-            '=': operator.eq, '<>': operator.ne, '&': operator.add
+            
+            # Comparadores que usan _safe_compare
+            '>': lambda a, b: self._safe_compare(operator.gt, a, b),
+            '<': lambda a, b: self._safe_compare(operator.lt, a, b),
+            '>=': lambda a, b: self._safe_compare(operator.ge, a, b),
+            '<=': lambda a, b: self._safe_compare(operator.le, a, b),
+            
+            # Igualdad: manejo laxo de string vs number
+            '=': lambda a, b: self._safe_compare(operator.eq, a, b), 
+            '<>': lambda a, b: not self._safe_compare(operator.eq, a, b),
+            
+            '&': operator.add
         }
 
         self.func_map = {
@@ -51,6 +61,7 @@ class ExcelFormulaEvaluatorService:
             'SIGN': self._sign, 'SIGNO': self._sign,
             'RANDOM': self._random_number, 'ALEATORIO': self._random_number,
             'RANDOM_BETWEEN': self._random_between, 'ALEATORIO.ENTRE': self._random_between,
+            'ISNUMBER': self._is_number, 'ESNUMERO': self._is_number,
 
             # Matemáticas / Estadística
             'SUM': self._sum, 'SUMA': self._sum,
@@ -72,6 +83,20 @@ class ExcelFormulaEvaluatorService:
             #Otras
             'WEEKDAY': self._weekday, 'DIASEM': self._weekday
         }
+
+    def _safe_compare(self, op_func, a, b):
+        """
+        Helper para comparar valores permitiendo strings numéricos ("5" > 4).
+        Intenta convertir a float. Si falla, compara como strings.
+        """
+        try:
+            # Intentamos convertir ambos a float para comparación numérica
+            fa = float(a)
+            fb = float(b)
+            return op_func(fa, fb)
+        except (ValueError, TypeError):
+            # Fallback: comparación de strings (alfanumérica)
+            return op_func(str(a), str(b))
 
     def evaluate(self, expression):
         if not expression: return None
@@ -267,6 +292,18 @@ class ExcelFormulaEvaluatorService:
     
     def _random_number(self):
         return random.random()
+    
+    def _is_number(self, args):
+        val = args[0]
+        if val is None: return False
+        if isinstance(val, (int, float)): return True
+        if isinstance(val, str):
+            try:
+                float(val)
+                return True
+            except ValueError:
+                return False
+        return False
 
     #Redondeo hacia abajo
     def _floor(self, args):

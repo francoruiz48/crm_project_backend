@@ -1,6 +1,6 @@
 
 from app.models.base_model import BaseModelDB
-from sqlalchemy import Column, Integer, String, ForeignKey, Boolean
+from sqlalchemy import JSON, Column, Integer, String, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from app.models.validation_rule import ValidationRule
 
@@ -15,6 +15,7 @@ class LeadField(BaseModelDB):
     order = Column(Integer, nullable=False)
     is_visible = Column(Boolean, default=True)
     calculation_expression = Column(String, nullable=True)
+    configuration = Column(JSON, nullable=True)
 
     #relations
     campaign_id = Column(Integer, ForeignKey("campaign.id"), nullable=False)
