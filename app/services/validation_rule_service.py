@@ -53,14 +53,24 @@ class ValidationRuleService(BaseService):
         if not template:
             raise ValidationError(f"El código de plantilla '{code}' no existe.", field="template_code")
         
+        # Validar parámetros requeridos por el template
         for p in template.params:
+            # 1. Validar existencia de la clave
             if p not in params:
-                raise ValidationError(f"Falta el parámetro '{p}'.", field="template_params")
+                raise ValidationError(f"Falta el parámetro obligatorio '{p}'.", field="template_params")
+            
+            val = params[p]
+
+            # 2. Validar que no sea vacío
+            # Permitimos el 0 (integer/float) y False, por eso no usamos "if not val"
+            if val is None or (isinstance(val, str) and str(val).strip() == ""):
+                raise ValidationError(f"El valor del parámetro '{p}' no puede estar vacío.", field="template_params")
         
         try:
+            # Convertimos params a string para el format, o dejamos que python lo maneje
             return template.expression_fmt.format(**params)
         except Exception as e:
-            raise ValidationError(f"Error al generar expresión: {str(e)}", field="template_params")
+            raise ValidationError(f"Error al generar expresión con los parámetros dados: {str(e)}", field="template_params")
 
     @classmethod
     def create_within_session(cls, session, obj_data, created_by=None, field_type_code: str = None):

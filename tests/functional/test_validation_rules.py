@@ -322,3 +322,45 @@ def test_validation_rule_text_length(client, initial_structure):
     })
     assert res_fail.status_code == 400
     assert "corto" in res_fail.text.lower()
+
+
+def test_create_validation_rule_fail_empty_params(client, initial_structure):
+    """
+    Prueba de validación de integridad:
+    Intentar crear una regla usando un template (MIN_VALUE) pero enviando 
+    el parámetro obligatorio ('limit') como una cadena vacía.
+    
+    El sistema debe rechazarlo (400) indicando que no puede estar vacío.
+    """
+    camp_id = initial_structure["campaign"].id
+    org_id = initial_structure["organization"].id
+    
+    # 1. Crear un campo numérico auxiliar
+    res_field = client.post("/lead_fields/", json={
+        "name": "Campo Test Params",
+        "field_type_code": "INT",
+        "campaign_id": camp_id,
+        "lead_field_section_id": 1,
+        "order": 99,
+        "organization_id": org_id
+    })
+    assert res_field.status_code == 200
+    field_id = res_field.json()["id"]
+
+    # 2. Intentar crear regla con parámetro vacío
+    payload = {
+        "field_id": field_id,
+        "template_code": "MIN_VALUE",      # Este template requiere el param 'limit'
+        "template_params": {"limit": ""},  # <--- ERROR: Enviamos string vacío
+        "error_message": "Error custom"
+    }
+    
+    res = client.post("/validation_rules/", json=payload)
+    
+    # 3. Validar rechazo
+    assert res.status_code == 400
+    
+    # Verificamos que el mensaje sea el que definimos en el servicio
+    # "El valor del parámetro 'limit' no puede estar vacío."
+    error_msg = res.text.lower()
+    assert "no puede estar vacío" in error_msg or "required" in error_msg
