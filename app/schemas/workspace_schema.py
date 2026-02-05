@@ -8,7 +8,7 @@ from app.schemas.campaign_schema import CampaignResponse
 
 class WorkspaceBase(BaseModel):
     name: str = Field(..., min_length=3, max_length=100)
-    description: Optional[str] = Field(..., max_length=500)
+    description: Optional[str] = Field(default=None, max_length=500)
     organization_id: int = Field(gt=0)
 
 class WorkspaceCreate(WorkspaceBase, BaseCreate):

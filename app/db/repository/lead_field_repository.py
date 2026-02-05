@@ -17,7 +17,15 @@ class LeadFieldRepository(BaseRepository):
 
 
     @classmethod
-    def get_all_active_with_rules(cls, session):
+    def get_all_active_with_rules(cls, session, campaign_id: int=None):
+        if campaign_id:
+            return session.query(cls.model).options(
+                joinedload(cls.model.validation_rules)
+            ).filter(
+                cls.model.active == True,
+                cls.model.campaign_id == campaign_id
+            ).all()
+        
         return session.query(cls.model).options(
             joinedload(cls.model.validation_rules)
         ).filter(cls.model.active == True).all()
