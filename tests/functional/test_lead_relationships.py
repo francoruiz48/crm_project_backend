@@ -341,7 +341,7 @@ def test_update_lead_fail_self_reference(client, relationship_setup):
     })
 
     assert res_fail.status_code == 400
-    assert "relacionarse" in res_fail.json().get("detail", "").get("message", "").lower()
+    assert "relacionarse" in res_fail.text.lower()
 
 def test_create_lead_handle_duplicate_ids(client, relationship_setup):
     """

@@ -5,23 +5,23 @@ from app.core.exceptions.exceptions import ValidationError
 
 async def pydantic_exception_handler(request: Request, exc: RequestValidationError):
     """
-    Convierte errores de Pydantic a español y formato estándar.
+    Convierte errores de Pydantic a español y formato estándar de lista.
+    Devuelve: { "detail": [ { "field": "...", "message": "..." }, ... ] }
     """
-    errors = exc.errors()
+    errors_list = []
     
-    if errors:
-        first_error = errors[0]
-        
+    for error in exc.errors():
         # 1. Obtener nombre del campo
         # loc suele ser ('body', 'nombre') -> tomamos el último
-        field_name = str(first_error["loc"][-1]) if first_error["loc"] else None
+        # Si es un error general del body, puede que no tenga último elemento
+        field_name = str(error["loc"][-1]) if error["loc"] else "general"
         
         # 2. Datos del error
-        error_type = first_error["type"]
-        ctx = first_error.get("ctx", {}) # Contexto (ej: límite de caracteres)
+        error_type = error["type"]
+        ctx = error.get("ctx", {}) # Contexto (ej: límite de caracteres)
         
         # 3. Traducción
-        message = first_error["msg"] # Fallback: mensaje original en inglés
+        message = error["msg"] # Fallback: mensaje original en inglés
         
         # --- DICCIONARIO DE TRADUCCIÓN ---
         if error_type == "missing":
@@ -57,32 +57,29 @@ async def pydantic_exception_handler(request: Request, exc: RequestValidationErr
         elif error_type == "value_error":
              message = message.replace("Value error, ", "")
 
-        return JSONResponse(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            content={
-                "detail": {
-                    "message": message,
-                    "field": field_name
-                }
-            },
-        )
+        errors_list.append({
+            "field": field_name,
+            "message": message
+        })
 
     return JSONResponse(
         status_code=status.HTTP_400_BAD_REQUEST,
-        content={"detail": {"message": "Error de validación.", "field": None}},
+        content={"detail": errors_list},
     )
 
 async def custom_validation_exception_handler(request: Request, exc: ValidationError):
     """
-    Captura nuestra excepción ValidationError (lógica de negocio) 
-    y devuelve el mismo formato JSON.
+    Captura nuestra excepción ValidationError (lógica de negocio).
+    Ahora devuelve una LISTA de un solo elemento para mantener consistencia.
     """
     return JSONResponse(
         status_code=status.HTTP_400_BAD_REQUEST,
         content={
-            "detail": {
-                "message": exc.message,
-                "field": exc.field
-            }
+            "detail": [
+                {
+                    "field": exc.field,
+                    "message": exc.message
+                }
+            ]
         },
     )
