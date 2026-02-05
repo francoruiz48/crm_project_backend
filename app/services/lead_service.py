@@ -460,8 +460,17 @@ class LeadService(BaseService):
     @classmethod
     def simulate_create(cls, obj_in, created_by=None, files_map: dict = None):
         with UnitOfWork() as uow:
+            # 1. Ejecutar validaciones y lógica
             clean_values, context_data, field_defs = cls._prepare_creation_data(uow, obj_in, files_map, created_by, is_simulation=True)
             
+            # 2. Obtener la organización (Dato obligatorio para el Schema)
+            campaign = cls.campaign_repository.get_by_id(uow.session, obj_in.campaign_id)
+            if not campaign:
+                # Esto no debería pasar porque _prepare valida la campaña, pero por seguridad:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Campaña no encontrada")
+            
+            org_id = campaign.organization_id
+
             simulated_values = []
             fields_map = {f.id: f for f in field_defs}
             dummy_lead_id = -1 
@@ -480,14 +489,17 @@ class LeadService(BaseService):
                     "value": val_display,
                     "nomenclator_items": [], 
                     "related_leads": [],
+                    # Reconstrucción del objeto Field para el Schema
                     "field": {
                         "id": field_def.id,
                         "name": field_def.name,
                         "field_type": {"code": field_def.field_type_code},
                         "campaign_id": field_def.campaign_id,
+                        "organization_id": org_id,
                         "lead_field_section": {
                             "id": field_def.lead_field_section_id,
-                            "name": "Simulated Section"
+                            "name": "Simulated Section",
+                            "organization_id": org_id
                         } if field_def.lead_field_section_id else None,
                         "active": True
                     }
@@ -496,6 +508,7 @@ class LeadService(BaseService):
             return {
                 "id": dummy_lead_id,
                 "campaign_id": obj_in.campaign_id,
+                "organization_id": org_id,
                 "active": True,
                 "created_at": datetime.now(),
                 "updated_at": datetime.now(),
