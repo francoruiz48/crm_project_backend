@@ -136,7 +136,7 @@ STANDARD_RULES = {
         description="El texto NO debe contener una palabra prohibida.",
         # Regex retorna True si encuentra, queremos que sea False si encuentra.
         # Comparamos con False (o 0)
-        expression_fmt='REGEXMATCH(value, "{text}") = FALSE',
+        expression_fmt='NOT(REGEXMATCH(value, "{text}"))',
         params=["text"],
         error_message="El valor no puede contener el texto '{text}'."
     ),
