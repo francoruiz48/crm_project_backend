@@ -372,7 +372,7 @@ class LeadService(BaseService):
         errors = [] # ACUMULADOR DE ERRORES
 
         campaign_id = obj_in.campaign_id
-        all_field_defs = cls.field_repository.get_all_active_with_rules(uow.session)
+        all_field_defs = cls.field_repository.get_all_active_with_rules(uow.session, campaign_id=campaign_id)
         
         # 1. Validación inicial de existencia de campos
         defs_map = {f.id: f for f in all_field_defs}
@@ -531,7 +531,7 @@ class LeadService(BaseService):
                 cls.repository.update(uow.session, obj_id, lead_data)
 
             if obj_in.values is not None:
-                field_defs = cls.field_repository.get_all_active_with_rules(uow.session)
+                field_defs = cls.field_repository.get_all_active_with_rules(uow.session, campaign_id=current_lead.campaign_id)
                 defs_map = {f.id: f for f in field_defs}
                 
                 # Validaciones previas de estructura
