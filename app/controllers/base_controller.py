@@ -52,7 +52,7 @@ class BaseController:
                         dependencies=cls._get_deps("read"))
             def get_all(
                 page: int = Query(1, ge=1),
-                page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=PAGE_SIZE_LIMIT),
+                page_size: int = DEFAULT_PAGE_SIZE,
                 only_active: bool = True, 
                 detailed: bool = Query(False)
             ):
