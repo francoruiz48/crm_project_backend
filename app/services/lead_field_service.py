@@ -14,7 +14,12 @@ from app.models.lead_field_value import LeadFieldValue
 from app.core.error_messages import SUCCESS_UPDATE
 from app.models.lead_field import LeadField
 from app.db.repository.campaign_repository import CampaignRepository
-from app.core.templates.field_rules_map import DEFAULT_SUBTYPE_RULES, DEFAULT_TYPE_RULES 
+from app.core.templates.field_rules_map import DEFAULT_SUBTYPE_RULES, DEFAULT_TYPE_RULES
+from sqlalchemy.orm import selectinload
+from app.models.lead import Lead
+from app.services.excel_formula_evaluator_service import ExcelFormulaEvaluatorService
+from datetime import date, datetime
+from app.core.constans import DATE_FORMAT, DATE_TIME_FORMAT
 
 class LeadFieldService(BaseService):
     repository = LeadFieldRepository
@@ -300,8 +305,6 @@ class LeadFieldService(BaseService):
 
             # 5. Validación LEAD relacionado
             if not "related_campaign_id" in data and current_field.related_campaign is not None:
-                # Si se intenta borrar (o no enviar) y era obligatorio... 
-                # (Nota: exclude_unset maneja lo que no se envia, si 'related_campaign_id' está en data como None es que lo quieren borrar)
                 if "related_campaign_id" in data and data["related_campaign_id"] is None:
                      errors.append({"field": "related_campaign_id", "message": "El campo es obligatorio para tipo LEAD."})
 
@@ -310,11 +313,9 @@ class LeadFieldService(BaseService):
                 old_rel_id = current_field.related_campaign.id if current_field.related_campaign else None
                 
                 if new_rel_id != old_rel_id:
-                    # A. Prohibido dejar null si es LEAD (Re-chequeo)
                     if new_rel_id is None and current_field.field_type_code == "LEAD":
                         errors.append({"field": "related_campaign_id", "message": "El campo es obligatorio."})
 
-                    # B. Integridad de datos existentes
                     has_data = uow.session.query(LeadFieldValue).filter(
                         LeadFieldValue.field_id == obj_id
                     ).first()
@@ -336,7 +337,19 @@ class LeadFieldService(BaseService):
             if errors:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
 
-            return cls.repository.update(uow.session, obj_id, data)
+            #Detectamos cambio en formula y recalculamos campos CALCULATED afectados
+            expression_changed = False
+            if current_field.field_type_code == "CALCULATED":
+                if new_expr and new_expr != current_field.calculation_expression:
+                    expression_changed = True
+
+            updated_field = cls.repository.update(uow.session, obj_id, data)
+
+            if expression_changed:
+                cls._recalculate_leads_formula(uow, updated_field)
+            # ===============================================================
+
+            return updated_field
 
         return cls._execute(
             action="Actualizando LeadField",
@@ -383,3 +396,77 @@ class LeadFieldService(BaseService):
             func=do_reactivate,
             success_msg=SUCCESS_UPDATE
         )
+    
+
+    # -----------------------------------------------------------------------
+    # HELPERS PARA RECALCULAR FÓRMULAS MASIVAMENTE
+    # -----------------------------------------------------------------------
+
+    #Existe la misma función en lead_service, pero la repetimos aquí para no acoplar servicios. Es un helper específico de campos calculados, no tiene sentido que LeadService lo conozca.
+    @classmethod
+    def _convert_value_for_context(cls, value, field_def):
+        if value is None: return None
+        type_code = field_def.field_type_code
+        try:
+            if type_code == "INT": return int(value)
+            if type_code == "NUMBER": return float(value)
+            if type_code == "BOOL":
+                if isinstance(value, bool): return value
+                return str(value).lower() in ("true", "1", "yes", "si")
+            if type_code == "DATE":
+                if isinstance(value, (datetime, date)): return value
+                return datetime.strptime(str(value), "%Y-%m-%d").date()
+            if type_code == "DATE_TIME":
+                if isinstance(value, datetime): return value
+                return datetime.strptime(str(value), DATE_TIME_FORMAT)
+            return value
+        except (ValueError, TypeError):
+            return value
+
+    @classmethod
+    def _recalculate_leads_formula(cls, uow, field_def: LeadField):
+        """
+        Busca todos los leads de la campaña y recalcula el valor de este campo
+        específico aplicando la nueva fórmula en masa.
+        """
+        # 1. Obtener todos los campos de la campaña para tipar correctamente los contextos
+        all_fields = cls.repository.get_all_active_with_rules(uow.session, campaign_id=field_def.campaign_id)
+        fields_by_id = {f.id: f for f in all_fields}
+
+        # 2. Obtener todos los leads de la campaña con sus valores
+        leads = uow.session.query(Lead).options(
+            selectinload(Lead.field_values)
+        ).filter(Lead.campaign_id == field_def.campaign_id).all()
+
+        for lead in leads:
+            # 3. Reconstruir contexto matemático del lead
+            context = {}
+            for fv in lead.field_values:
+                val = fv.value
+                if val is None:
+                    continue # Nomencladores complejos u otros nulos se ignoran
+                
+                f_def = fields_by_id.get(fv.field_id)
+                if f_def:
+                    typed_val = cls._convert_value_for_context(val, f_def)
+                    context[f_def.name] = typed_val
+
+            # 4. Evaluar la nueva fórmula
+            evaluator = ExcelFormulaEvaluatorService(context=context)
+            try:
+                new_calc_val = evaluator.evaluate(field_def.calculation_expression)
+            except Exception:
+                new_calc_val = None # Si la fórmula falla para este lead en específico, asignamos nulo
+
+            # 5. Guardar/Actualizar el valor en la base de datos
+            existing_fv = next((fv for fv in lead.field_values if fv.field_id == field_def.id), None)
+            
+            if existing_fv:
+                existing_fv.value = str(new_calc_val) if new_calc_val is not None else None
+            else:
+                new_fv = LeadFieldValue(
+                    lead_id=lead.id, 
+                    field_id=field_def.id, 
+                    value=str(new_calc_val) if new_calc_val is not None else None
+                )
+                uow.session.add(new_fv)
