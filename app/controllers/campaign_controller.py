@@ -35,7 +35,8 @@ class CampaignController(BaseController):
             page_size: int = DEFAULT_PAGE_SIZE,
             only_active: bool = True, 
             detailed: bool = Query(False),
-            search: Optional[str] = Query(None, description="Buscar dentro de campañas")
+            search: Optional[str] = Query(None, description="Buscar dentro de campañas"),
+            workspace_id: Optional[int] = Query(None, description="ID del workspace para filtrar campañas")
         ):
 
             total, items_pydantic = cls.service.get_all(
@@ -43,7 +44,8 @@ class CampaignController(BaseController):
                     page_size=page_size, 
                     only_active=only_active,
                     detailed=detailed,
-                    search=search, search_fields=['name', 'description']
+                    search=search, search_fields=['name', 'description'],
+                    workspace_id=workspace_id
                 )
 
             return PaginatedResponse.create(

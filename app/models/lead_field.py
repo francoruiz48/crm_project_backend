@@ -22,6 +22,7 @@ class LeadField(BaseModelDB):
     nomenclator_id = Column(Integer, ForeignKey("nomenclator.id"), nullable=True)
     related_campaign_id = Column(Integer, ForeignKey("campaign.id"), nullable=True)
     field_template_code = Column(String, nullable=True)
+    field_template_name = Column(String, nullable=True)
     field_type_code = Column(String, ForeignKey("lead_field_type.code"), nullable=False)
     lead_field_section_id = Column(Integer, ForeignKey("lead_field_section.id"), nullable=False)
     field_subtype_code = Column(String, ForeignKey("lead_field_subtype.code"), nullable=True)
