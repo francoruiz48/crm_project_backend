@@ -10,6 +10,8 @@ from app.schemas.lead_field_type_schema import LeadFieldTypeResponse
 
 class LeadFieldBase(BaseModel):
     name: Optional[str] = Field(default=None, min_length=3, max_length=150)
+    field_type_code: Optional[str] = Field(default=None, min_length=2, max_length=100)
+    field_subtype_code: Optional[str] = Field(default=None, min_length=2, max_length=100)
     required: bool = False
     default_value: Optional[str] = Field(default=None, min_length=2, max_length=500)
     is_primary: bool = False
@@ -26,8 +28,6 @@ class LeadFieldCreate(LeadFieldBase, BaseCreate):
     nomenclator_id: Optional[int] = Field(default=None, gt=0)
     related_campaign_id: Optional[int] = Field(default=None, gt=0)
     lead_field_section_id: int = Field(default=None, gt=0)
-    field_type_code: Optional[str] = Field(default=None, min_length=2, max_length=100)
-    field_subtype_code: Optional[str] = Field(default=None, min_length=2, max_length=100)
 
 class LeadFieldResponse(LeadFieldBase, BaseResponse):
     nomenclator_id: Optional[int] = None
