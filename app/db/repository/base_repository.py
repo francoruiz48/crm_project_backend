@@ -1,5 +1,6 @@
 import re
 from typing import Dict, Any
+from math import ceil
 from sqlalchemy.orm import selectinload
 from app.core.exceptions.exceptions import AppException, NotFoundException
 from app.core.error_messages import ERROR_DATABASE, ERROR_NOT_FOUND
@@ -20,8 +21,15 @@ class BaseRepository:
         Aplica paginación y devuelve (total, query_paginada).
         Si page o page_size son 0/None, devuelve (total, query_original).
         """
-        # Siempre contamos primero (requerido para el frontend)
         total = query.count()
+
+        if page_size > 0:
+            total_pages = ceil(total / page_size)
+        else:
+            total_pages = 0
+
+        if page> total_pages and total_pages > 0:
+            page = total_pages
 
         if page and page > 0 and page_size and page_size > 0:
             offset = (page - 1) * page_size

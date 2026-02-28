@@ -15,10 +15,15 @@ class PaginatedResponse(BaseModel, Generic[T]):
     # Helper para calcular total_pages automáticamente al crear la respuesta
     @classmethod
     def create(cls, items: List[T], total: int, page: int, page_size: int):
+        total_pages = ceil(total / page_size) if page_size > 0 else 0
+        
+        actual_page = page
+        if total_pages > 0 and page > total_pages:
+            actual_page = total_pages
         return cls(
             total=total,
-            page=page,
+            page=actual_page,
             page_size=page_size,
-            total_pages=ceil(total / page_size) if page_size > 0 else 0,
+            total_pages=total_pages,
             items=items
         )
