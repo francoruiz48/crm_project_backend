@@ -1,5 +1,3 @@
-# app/core/error_messages.py
-
 # Mensajes genéricos
 ERROR_NOT_FOUND = "{model}({id}) no encontrado."
 ERROR_CREATE = "Error al crear {model}."

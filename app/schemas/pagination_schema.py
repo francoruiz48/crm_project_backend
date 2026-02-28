@@ -1,6 +1,7 @@
 from typing import Generic, TypeVar, List
 from pydantic import BaseModel, Field
 from math import ceil
+from app.core.constans import DEFAULT_PAGE_SIZE
 
 # Definimos una variable genérica T (será UserResponse, LeadResponse, etc.)
 T = TypeVar("T")
@@ -8,7 +9,7 @@ T = TypeVar("T")
 class PaginatedResponse(BaseModel, Generic[T]):
     total: int = Field(..., description="Total de registros en la base de datos (sin paginar)")
     page: int = Field(..., description="Página actual")
-    page_size: int = Field(..., description="Cantidad de registros por página")
+    page_size: int = Field(default=DEFAULT_PAGE_SIZE, ge=0, description="Cantidad de registros por página")
     total_pages: int = Field(..., description="Total de páginas calculadas")
     items: List[T] = Field(..., description="Lista de registros de la página actual")
 

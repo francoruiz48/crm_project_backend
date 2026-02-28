@@ -221,7 +221,7 @@ class BaseRepository:
         return items
 
     @classmethod
-    def get_by_id(cls, session, obj_id: int, only_active: bool = True, detailed: bool = False):
+    def get_by_id(cls, session, obj_id: int, only_active: bool = False, detailed: bool = False):
         """
         Trae un objeto por id. 
         Si detailed=True, carga relaciones y usa schema_out_detail.

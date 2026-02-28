@@ -113,6 +113,26 @@ class ExcelFormulaEvaluatorService:
     def _parse_expression(self, expr):
         expr = expr.strip()
         
+        while expr.startswith('(') and expr.endswith(')'):
+            # Verificamos si los paréntesis realmente envuelven TODO el contenido
+            # Ejemplo válido: (A - B) -> Se quitan
+            # Ejemplo inválido: (A) - (B) -> No se quitan (se procesa el - después)
+            depth = 0
+            is_wrapped = True
+            for i, char in enumerate(expr[:-1]): # Recorremos hasta el anteúltimo
+                if char == '(': depth += 1
+                elif char == ')': depth -= 1
+                
+                # Si la profundidad llega a 0 antes del final, no es un grupo único
+                if depth == 0:
+                    is_wrapped = False
+                    break
+            
+            if is_wrapped:
+                expr = expr[1:-1].strip()
+            else:
+                break
+
         # 1. Es un número?
         try:
             if "." in expr: return float(expr)
@@ -134,10 +154,28 @@ class ExcelFormulaEvaluatorService:
         # 4. Es una función? IF(...), CONCAT(...)
         match = re.match(r'^([A-Z]+)\((.*)\)$', expr, re.DOTALL)
         if match:
+            # VALIDACIÓN CRÍTICA: Verificar que no sea un "falso positivo"
+            # Ejemplo: YEAR(A) - YEAR(B) -> El regex cree que es una función YEAR gigante.
+            # Verificamos si el paréntesis de cierre real está al final de la cadena.
+            
             func_name = match.group(1)
-            args_str = match.group(2)
-            args = self._split_args(args_str)
-            return self._execute_function(func_name, args)
+            open_idx = expr.find('(')
+            
+            depth = 0
+            actual_close_idx = -1
+            for i, char in enumerate(expr[open_idx:], start=open_idx):
+                if char == '(': depth += 1
+                elif char == ')': depth -= 1
+                
+                if depth == 0:
+                    actual_close_idx = i
+                    break
+            
+            # Solo ejecutamos como función si cierra EXACTAMENTE al final
+            if actual_close_idx == len(expr) - 1:
+                args_str = match.group(2)
+                args = self._split_args(args_str)
+                return self._execute_function(func_name, args)
 
         # 5. Es una operación matemática/lógica simple? (A > B, A + B)
         # Esto es un parser simplificado, busca el operador de menor precedencia
