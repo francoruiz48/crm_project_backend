@@ -113,6 +113,7 @@ class LeadFieldService(BaseService):
                     
                     # Sobrescribimos el tipo con el del template
                     data["field_type_code"] = template.field_type_code
+                    data["field_template_name"] = template.name
                     field_type_code = template.field_type_code
                     rules_to_create = template.rules
 
