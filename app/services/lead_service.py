@@ -519,7 +519,7 @@ class LeadService(BaseService):
 
     @classmethod
     def update(cls, obj_id: int, obj_in, files_map: dict = None):
-        errors = [] # Lista de errores para update
+        errors = [] 
         
         with UnitOfWork() as uow:
             current_lead = cls.repository.get_by_id(uow.session, obj_id)
@@ -531,14 +531,16 @@ class LeadService(BaseService):
                 cls.repository.update(uow.session, obj_id, lead_data)
 
             if obj_in.values is not None:
-                field_defs = cls.field_repository.get_all_active_with_rules(uow.session, campaign_id=current_lead.campaign_id)
-                defs_map = {f.id: f for f in field_defs}
+                all_field_defs = cls.field_repository.get_all_active_with_rules(uow.session, campaign_id=current_lead.campaign_id)
+                current_campaign_defs = [f for f in all_field_defs if f.campaign_id == current_lead.campaign_id]
+                
+                defs_map = {f.id: f for f in current_campaign_defs}
                 
                 # Validaciones previas de estructura
                 incoming_ids = [v.get('field_id') if isinstance(v, dict) else v.field_id for v in obj_in.values]
                 for fid in incoming_ids:
                     if fid not in defs_map: 
-                        errors.append({"field": f"ID_{fid}", "message": "Campo no existe."})
+                        errors.append({"field": f"ID_{fid}", "message": "Campo no existe o no pertenece a esta campaña."})
                         continue
                     if defs_map[fid].campaign_id != current_lead.campaign_id: 
                         errors.append({"field": defs_map[fid].name, "message": "El campo no pertenece a esta campaña."})
@@ -549,7 +551,7 @@ class LeadService(BaseService):
                 incoming_data = cls._prepare_context_dict(obj_in.values)
 
                 if files_map:
-                    incoming_data = cls._handle_file_uploads(incoming_data, files_map, field_defs, errors)
+                    incoming_data = cls._handle_file_uploads(incoming_data, files_map, current_campaign_defs, errors)
                 
                 # Reconstruir estado actual DB
                 db_values = {}
@@ -566,17 +568,20 @@ class LeadService(BaseService):
                 
                 full_context = {**db_values, **incoming_data}
                 
-                # Calcular
-                full_context = cls._evaluate_calculated_fields(full_context, field_defs)
+                # Calcular (Solo con campos de la campaña)
+                full_context = cls._evaluate_calculated_fields(full_context, current_campaign_defs)
                 
-                # Validar Reglas (Pasamos errors list)
-                cls._validate_processed_data(uow, full_context, field_defs, errors, current_lead_id=obj_id)
+                # Validar Reglas (Solo con campos de la campaña)
+                cls._validate_processed_data(uow, full_context, current_campaign_defs, errors, current_lead_id=obj_id)
                 
-                # CHEQUEO FINAL DE ERRORES
                 if errors:
                     raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
 
-                clean_values = cls._reconstruct_items_for_repo(incoming_data, field_defs)
+                for field in current_campaign_defs:
+                    if field.field_type_code == "CALCULATED" and field.id in full_context:
+                        incoming_data[field.id] = full_context[field.id]
+
+                clean_values = cls._reconstruct_items_for_repo(incoming_data, current_campaign_defs)
                 cls.repository.upsert_values(uow.session, obj_id, clean_values)
 
         return cls.get_by_id(obj_id, detailed=True)
