@@ -1,5 +1,5 @@
 from app.db.repository.base_repository import BaseRepository
-from app.models.security_models import Role, User
+from app.models.security_models import Role, User, UserOrganization
 from app.schemas.security_schemas.user_schema import UserCreate, UserDetailResponse, UserResponse
 from sqlalchemy.orm import selectinload
 
@@ -9,5 +9,7 @@ class UserRepository(BaseRepository):
     schema_out_detail = UserDetailResponse
 
     relationships = [
-        selectinload(User.roles).selectinload(Role.permissions)
+        selectinload(User.organizations_access)
+        .selectinload(UserOrganization.roles)
+        .selectinload(Role.permissions)
     ]
