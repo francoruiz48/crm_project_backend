@@ -7,12 +7,12 @@ class LeadFieldValueService(BaseService):
     repository = LeadFieldValueRepository
 
     @classmethod
-    def create_for_lead(cls, lead_id: int, values: list[LeadFieldValueCreate]):
-        """Crea múltiples LeadFieldValue asociados a un lead."""
-        created_values = []
+    def create_for_lead(cls, lead_id: int, values: list[LeadFieldValueCreate], created_by=None):
+        created = []
+
         for value_data in values:
-            data_dict = value_data.dict()
-            data_dict["lead_id"] = lead_id
-            created_value = cls.repository.create_simple(data_dict)
-            created_values.append(created_value)
-        return created_values
+            data = value_data.dict()
+            data["lead_id"] = lead_id
+            created.append(cls.repository.create(data, created_by))
+
+        return created

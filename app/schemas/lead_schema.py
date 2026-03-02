@@ -1,29 +1,28 @@
 
-from app.schemas.base_schema import BaseResponse, BaseCreate
-from pydantic import BaseModel, computed_field, PrivateAttr
+from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
+from pydantic import BaseModel, computed_field, Field
 from typing import List, Dict, Any
-from app.schemas.lead_field_value_schema import LeadFieldValueCreate, LeadFieldValueResponse
+from app.schemas.lead_comment_shema import LeadCommentDetailedResponse
+from app.schemas.lead_field_value_schema import LeadFieldValueCreate, LeadFieldValueDetailedResponse, LeadFieldValueResponse
 
 
 class LeadBase(BaseModel):
-    pass
-
+    campaign_id: int = Field(gt=0)
 
 class LeadCreate(LeadBase, BaseCreate):
     values: List[LeadFieldValueCreate]
 
-
 class LeadResponse(LeadBase, BaseResponse):
-    _field_values: List[LeadFieldValueResponse] = PrivateAttr(default=[])
+    field_values: List[LeadFieldValueResponse] = Field(
+        default_factory=list
+    )
+    organization_id : int
 
-    @computed_field
-    def fields(self) -> List[Dict[str, Any]]:
-        result = []
-        for fv in self._field_values:
-            result.append({
-                "name": fv.field.name,
-                "value": fv.value,
-                "required": fv.field.required
-            })
-        return result
+class LeadDetailedResponse(LeadBase, BaseDetailResponse):
+    field_values: List[LeadFieldValueDetailedResponse] = Field(
+        default_factory=list
+    )
+    comments: List[LeadCommentDetailedResponse] = None
+    organization_id : int
+
 

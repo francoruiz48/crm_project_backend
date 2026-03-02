@@ -1,60 +1,295 @@
-
+from sqlalchemy.orm import aliased
+from sqlalchemy import cast, Float, or_, and_, func, insert, delete
 from app.db.repository.base_repository import BaseRepository
 from app.models.lead import Lead
-from app.schemas.lead_schema import LeadResponse
-from app.db.session import SessionLocal
-from app.models.lead_field_value import LeadFieldValue
+from app.models.nomenclator_item import NomenclatorItem
+from app.schemas.lead_schema import LeadDetailedResponse, LeadResponse
+from app.models.lead_field_value import LeadFieldValue, lead_field_value_leads_assoc
 from app.models.lead_field import LeadField
-from sqlalchemy.orm import selectinload
 
 class LeadRepository(BaseRepository):
     model = Lead
     schema_out = LeadResponse
-
-    @classmethod
-    def create_empty(cls, _data=None):
-        with SessionLocal() as db:
-            obj = Lead()
-            db.add(obj)
-            db.commit()
-            db.refresh(obj)
-            return obj
-
+    schema_out_detail = LeadDetailedResponse
     
-    @classmethod
-    def get_all(cls):
-        with SessionLocal() as db:
-            leads = (
-                db.query(cls.model)
-                .options(
-                    selectinload(cls.model.field_values)
-                    .selectinload(LeadFieldValue.field)
-                    .selectinload(LeadField.field_type)
-                )
-                .all()
-            )
-
-            result = []
-            for lead in leads:
-                lead_resp = LeadResponse.model_validate(lead)
-                lead_resp._field_values = lead.field_values
-                result.append(lead_resp)
-            return result
+    relationships = [
+        (Lead.field_values, LeadFieldValue.field, LeadField.field_type),
+        (Lead.field_values, LeadFieldValue.field, LeadField.campaign),
+        (Lead.field_values, LeadFieldValue.nomenclator_items) 
+    ]
 
     @classmethod
-    def get_by_id(cls, obj_id: int):
-        with SessionLocal() as db:
-            lead = (
-                db.query(cls.model)
-                .options(
-                    selectinload(cls.model.field_values)
-                    .selectinload(LeadFieldValue.field)
-                    .selectinload(LeadField.field_type) 
+    def get_all(cls, session, only_active: bool = True, detailed: bool = False, search: str = None, search_fields: list = None, **kwargs):
+        """
+        Sobrescribe get_all para manejar la búsqueda compleja en tablas relacionadas.
+        """
+        query = session.query(cls.model)
+
+        # 1. Filtro Active (Base)
+        if only_active:
+            query = query.filter(cls.model.active.is_(True))
+
+        # 2. Lógica de Búsqueda Global (SEARCH)
+        if search:
+            # Hacemos JOIN con los valores
+            query = query.join(LeadFieldValue, cls.model.field_values)
+            
+            # Condiciones de búsqueda
+            conditions = []
+
+            # A. Buscar en el valor de texto directo (ej: Nombre, Email, Teléfono guardados como string)
+            conditions.append(LeadFieldValue.value.ilike(f"%{search}%"))
+
+            # B. (Opcional pero recomendado) Buscar dentro de Nomencladores
+            # Si el usuario busca "Mendoza", y eso es un ítem de un select, hay que buscarlo por relación
+            # Hacemos Left Join para no perder los que no tienen nomencladores
+            query = query.outerjoin(LeadFieldValue.nomenclator_items)
+            conditions.append(NomenclatorItem.value.ilike(f"%{search}%"))
+
+            # C. Filtrar por columnas específicas si se pidieron (search_fields)
+            # Esto permite decir: "Busca 'Juan' pero solo en campos que se llamen 'Nombre' o 'Apellido'"
+            if search_fields:
+                query = query.join(LeadField, LeadFieldValue.field)
+                # Filtramos que el CAMPO tenga uno de los nombres permitidos
+                # Y que el VALOR coincida con el texto
+                query = query.filter(
+                    LeadField.name.in_(search_fields), # El nombre del campo (ej: 'Nombre')
+                    or_(*conditions)                   # El valor contiene 'Juan'
                 )
-                .filter(cls.model.id == obj_id)
-                .first()
+            else:
+                # Si no hay restricción de campos, buscamos en todo
+                query = query.filter(or_(*conditions))
+
+            # IMPORTANTE: Como un Lead tiene muchos valores, el JOIN puede devolver
+            # el mismo lead varias veces si matchea en varios campos. Usamos distinct.
+            query = query.distinct()
+
+        # 3. Filtros Estándar (kwargs) - Ej: campaign_id=5
+        for key, value in kwargs.items():
+            if value is not None and hasattr(cls.model, key):
+                query = query.filter(getattr(cls.model, key) == value)
+
+        # 4. Ordenamiento (Default por ID descendente)
+        query = query.order_by(cls.model.id.desc())
+
+        # 5. Paginación
+        page = kwargs.get('page', 0)
+        page_size = kwargs.get('page_size', 0)
+        
+        total, query = cls._paginate(query, page, page_size)
+        items = cls._execute_read_query(query, detailed)
+
+        if page:
+            return total, items
+        return items
+
+    @classmethod
+    def search(cls, session, search_params, detailed: bool = False, page: int = 0, page_size: int = 0):
+        query = session.query(cls.model)
+
+        for f in search_params.filters:
+            lv_alias = aliased(LeadFieldValue)
+            query = query.join(lv_alias, cls.model.field_values)
+            
+            # Condición base: El valor debe pertenecer al campo correcto
+            field_condition = lv_alias.field_id == f.field_id
+            
+            # Acumulador de condiciones para este filtro (AND interno)
+            # Empezamos solo con el field_id, luego agregamos la condición de valor
+            conditions = [field_condition]
+
+            db_val = lv_alias.value 
+            val = f.value           
+
+            # ---------------------------------------------------------
+            # 1. Operador BETWEEN (Rango) - Generalmente solo para Text/Number/Date
+            # ---------------------------------------------------------
+            if f.operator == "between":
+                if not isinstance(val, list) or len(val) != 2:
+                    continue 
+                
+                try:
+                    # Intento Numérico
+                    val_min = float(val[0])
+                    val_max = float(val[1])
+                    db_val_num = cast(db_val, Float)
+                    
+                    conditions.append(db_val_num >= val_min)
+                    conditions.append(db_val_num <= val_max)
+                except (ValueError, TypeError):
+                    # Fallback Texto / Fechas
+                    v_min = str(val[0]).lower()
+                    v_max = str(val[1]).lower()
+                    
+                    conditions.append(func.lower(db_val) >= v_min)
+                    conditions.append(func.lower(db_val) <= v_max)
+
+            # ---------------------------------------------------------
+            # 2. Operador IN (Lista) - AQUI CAMBIA PARA SOPORTAR MULTIPLES
+            # ---------------------------------------------------------
+            elif f.operator == "in":
+                if isinstance(val, list):
+                    # A. Búsqueda en Texto (Normalizamos a string minúsculas)
+                    val_strs = [str(v).lower() for v in val]
+                    cond_text = func.lower(db_val).in_(val_strs)
+
+                    # B. Búsqueda en Relación Nomenclador (Many-to-Many)
+                    # "Existe algún item en la lista del lead cuyo ID esté en la lista de búsqueda"
+                    cond_relation = lv_alias.nomenclator_items.any(NomenclatorItem.id.in_(val))
+
+                    # Aplicamos OR: O está en el texto O está en la relación
+                    conditions.append(or_(cond_text, cond_relation))
+
+            # ---------------------------------------------------------
+            # 3. Operadores de Comparación (GT, LT, GTE, LTE)
+            # ---------------------------------------------------------
+            elif f.operator in ["gt", "lt", "gte", "lte"]:
+                try:
+                    val_float = float(val)
+                    db_val_num = cast(db_val, Float)
+                    
+                    if f.operator == "gt": conditions.append(db_val_num > val_float)
+                    elif f.operator == "lt": conditions.append(db_val_num < val_float)
+                    elif f.operator == "gte": conditions.append(db_val_num >= val_float)
+                    elif f.operator == "lte": conditions.append(db_val_num <= val_float)
+                
+                except (ValueError, TypeError):
+                    val_str = str(val).lower()
+                    db_val_lower = func.lower(db_val)
+                    
+                    if f.operator == "gt": conditions.append(db_val_lower > val_str)
+                    elif f.operator == "lt": conditions.append(db_val_lower < val_str)
+                    elif f.operator == "gte": conditions.append(db_val_lower >= val_str)
+                    elif f.operator == "lte": conditions.append(db_val_lower <= val_str)
+
+            # ---------------------------------------------------------
+            # 4. Operadores de Igualdad (EQ, NEQ) - CAMBIA PARA SOPORTAR ID UNICO
+            # ---------------------------------------------------------
+            elif f.operator == "eq": 
+                # A. Texto exacto
+                cond_text = func.lower(db_val) == str(val).lower()
+                
+                # B. Relación (El Lead tiene este ID seleccionado en su lista)
+                cond_relation = lv_alias.nomenclator_items.any(NomenclatorItem.id == val)
+                
+                conditions.append(or_(cond_text, cond_relation))
+            
+            elif f.operator == "neq": 
+                # A. Distinto texto
+                cond_text = func.lower(db_val) != str(val).lower()
+                
+                # B. Relación (No tiene este ID)
+                # Nota: Negar .any() es "no tiene ninguno que coincida"
+                cond_relation = ~lv_alias.nomenclator_items.any(NomenclatorItem.id == val)
+                
+                conditions.append(and_(cond_text, cond_relation))
+            
+            # ---------------------------------------------------------
+            # 5. Operadores de Texto Parcial (LIKE, ILIKE)
+            # ---------------------------------------------------------
+            elif f.operator == "like": 
+                # Solo aplica a columna valor texto
+                conditions.append(func.lower(db_val).contains(str(val).lower()))
+            
+            elif f.operator == "ilike": 
+                conditions.append(db_val.ilike(f"%{val}%"))
+
+            # Aplicamos los filtros de esta iteración (AND con los joins anteriores)
+            query = query.filter(and_(*conditions))
+
+        # Paginación y Ejecución
+        total, query = cls._paginate(query, page, page_size)
+        items = cls._execute_read_query(query, detailed)
+        
+        return total, items
+
+
+    @classmethod
+    def find_duplicate(cls, session, campaign_id: int, primary_values: dict) -> bool:
+        """
+        Busca si existe algún Lead en la campaña que coincida EXACTAMENTE
+        con TODOS los valores primarios pasados.
+        primary_values = {field_id: 'valor', field_id_2: 'valor_2'}
+        """
+        if not primary_values:
+            return False
+
+        # Empezamos buscando leads de esa campaña
+        query = session.query(cls.model).filter(cls.model.campaign_id == campaign_id)
+
+        # Iteramos dinámicamente sobre cada campo primario (AND lógico)
+        for f_id, val in primary_values.items():
+            # Filtramos leads que tengan un valor asociado que coincida
+            query = query.filter(
+                cls.model.field_values.any(
+                    and_(
+                        LeadFieldValue.field_id == f_id,
+                        LeadFieldValue.value == str(val) # Comparamos como string
+                    )
+                )
             )
 
-            lead_resp = LeadResponse.model_validate(lead)
-            lead_resp._field_values = lead.field_values 
-            return lead_resp
+        # Si existe al menos uno, es duplicado
+        return query.first() is not None
+
+    @classmethod
+    def upsert_values(cls, session, lead_id: int, values: list):
+        # 1. Obtener valores existentes
+        existing_values = session.query(LeadFieldValue).filter(LeadFieldValue.lead_id == lead_id).all()
+        existing_map = {v.field_id: v for v in existing_values}
+
+        for item_proxy in values:
+            field_id = item_proxy.field_id
+            new_val_str = item_proxy.value
+            
+            # Recuperamos el objeto de la DB o creamos uno nuevo
+            if field_id in existing_map:
+                field_val_obj = existing_map[field_id]
+                field_val_obj.value = new_val_str
+            else:
+                field_val_obj = LeadFieldValue(lead_id=lead_id, field_id=field_id, value=new_val_str)
+                session.add(field_val_obj)
+            
+            # FLUSH CRÍTICO: Necesitamos que field_val_obj tenga ID para las relaciones M2M
+            session.flush() 
+            
+            # -------------------------------------------------------------
+            # A. NOMENCLADORES
+            # -------------------------------------------------------------
+            new_ids_list = getattr(item_proxy, 'nomenclator_ids_list', None)
+            if new_ids_list is not None: # Solo si viene la lista (vacía o llena)
+                if new_ids_list:
+                    items_objs = session.query(NomenclatorItem).filter(NomenclatorItem.id.in_(new_ids_list)).all()
+                    field_val_obj.nomenclator_items = items_objs
+                else:
+                    field_val_obj.nomenclator_items = []
+
+            # -------------------------------------------------------------
+            # B. LEADS RELACIONADOS
+            # -------------------------------------------------------------
+            related_ids = getattr(item_proxy, 'related_lead_ids_list', None)
+            
+            # Solo actuamos si related_ids no es None (es decir, es un campo tipo LEAD)
+            if related_ids is not None:
+                # 1. Limpiamos relaciones anteriores (Estrategia segura: Delete + Insert)
+                # Esto es más eficiente que comparar conjuntos en Python para listas grandes
+                session.execute(
+                    delete(lead_field_value_leads_assoc)
+                    .where(lead_field_value_leads_assoc.c.lead_field_value_id == field_val_obj.id)
+                )
+                
+                # 2. Insertamos las nuevas (si hay)
+                if related_ids:
+                    insert_stmts = []
+                    for rid in related_ids:
+                        insert_stmts.append({
+                            "lead_field_value_id": field_val_obj.id, # Ahora seguro tiene ID gracias al flush
+                            "related_lead_id": rid
+                        })
+                    session.execute(insert(lead_field_value_leads_assoc), insert_stmts)
+
+    @classmethod
+    def has_leads_in_campaign(cls, session, campaign_id: int) -> bool:
+        """Devuelve True si existe al menos un lead en la campaña."""
+        # Usamos limit(1) para que sea ultra rápido, no necesitamos contar todos
+        return session.query(cls.model.id).filter(cls.model.campaign_id == campaign_id).limit(1).first() is not None

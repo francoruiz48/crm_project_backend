@@ -1,8 +1,20 @@
+import requests
+import re
 from app.db.session import SessionLocal
+from app.models.campaign import Campaign
+from app.models.lead_field import LeadField
 from app.models.lead_field_type import LeadFieldType
-from app.models.validation_rule_type import ValidationRuleType
-from app.models.validation_rule_type_compatibility import ValidationRuleTypeCompatibility
+from app.models.nomenclator import Nomenclator
+from app.models.nomenclator_item import NomenclatorItem
+from app.models.security_models import Permission, Role, User
+from app.models.workspace import Workspace
+from app.models.lead_field_subtype import LeadFieldSubtype
+from app.models.lead_field_section import LeadFieldSection
+from app.models.organization import Organization
 
+# -----------------------------------------------------------------------------
+# HELPER GENÉRICO
+# -----------------------------------------------------------------------------
 def seed_generic(
     db,
     model,
@@ -11,21 +23,18 @@ def seed_generic(
     resolve_fk: dict[str, tuple] = None,
 ):
     """
-    model: Modelo SQLAlchemy destino
-    items: lista de diccionarios con datos
-    unique_by: campos que identifican un registro existente
-    resolve_fk: { "campo_fk": (ModeloFK, "campo_lookup") }
+    Inserta datos solo si no existen previamente.
     """
-
     resolve_fk = resolve_fk or {}
+    created_count = 0
 
     for item in items:
         data = item.copy()
 
         # 1. Resolver foreign keys
+        should_skip = False
         for fk_field, (fk_model, lookup_field) in resolve_fk.items():
             lookup_value = item.get(fk_field)
-
             if lookup_value is None:
                 continue
 
@@ -34,87 +43,344 @@ def seed_generic(
             ).first()
 
             if not fk_obj:
-                raise ValueError(
-                    f"[Seeder] No existe {fk_model.__name__}.{lookup_field} = {lookup_value}"
-                )
+                print(f"⚠️ [Seeder] Saltando registro. No existe {fk_model.__name__}.{lookup_field} = {lookup_value}")
+                should_skip = True
+                break
 
             data[fk_field] = lookup_value
+        
+        if should_skip:
+            continue
 
         # 2. Verificar existencia por clave única múltiple
-        filters = {field: data[field] for field in unique_by}
+        filters = {field: data[field] for field in unique_by if field in data}
+        
+        # Si filters está vacío, es peligroso filtrar, mejor saltar
+        if not filters:
+            continue
 
         exists = db.query(model).filter_by(**filters).first()
         if exists:
+            # Ya existe, no hacemos nada
             continue
 
         # 3. Insertar
         db.add(model(**data))
+        created_count += 1
+    
+    if created_count > 0:
+        print(f"   ✅ Se crearon {created_count} registros en {model.__name__}")
 
 
+# -----------------------------------------------------------------------------
+# EXECUTOR PRINCIPAL
+# -----------------------------------------------------------------------------
+def run_seeds(db=None):
 
-def run_seeds():
-    db = SessionLocal()
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+
     try:
+        print("🌱 Iniciando Seeders...")
+        
+        # 1. RBAC (Usuarios, Roles, Permisos)
+        seed_rbac(db)
+        db.commit() # Commit por bloques para asegurar integridad
+
+        # 2. Tipos de Campos
         seed_lead_field_types(db)
         db.commit()
-        seed_validation_rule_types(db)
+
+        seed_lead_field_subtypes(db)
         db.commit()
-        seed_validation_rule_type_compatibilities(db)
+
+        seed_lead_field_sections(db)
         db.commit()
-    except Exception:
+
+        # 3. Geografía
+        seed_geography_separated(db)
+        db.commit()
+
+        seed_nomenclator_sex(db)
+        db.commit()
+
+        print("🚀 Seeders finalizados correctamente.")
+
+    except Exception as e:
+        print(f"🔥 Error crítico en Seeders: {e}")
         db.rollback()
         raise
     finally:
-        db.close()
+        if should_close:
+            db.close()
 
 
+def seed_lead_field_sections(db):
+    print("Procesando Secciones de Campos...")
+    datos = [
+        {"name": "Datos Personales"},       
+        {"name": "Información de Contacto"},
+        {"name": "Detalles Adicionales"}          
+    ]
+    # Usamos 'name' como clave única para no duplicar
+    seed_generic(db, model=LeadFieldSection, items=datos, unique_by=["name"])
+
+# -----------------------------------------------------------------------------
+# 1. SEED LEAD FIELD TYPES
+# -----------------------------------------------------------------------------
 def seed_lead_field_types(db):
+    print("Procesando LeadFieldTypes...")
     datos = [
         {"code": "STRING", "description": "Texto"},
         {"code": "INT", "description": "Número entero"},
         {"code": "NUMBER", "description": "Número decimal"},
         {"code": "DATE", "description": "Fecha"},
+        {"code": "DATE_TIME", "description": "Fecha y hora"},
         {"code": "BOOL", "description": "Valor verdadero/falso"},
+        {"code": "SELECTOR", "description": "Selector"},
+        {"code": "CHECKBOX", "description": "Casilla de verificación"},
+        {"code": "FILE", "description": "Archivo"},
+        {"code": "CALCULATED", "description": "Campo calculado"},
+        {"code": "LEAD", "description": "Lead"},
+        {"code": "MONEY", "description": "Moneda"},
+        {"code": "EMAIL", "description": "Email"},
+        {"code": "URL", "description": "Enlace"},
+        {"code": "PHONE", "description": "Teléfono"},
+        {"code": "RATING", "description": "Rating"},
+        {"code": "ADDRESS", "description": "Dirección"},
+        {"code": "RICH_TEXT", "description": "Texto Enriquecido"},
+        {"code": "TAGS", "description": "Etiquetas"},
+        {"code": "PASSWORD", "description": "Contraseña"},
     ]
+    seed_generic(db, model=LeadFieldType, items=datos, unique_by=["code"])
 
-    seed_generic(db, model = LeadFieldType, items = datos, unique_by=["code"])
-
-
-def seed_validation_rule_types(db):
+def seed_lead_field_subtypes(db):
+    print("Procesando LeadFieldSubTypes...")
     datos = [
-        {"code": "MAX_LENGTH","description": "La longitud máxima del campo"},
-        {"code": "MIN_LENGTH","description": "La longitud mínima del campo"},
-        {"code": "NUMBER_MIN","description": "El valor numérico mínimo permitido"},
-        {"code": "NUMBER_MAX","description": "El valor numérico máximo permitido"},
-        {"code": "DATE_LESS_THAN_FIELD","description": "Fecha menor que otra fecha en otro campo"},
-        {"code": "DATE_GREATER_THAN_FIELD","description": "Fecha mayor que otra fecha en otro campo"},
-        {"code": "STRING_REGEX","description": "El texto debe coincidir con una expresión regular"},
-        {"code": "REQUIRED_IF_FIELD_EQUALS","description": "El campo es obligatorio si otro campo tiene un valor específico"}
+        {"code": "SELECTOR_MULTIPLE", "description": "Multiple", "lead_field_type_code": "SELECTOR"},
+        {"code": "SELECTOR_SIMPLE", "description": "Simple", "lead_field_type_code": "SELECTOR"},
+        {"code": "CHECKBOX_MULTIPLE", "description": "Multiple", "lead_field_type_code": "CHECKBOX"},
+        {"code": "CHECKBOX_SIMPLE", "description": "Simple", "lead_field_type_code": "CHECKBOX"},
+        {"code": "FILE_IMAGE", "description": "Imagen", "lead_field_type_code": "FILE"},
+        {"code": "FILE_DOCUMENT", "description": "Documento", "lead_field_type_code": "FILE"},
+        {"code": "WEBSITE", "description": "Sitio Web", "lead_field_type_code": "URL"},
+        {"code": "SOCIAL_MEDIA", "description": "Red Social", "lead_field_type_code": "URL"},
+        {"code": "WHATSAPP", "description": "WhatsApp", "lead_field_type_code": "PHONE"},
+        {"code": "MOBILE", "description": "Teléfono Movil", "lead_field_type_code": "PHONE"},
+        {"code": "LANDLINE", "description": "Teléfono Fijo", "lead_field_type_code": "PHONE"},
+        {"code": "STAR_RATING", "description": "Calificación de estrellas", "lead_field_type_code": "RATING"},
+        {"code": "NPS", "description": "Indicador del 1 al 10", "lead_field_type_code": "RATING"},
+        {"code": "SCORE", "description": "Valor del 0 al 100", "lead_field_type_code": "RATING"},
+        {"code": "SIMPLE_ADDRESS", "description": "Texto Plano multi-línea", "lead_field_type_code": "ADDRESS"},
+        {"code": "MAPS_URL", "description": "URL de Google Maps", "lead_field_type_code": "ADDRESS"},
+        {"code": "COORDINATES", "description": "Latitud y Longitud", "lead_field_type_code": "ADDRESS"},
+        {"code": "HTML", "description": "HTML", "lead_field_type_code": "RICH_TEXT"},
+        {"code": "MARKDOWN", "description": "MARKDOWN", "lead_field_type_code": "RICH_TEXT"},
     ]
-
-    seed_generic(db, model = ValidationRuleType, items = datos, unique_by=["code"])
-
-def seed_validation_rule_type_compatibilities(db):
-    datos = [
-        {"validation_rule_type_code": "MAX_LENGTH", "lead_field_type_code": "STRING"},
-        {"validation_rule_type_code": "MIN_LENGTH", "lead_field_type_code": "STRING"},
-        {"validation_rule_type_code": "NUMBER_MIN", "lead_field_type_code": "INT"},
-        {"validation_rule_type_code": "NUMBER_MAX", "lead_field_type_code": "INT"},
-        {"validation_rule_type_code": "NUMBER_MIN", "lead_field_type_code": "NUMBER"},
-        {"validation_rule_type_code": "NUMBER_MAX", "lead_field_type_code": "NUMBER"},
-        {"validation_rule_type_code": "DATE_LESS_THAN_FIELD", "lead_field_type_code": "DATE"},
-        {"validation_rule_type_code": "DATE_GREATER_THAN_FIELD", "lead_field_type_code": "DATE"},
-        {"validation_rule_type_code": "STRING_REGEX", "lead_field_type_code": "STRING"},
-        {"validation_rule_type_code": "REQUIRED_IF_FIELD_EQUALS", "lead_field_type_code": "STRING"},
-    ]
-
-    seed_generic(
-        db,
-        model=ValidationRuleTypeCompatibility,
-        items=datos,
-        unique_by=["validation_rule_type_code", "lead_field_type_code"],
-        resolve_fk={
-            "validation_rule_type_code": (ValidationRuleType, "code"),
-            "lead_field_type_code": (LeadFieldType, "code"),
-        },
+    seed_generic(db, model=LeadFieldSubtype, items=datos, unique_by=["code"],resolve_fk={"lead_field_type_code": (LeadFieldType, "code")}
     )
+# -----------------------------------------------------------------------------
+# 2. SEED RBAC (Corregido con validaciones)
+# -----------------------------------------------------------------------------
+def seed_rbac(db):
+    print("Procesando RBAC Automático...")
+
+    ENTITIES = [
+        "lead",
+        "lead_field",
+        "lead_field_type",
+        "validation_rule",
+        "campaign",
+        "nomenclator",
+        "nomenclator_item",
+        "user",
+        "role",
+        "permission",
+        "workspace",
+        "lead_field_section",
+        "lead_field_subtype",
+        "lead_comment",
+        "organization"
+    ]
+
+    # 2. Definimos las acciones estándar
+    ACTIONS = {
+        "create": "Crear",
+        "view": "Ver",
+        "update": "Editar",
+        "delete": "Eliminar"
+    }
+
+    # Helper get_or_create
+    def _get_or_create_permission(codename, name):
+        perm = db.query(Permission).filter_by(codename=codename).first()
+        if not perm:
+            perm = Permission(name=name, codename=codename)
+            db.add(perm)
+            # No hacemos flush por cada uno para ir rápido, haremos commit al final
+        return perm
+
+    # --- Generación Masiva de Permisos ---
+    all_permissions = []
+    
+    for entity in ENTITIES:
+        # CRUD Básico: lead:create, lead:view, etc.
+        for action_code, action_label in ACTIONS.items():
+            codename = f"{entity}:{action_code}"
+            name = f"{action_label} {entity.capitalize()}"
+            
+            p = _get_or_create_permission(codename, name)
+            all_permissions.append(p)
+        
+        # Especial: view_all (para scopes como Leads)
+        # Lo creamos para todas por consistencia, o podrías filtrar solo 'lead'
+        p_all = _get_or_create_permission(
+            f"{entity}:view_all", 
+            f"Ver TODOS los {entity.capitalize()}"
+        )
+        all_permissions.append(p_all)
+
+    db.flush() # Guardamos los permisos para tener IDs
+
+    
+
+    # --- Roles ---
+    def _get_or_create_role(name, code):
+        role = db.query(Role).filter_by(code=code).first()
+        if not role:
+            role = Role(name=name, code=code)
+            db.add(role)
+            db.flush()
+        return role
+
+    r_admin = _get_or_create_role("Admin", "admin")
+
+    # --- Asignación de Permisos ---
+    
+    # Admin: Tiene TODO
+    all_db_perms = db.query(Permission).all()
+    r_admin.permissions = all_db_perms
+
+    # --- Usuarios ---
+    def _get_or_create_user(email, roles_list):
+        user = db.query(User).filter_by(email=email).first()
+        if not user:
+            user = User(email=email, is_superuser=True)
+            # Asignamos la lista de roles
+            user.roles = roles_list
+            db.add(user)
+            db.flush()
+        return user
+
+    # Admin tiene Rol Admin
+    _get_or_create_user("admin@crm.com", [r_admin])
+    
+    db.commit() 
+
+
+def get_or_create_nomenclator(db, name):
+        nom = db.query(Nomenclator).filter_by(name=name).first()
+        if not nom:
+            nom = Nomenclator(name=name)
+            db.add(nom)
+            db.flush()
+        return nom
+
+def get_or_create_nomenclator_item(db, nomenclator_id, code, value, parent_id):
+    item = db.query(NomenclatorItem).filter_by(code=code, nomenclator_id=nomenclator_id).first()
+    if not item:
+        item = NomenclatorItem(
+            code=code,
+            value=value,
+            nomenclator_id=nomenclator_id,
+            parent_item_id=parent_id
+        )
+        db.add(item)
+        db.flush()
+    return item
+
+# -----------------------------------------------------------------------------
+# 3. SEED GEOGRAFÍA
+# -----------------------------------------------------------------------------
+def seed_geography_separated(db):
+    print("🌍 Iniciando Seed de Geografía...")
+
+    # 1. Nomencladores Base
+    nom_pais = get_or_create_nomenclator(db, "Países")
+    nom_prov = get_or_create_nomenclator(db, "Provincias")
+
+    # 2. Datos Externos
+    TARGET_COUNTRIES = ["AR", "CL", "BR", "ES", "US"] 
+    API_BASE = "https://countriesnow.space/api/v0.1/countries"
+    
+    try:
+        # Petición HTTP
+        resp = requests.get(f"{API_BASE}/states")
+        data = resp.json()
+        
+        if data.get("error"):
+            print("❌ Error en API externa de geografía")
+            return
+
+        all_countries = data.get("data", [])
+        selected = [c for c in all_countries if c['iso2'] in TARGET_COUNTRIES]
+
+        for country in selected:
+            c_name = country['name']
+            c_iso = country['iso2']
+            c_states = country['states']
+
+            # País
+            country_item = get_or_create_nomenclator_item(
+                db=db,
+                nomenclator_id=nom_pais.id, 
+                code=c_iso, 
+                value=c_name, 
+                parent_id=None 
+            )
+
+            # Provincias / Estados
+            for state in c_states:
+                s_name = state['name']
+                # Generación de código seguro
+                s_code_suffix = state.get('state_code') or re.sub(r'[^a-zA-Z0-9]', '', s_name)[:3].upper()
+                s_full_code = f"{c_iso}-{s_code_suffix}"
+
+                get_or_create_nomenclator_item(
+                    db=db,
+                    nomenclator_id=nom_prov.id,
+                    code=s_full_code,
+                    value=s_name,
+                    parent_id=country_item.id 
+                )
+
+    except Exception as e:
+        print(f"⚠️ Error procesando geografía (puede ser conexión): {e}")
+        # No hacemos rollback aquí para no matar los seeds anteriores, solo geografía fallará
+
+
+def seed_nomenclator_sex(db):
+    print("Procesando Nomenclador 'Sexo'...")
+    datos = [
+        {"code": "MALE", "value": "Masculino"},
+        {"code": "FEMALE", "value": "Femenino"},
+        {"code": "OTHER", "value": "Otro"},
+    ]
+
+    nom_gen = get_or_create_nomenclator(db, "Genero")
+
+    for item in datos:
+        get_or_create_nomenclator_item(
+            db=db,
+            nomenclator_id=nom_gen.id, 
+            code=item["code"],
+            value=item["value"],
+            parent_id=None
+        )
+
+
+
+
+
