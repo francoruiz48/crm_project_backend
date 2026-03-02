@@ -210,35 +210,57 @@ class ValidationRuleService(BaseService):
             current_obj = cls.repository.get_by_id(uow.session, obj_id)
             if not current_obj: cls._not_found(obj_id)
 
-            get = lambda k: getattr(obj_data, k, None) or (isinstance(obj_data, dict) and obj_data.get(k))
-            
-            def set_val(k, v):
-                if isinstance(obj_data, dict): obj_data[k] = v
-                else: setattr(obj_data, k, v)
+            # Convertimos a diccionario usando exclude_unset para saber qué envió realmente el usuario
+            if hasattr(obj_data, "model_dump"):
+                data = obj_data.model_dump(exclude_unset=True)
+            else:
+                data = obj_data.copy()
 
-            new_expr = get("expression")
-            new_tmpl_code = get("template_code")
-            new_tmpl_params = get("template_params")
+            # ===============================================================
+            # 1. Inmutabilidad de Plantilla (Template)
+            # ===============================================================
+            if "template_code" in data:
+                if data["template_code"] != current_obj.template_code:
+                    errors.append({
+                        "field": "template_code",
+                        "message": "No se puede modificar ni asignar una plantilla a una regla ya creada."
+                    })
 
-            # --- Actualización Template ---
-            # Si cambian el template o los parámetros, regeneramos la expresión
-            if new_tmpl_code or new_tmpl_params:
-                final_code = new_tmpl_code if new_tmpl_code is not None else current_obj.template_code
-                final_params = new_tmpl_params if new_tmpl_params is not None else current_obj.template_params or {}
+            new_expr = data.get("expression")
+            new_tmpl_params = data.get("template_params")
 
-                if final_code:
-                    generated_expr = cls._build_expression_from_template(final_code, final_params, errors)
+            # ===============================================================
+            # 2. Control de Flujo (Manual vs Template)
+            # ===============================================================
+            if current_obj.template_code:
+                # CASO A: Es una regla basada en plantilla
+                
+                # Bloqueamos el intento de meter una expresión a mano
+                if "expression" in data and new_tmpl_params is None:
+                     errors.append({
+                         "field": "expression",
+                         "message": "Esta regla utiliza una plantilla. Modifique los parámetros ('template_params') en lugar de la expresión directa."
+                     })
+                
+                # Si envían nuevos parámetros, regeneramos la expresión
+                if new_tmpl_params is not None:
+                    generated_expr = cls._build_expression_from_template(current_obj.template_code, new_tmpl_params, errors)
                     if generated_expr:
-                        set_val("expression", generated_expr)
-            
-            # --- Edición Manual ---
-            elif new_expr is not None:
-                # Si meten expresión manual, limpiamos el template link
-                set_val("template_code", None)
-                set_val("template_params", None)
+                        data["expression"] = generated_expr
+            else:
+                # CASO B: Es una regla manual (sin plantilla)
+                
+                # Bloqueamos el intento de enviarle parámetros de plantilla
+                if "template_params" in data:
+                    errors.append({
+                        "field": "template_params",
+                        "message": "Esta regla es manual y no acepta parámetros de plantilla."
+                    })
 
-            # --- Validar sintaxis final ---
-            final_expr = get("expression")
+            # ===============================================================
+            # 3. Validar sintaxis final
+            # ===============================================================
+            final_expr = data.get("expression")
             
             if final_expr:
                 # Obtenemos tipo del campo padre para validación precisa
@@ -247,11 +269,11 @@ class ValidationRuleService(BaseService):
                 
                 cls._check_expression_syntax(final_expr, errors, field_type_code=ft_code)
 
-            # Check final
+            # --- Check final ---
             if errors:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
 
-            return cls.repository.update(uow.session, obj_id, obj_data)
+            return cls.repository.update(uow.session, obj_id, data)
 
         return cls._execute(
             action="Actualizando Regla",

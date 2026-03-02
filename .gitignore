@@ -1,8 +1,8 @@
 __pycache__/
 *.pyc
 .pytest_cache
- test_results.log
 app/db/repository/__pycache__/base_repository.cpython-311.pyc
 app/db/repository/__pycache__/base_repository.cpython-311.pyc
 app/schemas/__pycache__/pagination_schema.cpython-311.pyc
+.test_results
 test_results.log

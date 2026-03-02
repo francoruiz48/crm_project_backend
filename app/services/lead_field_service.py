@@ -284,6 +284,14 @@ class LeadFieldService(BaseService):
             if new_type and new_type != current_field.field_type_code:
                 errors.append({"field": "field_type_code", "message": "No se puede cambiar el tipo de dato de un campo existente."})
 
+            # Inmutabilidad de Plantilla (Template)
+            if "field_template_code" in data:
+                if data["field_template_code"] != current_field.field_template_code:
+                    errors.append({
+                        "field": "field_template_code", 
+                        "message": "No se puede modificar ni asignar una plantilla a un campo ya creado."
+                    })
+
             # 2. Validar Unicidad de Nombre
             new_name = data.get("name")
             if new_name and new_name != current_field.name:
