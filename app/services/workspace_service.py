@@ -14,7 +14,6 @@ class WorkspaceService(BaseService):
             existing = cls.repository.get_all(
                 session=uow.session, 
                 name=obj_in.name,
-                organizacion_id=obj_in.organization_id,
                 only_active=True
             )
             

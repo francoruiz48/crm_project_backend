@@ -16,7 +16,6 @@ class CampaignService(BaseService):
         def do_create(uow):
             errors = []
 
-            #Inferencia de organization
             workspace = cls.workspace_repository.get_by_id(uow.session, obj_in.workspace_id)
             if not workspace:
                 errors.append({"field": "workspace_id", "message": "El espacio de trabajo especificado no existe."})
@@ -25,7 +24,6 @@ class CampaignService(BaseService):
                     session=uow.session, 
                     name=obj_in.name, 
                     workspace_id=obj_in.workspace_id,
-                    organizacion_id=workspace.organization_id,
                     only_active=True
                 )
                 
@@ -37,8 +35,6 @@ class CampaignService(BaseService):
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
             
             data = obj_in.model_dump()
-            data['organization_id'] = workspace.organization_id
-
 
             return cls.repository.create(uow.session, data, created_by)
 
