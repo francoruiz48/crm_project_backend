@@ -94,8 +94,7 @@ class LeadFieldService(BaseService):
             campaign = cls.campaign_repository.get_by_id(uow.session, campaign_id)
             if not campaign:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "campaign_id", "message": f"La campaña {campaign_id} no existe."}])
-            
-            data['organization_id'] = campaign.organization_id
+        
 
             # --- 2. EXTRACCIÓN DE DATOS ---
             template_code = data.get("field_template_code")
@@ -226,7 +225,6 @@ class LeadFieldService(BaseService):
                 for rule_cfg in rules_to_create:
                     rule_payload = rule_cfg.copy()
                     rule_payload["field_id"] = new_field.id
-                    rule_payload["organization_id"] = data['organization_id']
                     ValidationRuleService.create_within_session(
                         session=uow.session, 
                         obj_data=rule_payload,
@@ -243,7 +241,6 @@ class LeadFieldService(BaseService):
                     for rule_cfg in implicit_rules:
                         rule_payload = rule_cfg.copy()
                         rule_payload["field_id"] = new_field.id
-                        rule_payload["organization_id"] = data['organization_id']
                         origin = subtype_code if rule_cfg in DEFAULT_SUBTYPE_RULES.get(subtype_code, []) else field_type_code
                         rule_payload["name"] = f"Auto-Rule ({origin})" 
                         

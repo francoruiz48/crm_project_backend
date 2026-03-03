@@ -437,17 +437,13 @@ class LeadService(BaseService):
             # Usamos la lógica compartida
             clean_values, _, _ = cls._prepare_creation_data(uow, obj_in, files_map, created_by, is_simulation=False)
             
-            # Inferencia de organization
             campaign = cls.campaign_repository.get_by_id(uow.session, obj_in.campaign_id)
             if not campaign:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "campaign_id", "message": "La campaña no existe."}])
-            
-            org_id = campaign.organization_id
 
             # Persistencia Real
             lead_data = {
-                'campaign_id': obj_in.campaign_id,
-                'organization_id': org_id 
+                'campaign_id': obj_in.campaign_id
             }
 
             lead = cls.repository.create(uow.session, lead_data, created_by=created_by)
@@ -460,16 +456,12 @@ class LeadService(BaseService):
     @classmethod
     def simulate_create(cls, obj_in, created_by=None, files_map: dict = None):
         with UnitOfWork() as uow:
-            # 1. Ejecutar validaciones y lógica
             clean_values, context_data, field_defs = cls._prepare_creation_data(uow, obj_in, files_map, created_by, is_simulation=True)
             
-            # 2. Obtener la organización (Dato obligatorio para el Schema)
-            campaign = cls.campaign_repository.get_by_id(uow.session, obj_in.campaign_id)
-            if not campaign:
-                # Esto no debería pasar porque _prepare valida la campaña, pero por seguridad:
-                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Campaña no encontrada")
-            
-            org_id = campaign.organization_id
+            # Para la simulación (que no guarda en DB), podemos usar el ContextVar directamente 
+            # para armar el objeto dummy con el ID correcto.
+            from app.core.context import TENANT_ORG_ID
+            dummy_org_id = TENANT_ORG_ID.get() or 0
 
             simulated_values = []
             fields_map = {f.id: f for f in field_defs}
@@ -479,7 +471,6 @@ class LeadService(BaseService):
                 data = item_proxy._data
                 fid = data['field_id']
                 field_def = fields_map.get(fid)
-                
                 val_display = data.get('value')
                 
                 simulated_values.append({
@@ -489,17 +480,16 @@ class LeadService(BaseService):
                     "value": val_display,
                     "nomenclator_items": [], 
                     "related_leads": [],
-                    # Reconstrucción del objeto Field para el Schema
                     "field": {
                         "id": field_def.id,
                         "name": field_def.name,
                         "field_type": {"code": field_def.field_type_code},
                         "campaign_id": field_def.campaign_id,
-                        "organization_id": org_id,
+                        "organization_id": dummy_org_id,
                         "lead_field_section": {
                             "id": field_def.lead_field_section_id,
                             "name": "Simulated Section",
-                            "organization_id": org_id
+                            "organization_id": dummy_org_id
                         } if field_def.lead_field_section_id else None,
                         "active": True
                     }
@@ -508,14 +498,13 @@ class LeadService(BaseService):
             return {
                 "id": dummy_lead_id,
                 "campaign_id": obj_in.campaign_id,
-                "organization_id": org_id,
+                "organization_id": dummy_org_id,
                 "active": True,
                 "created_at": datetime.now(),
                 "updated_at": datetime.now(),
                 "field_values": simulated_values,
                 "created_by": created_by
             }
-
 
     @classmethod
     def update(cls, obj_id: int, obj_in, files_map: dict = None):

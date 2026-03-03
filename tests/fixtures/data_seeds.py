@@ -17,26 +17,27 @@ def initial_structure(db_session):
 
     camp = Campaign(name="Test Campaign", workspace_id=ws.id, organization_id=org.id)
     db_session.add(camp)
-    db_session.flush()
     
+    # Hacemos commit para asegurar todo en la DB
     db_session.commit()
-    return {"campaign": camp, "workspace": ws, "organization": org}
-
+    
+    # Retornamos un diccionario con IDs puros
+    return {"campaign_id": camp.id, "workspace_id": ws.id, "org_id": org.id}
 
 @pytest.fixture(scope="function")
 def initial_fields(db_session, initial_structure):
-    camp_id = initial_structure["campaign"].id
-    org_id = initial_structure["organization"].id
+    camp_id = initial_structure["campaign_id"]
+    org_id = initial_structure["org_id"]
     
-    # Asegúrate de usar valores correctos para required y types que ya existen en DB (por run_seeds)
     f_nombre = LeadField(
         name="Nombre", 
         field_type_code="STRING", 
         campaign_id=camp_id, 
         required=True, 
         order=1, 
-        lead_field_section_id=1,
-        organization_id=org_id
+        lead_field_section_id=1, 
+        organization_id=org_id,
+        active=True
     )
     f_edad = LeadField(
         name="Edad", 
@@ -44,11 +45,13 @@ def initial_fields(db_session, initial_structure):
         campaign_id=camp_id, 
         required=False, 
         order=2, 
-        lead_field_section_id=1,
-        organization_id=org_id
+        lead_field_section_id=1, 
+        organization_id=org_id,
+        active=True
     )
     
     db_session.add_all([f_nombre, f_edad])
     db_session.commit()
     
-    return {"nombre": f_nombre, "edad": f_edad, "campaign_id": camp_id}
+    # Retornamos un diccionario con IDs puros
+    return {"nombre_id": f_nombre.id, "edad_id": f_edad.id, "campaign_id": camp_id, "org_id": org_id}

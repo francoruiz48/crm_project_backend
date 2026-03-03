@@ -180,8 +180,6 @@ class ValidationRuleService(BaseService):
             if not lead_field:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "field_id", "message": f"El campo {field_id} no existe."}])
             
-            data['organization_id'] = lead_field.organization_id
-            
             # Llamamos a la lógica interna pasando nuestra lista 'errors'
             new_rule = cls.create_within_session(
                 uow.session, 

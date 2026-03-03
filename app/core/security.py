@@ -1,10 +1,11 @@
 from fastapi import Depends, HTTPException, status, Header
 from app.db.session import SessionLocal, get_db
 from app.models.security_models import User
+from app.core.context import TENANT_ORG_ID
 
 # --- MOCK AUTHENTICATION ---
 def get_current_user(db = Depends(get_db)) -> User:
-    user_id_to_simulate = 1 
+    user_id_to_simulate = 1
     
     user = db.get(User, user_id_to_simulate)
     if not user:
@@ -16,12 +17,17 @@ class PermissionChecker:
     def __init__(self, required_permission: str):
         self.required_permission = required_permission
 
-    def __call__(
+    async def __call__(
         self, 
         user: User = Depends(get_current_user), 
         # Exigimos el ID de la organización desde el Header
         x_organization_id: int = Header(default=None, alias="X-Organization-Id")
     ):
+        
+        # GUARDAMOS EL ID EN EL CONTEXTO GLOBAL DE LA PETICIÓN
+        if x_organization_id:
+            TENANT_ORG_ID.set(x_organization_id)
+            
         # 1. Si es superadmin global, tiene acceso a todo (opcional según tus reglas)
         if user.is_superuser:
             return True

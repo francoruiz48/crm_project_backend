@@ -25,6 +25,8 @@ class LeadRepository(BaseRepository):
         """
         query = session.query(cls.model)
 
+        query = cls._apply_tenant_filter(query)
+
         # 1. Filtro Active (Base)
         if only_active:
             query = query.filter(cls.model.active.is_(True))
@@ -86,6 +88,8 @@ class LeadRepository(BaseRepository):
     @classmethod
     def search(cls, session, search_params, detailed: bool = False, page: int = 0, page_size: int = 0):
         query = session.query(cls.model)
+
+        query = cls._apply_tenant_filter(query)
 
         for f in search_params.filters:
             lv_alias = aliased(LeadFieldValue)
@@ -217,6 +221,8 @@ class LeadRepository(BaseRepository):
         # Empezamos buscando leads de esa campaña
         query = session.query(cls.model).filter(cls.model.campaign_id == campaign_id)
 
+        query = cls._apply_tenant_filter(query)
+
         # Iteramos dinámicamente sobre cada campo primario (AND lógico)
         for f_id, val in primary_values.items():
             # Filtramos leads que tengan un valor asociado que coincida
@@ -291,5 +297,8 @@ class LeadRepository(BaseRepository):
     @classmethod
     def has_leads_in_campaign(cls, session, campaign_id: int) -> bool:
         """Devuelve True si existe al menos un lead en la campaña."""
-        # Usamos limit(1) para que sea ultra rápido, no necesitamos contar todos
-        return session.query(cls.model.id).filter(cls.model.campaign_id == campaign_id).limit(1).first() is not None
+        query = session.query(cls.model.id).filter(cls.model.campaign_id == campaign_id)
+        
+        query = cls._apply_tenant_filter(query)
+        
+        return query.limit(1).first() is not None

@@ -6,6 +6,10 @@ import pytest
 from tests.helpers.api_helpers import ApiClient
 
 @pytest.fixture
-def api(client):
-    """Fixture que devuelve el helper de API ya configurado con el cliente"""
-    return ApiClient(client)
+def api(client, initial_structure):
+    """Fixture que devuelve el helper de API ya configurado con el cliente y la organización del test"""
+    # Tomamos el ID puro que generó el fixture initial_structure
+    org_id = initial_structure["org_id"]
+    
+    # Inicializamos el cliente inyectando ese ID específico
+    return ApiClient(client, org_id=org_id)

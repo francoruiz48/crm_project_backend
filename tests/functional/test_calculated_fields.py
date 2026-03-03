@@ -5,7 +5,7 @@ def test_calculated_field_intent_to_assign_a_value(api, initial_structure):
     Intento asignar valor al campo que se define como CALCULATED.
     El sistema debe ignorar el valor enviado y calcular el correcto.
     """
-    camp_id = initial_structure["campaign"].id
+    camp_id = initial_structure["campaign_id"]
     
     # 1. Crear campos base
     f_precio = api.create_lead_field(camp_id, "Precio", "NUMBER")
@@ -38,7 +38,7 @@ def test_calculated_field_arithmetic(api, initial_structure):
     """
     Prueba aritmética simple: Total = Precio * Cantidad
     """
-    camp_id = initial_structure["campaign"].id
+    camp_id = initial_structure["campaign_id"]
     
     # 1. Crear campos
     f_precio = api.create_lead_field(camp_id, "Precio", "NUMBER", order=1)
@@ -68,7 +68,7 @@ def test_calculated_field_logic_and_text(api, initial_structure):
     Prueba lógica compleja: IF + Concatenación
     Fórmula: IF(Edad >= 18, "Mayor: " & Nombre, "Menor")
     """
-    camp_id = initial_structure["campaign"].id
+    camp_id = initial_structure["campaign_id"]
     
     f_nombre = api.create_lead_field(camp_id, "Nombre", "STRING")
     f_edad = api.create_lead_field(camp_id, "Edad", "INT")
@@ -101,7 +101,7 @@ def test_calculated_field_cleaning_functions(api, initial_structure):
     """
     Prueba las funciones de limpieza: TRIM, UPPER, PROPER
     """
-    camp_id = initial_structure["campaign"].id
+    camp_id = initial_structure["campaign_id"]
     
     f_sucio = api.create_lead_field(camp_id, "InputSucio", "STRING")
 
