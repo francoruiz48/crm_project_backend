@@ -6,13 +6,42 @@ from app.core.exceptions.exceptions import AppException, NotFoundException
 from app.core.error_messages import ERROR_DATABASE, ERROR_NOT_FOUND
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import inspect, or_
-from sqlalchemy.orm.interfaces import ONETOMANY
+from app.core.context import TENANT_ORG_ID
 
 class BaseRepository:
     model = None
     schema_out = None
     schema_out_detail = None
     relationships: list = []
+
+    # ===============================================================
+    # Inyección automática de Tenant (Multi-empresa)
+    # ===============================================================
+    @classmethod
+    def _apply_tenant_filter(cls, query, is_read_operation: bool = True):
+        """
+        is_read_operation:
+          - True (Lectura): Trae registros del tenant actual O globales (NULL).
+          - False (Escritura): Trae SOLO registros del tenant actual (protege los globales).
+        """
+        if hasattr(cls.model, "organization_id"):
+            org_id = TENANT_ORG_ID.get()
+            
+            # Si hay un tenant activo en el contexto
+            if org_id is not None:
+                if is_read_operation:
+                    # LECTURA: Ve los suyos O los del sistema (NULL)
+                    query = query.filter(
+                        or_(
+                            cls.model.organization_id == org_id,
+                            cls.model.organization_id.is_(None)
+                        )
+                    )
+                else:
+                    # ESCRITURA: Solo puede tocar los suyos. (Excluye los NULL)
+                    query = query.filter(cls.model.organization_id == org_id)
+                    
+        return query
 
     # ----------------- Helpers internos -----------------
     @classmethod
@@ -157,6 +186,8 @@ class BaseRepository:
         si el modelo tiene ese atributo.
         """
         query = session.query(cls.model)
+
+        query = cls._apply_tenant_filter(query)
             
         # 1. Filtro 'active' (Soft Delete)
         if only_active and hasattr(cls.model, "active"):
@@ -229,6 +260,8 @@ class BaseRepository:
         try:
             query = session.query(cls.model)
 
+            query = cls._apply_tenant_filter(query)
+
             if detailed and cls.relationships:
                 query = cls._apply_relationships(query)
             
@@ -250,6 +283,11 @@ class BaseRepository:
         """Crea un objeto"""
         try:
             data = cls._normalize_data(obj_data)
+            
+            if hasattr(cls.model, "organization_id"):
+                org_id = TENANT_ORG_ID.get()
+                if org_id is not None:
+                    data["organization_id"] = org_id
             
             if created_by is not None and hasattr(cls.model, "created_by"):
                 data["created_by"] = created_by
@@ -274,9 +312,16 @@ class BaseRepository:
         """Actualiza un objeto por id"""
         try:
             data = cls._normalize_data(obj_data)
-            obj = session.get(cls.model, obj_id)
+            query = session.query(cls.model).filter(cls.model.id == obj_id)
+            # PASAMOS FALSE: Para asegurar que no pueda editar un registro global (NULL)
+            query = cls._apply_tenant_filter(query, is_read_operation=False)
+            obj = query.first()
             if not obj:
                 return None
+
+            # IMPORTANTE: Prevenir que el usuario transfiera objetos a otra organización
+            if "organization_id" in data:
+                del data["organization_id"]
 
             for key, value in data.items():
                 setattr(obj, key, value)
@@ -307,7 +352,11 @@ class BaseRepository:
         Returns:
             Dict con claves 'action' ('deleted' | 'disabled') y 'message'.
         """
-        obj = session.get(cls.model, obj_id)
+        query = session.query(cls.model).filter(cls.model.id == obj_id)
+        # PASAMOS FALSE: Para asegurar que no pueda editar un registro global (NULL)
+        query = cls._apply_tenant_filter(query, is_read_operation=False)
+        obj = query.first()
+
         if not obj:
             raise NotFoundException(detail=f"{cls.model.__name__} no encontrado.")
 
@@ -354,12 +403,16 @@ class BaseRepository:
         key_attr: str,
         create_fn,
     ):
-        """
-        Upsert genérico sobre relaciones one-to-many.
-        create_fn: lambda item -> instancia ORM
-        """
         try:
-            parent = session.get(parent_model, parent_id)
+            # 1. Buscar al padre aplicando Tenant Filter
+            parent_query = session.query(parent_model).filter(parent_model.id == parent_id)
+            if hasattr(parent_model, "organization_id"):
+                org_id = TENANT_ORG_ID.get()
+                if org_id is not None:
+                    parent_query = parent_query.filter(parent_model.organization_id == org_id)
+            
+            parent = parent_query.first()
+            
             if not parent:
                 raise NotFoundException(
                     detail=ERROR_NOT_FOUND.format(
@@ -369,33 +422,33 @@ class BaseRepository:
 
             children = getattr(parent, relation_name)
             
-            # Mapa de existentes: { 2: ObjetoORM, 5: ObjetoORM }
-            # Convertimos la clave a string para evitar problemas de tipos (2 vs "2")
             existing = {str(getattr(c, key_attr)): c for c in children}
 
             for item in items:
-                # Obtenemos la clave del item entrante y la convertimos a string
                 raw_key = getattr(item, key_attr)
                 key = str(raw_key)
                 
+                # OJO: Aquí NO inyectamos el tenant al crear el hijo de forma automática, 
+                # porque create_fn (lambda) o la relación de SQLAlchemy se encargará 
+                # de propagar el organization_id / parent_id según cómo esté mapeado.
+                
                 if key in existing:
-                    # UPDATE: El hijo ya existe
                     child_obj = existing[key]
-                    for attr, value in item.dict().items():
+                    
+                    item_dict = item.dict()
+                    if "organization_id" in item_dict:
+                        del item_dict["organization_id"]
+
+                    for attr, value in item_dict.items():
                         setattr(child_obj, attr, value)
                     
-                    # [FIX CRITICO]: Forzamos a la sesión a ver el cambio
                     session.add(child_obj)
                 else:
-                    # CREATE: Es nuevo
                     child = create_fn(item)
                     children.append(child)
-                    session.add(child) # Aseguramos agregar
+                    session.add(child) 
             
-            # Flush para enviar cambios a la DB
             session.flush()
-            
-            # Refrescamos el padre para ver los cambios reflejados
             session.refresh(parent)
         
         except IntegrityError as e:

@@ -11,7 +11,7 @@ class NomenclatorItemBase(BaseModel):
     parent_item_id: Optional[int] = Field(default=None, gt=0)
 
 class NomenclatorItemCreate(NomenclatorItemBase, BaseCreate):
-    organization_id: int = Field(gt=0)
+    pass
 
 
 class NomenclatorItemResponse(NomenclatorItemBase, BaseResponse):

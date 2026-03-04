@@ -106,6 +106,9 @@ def run_seeds(db=None):
         seed_nomenclator_sex(db)
         db.commit()
 
+        seed_test_tenants(db)
+        db.commit()
+
         print("🚀 Seeders finalizados correctamente.")
 
     except Exception as e:
@@ -187,97 +190,167 @@ def seed_lead_field_subtypes(db):
 def seed_rbac(db):
     print("Procesando RBAC Automático...")
 
-    ENTITIES = [
-        "lead",
-        "lead_field",
-        "lead_field_type",
-        "validation_rule",
-        "campaign",
-        "nomenclator",
-        "nomenclator_item",
-        "user",
-        "role",
-        "permission",
-        "workspace",
-        "lead_field_section",
-        "lead_field_subtype",
-        "lead_comment",
-        "organization"
+    # 1. Entidades con CRUD Completo
+    FULL_CRUD_ENTITIES = [
+        "lead", "lead_field", "validation_rule",
+        "campaign", "nomenclator", "nomenclator_item", "user",
+        "role", "workspace", "lead_field_section",
+        "lead_comment", "organization"
     ]
 
-    # 2. Definimos las acciones estándar
+    # 2. Entidades de Solo Lectura (Catálogos del sistema)
+    READ_ONLY_ENTITIES = [
+        "lead_field_type", 
+        "lead_field_subtype",
+        "permission"
+    ]
+
     ACTIONS = {
-        "create": "Crear",
-        "view": "Ver",
-        "update": "Editar",
+        "create": "Crear", 
+        "view": "Ver", 
+        "update": "Editar", 
         "delete": "Eliminar"
     }
 
-    # Helper get_or_create
     def _get_or_create_permission(codename, name):
         perm = db.query(Permission).filter_by(codename=codename).first()
         if not perm:
             perm = Permission(name=name, codename=codename)
             db.add(perm)
-            # No hacemos flush por cada uno para ir rápido, haremos commit al final
         return perm
 
-    # --- Generación Masiva de Permisos ---
+    # --- 1. Generación Masiva de Permisos ---
     all_permissions = []
     
-    for entity in ENTITIES:
-        # CRUD Básico: lead:create, lead:view, etc.
+    # Procesar entidades con CRUD completo
+    for entity in FULL_CRUD_ENTITIES:
+        # Formateamos el nombre visual (ej: "lead_field" -> "Lead Field")
+        entity_name_visual = entity.replace('_', ' ').title()
+
         for action_code, action_label in ACTIONS.items():
             codename = f"{entity}:{action_code}"
-            name = f"{action_label} {entity.capitalize()}"
-            
+            name = f"{action_label} {entity_name_visual}"
             p = _get_or_create_permission(codename, name)
             all_permissions.append(p)
         
-        # Especial: view_all (para scopes como Leads)
-        # Lo creamos para todas por consistencia, o podrías filtrar solo 'lead'
-        p_all = _get_or_create_permission(
-            f"{entity}:view_all", 
-            f"Ver TODOS los {entity.capitalize()}"
-        )
+        p_all = _get_or_create_permission(f"{entity}:view_all", f"Ver TODOS los {entity_name_visual}")
         all_permissions.append(p_all)
 
-    db.flush() # Guardamos los permisos para tener IDs
+    # Procesar entidades de Solo Lectura
+    for entity in READ_ONLY_ENTITIES:
+        entity_name_visual = entity.replace('_', ' ').title()
 
-    
+        # Solo permiso para ver uno específico
+        p_view = _get_or_create_permission(f"{entity}:view", f"Ver {entity_name_visual}")
+        all_permissions.append(p_view)
+        
+        # Solo permiso para ver todos (listados)
+        p_all = _get_or_create_permission(f"{entity}:view_all", f"Ver TODOS los {entity_name_visual}")
+        all_permissions.append(p_all)
 
-    # --- Roles ---
-    def _get_or_create_role(name, code):
-        role = db.query(Role).filter_by(code=code).first()
+    db.flush()
+
+    # --- 2. Roles del Sistema (Plantillas globales) ---
+    def _get_or_create_system_role(name, code):
+        # organization_id=None significa que es un rol global/plantilla
+        role = db.query(Role).filter_by(code=code, organization_id=None).first()
         if not role:
-            role = Role(name=name, code=code)
+            role = Role(name=name, code=code, organization_id=None)
             db.add(role)
             db.flush()
         return role
 
-    r_admin = _get_or_create_role("Admin", "admin")
+    r_admin = _get_or_create_system_role("Admin Global", "admin")
 
-    # --- Asignación de Permisos ---
-    
-    # Admin: Tiene TODO
+    # Asignamos TODOS los permisos (incluyendo los de solo lectura) al rol Admin Global
     all_db_perms = db.query(Permission).all()
     r_admin.permissions = all_db_perms
 
-    # --- Usuarios ---
-    def _get_or_create_user(email, roles_list):
+    # --- 3. Usuario SuperAdmin (Sin Organización) ---
+    def _get_or_create_superadmin(email):
         user = db.query(User).filter_by(email=email).first()
         if not user:
-            user = User(email=email, is_superuser=True)
-            # Asignamos la lista de roles
-            user.roles = roles_list
+            user = User(email=email, is_superuser=True) 
             db.add(user)
             db.flush()
         return user
 
-    # Admin tiene Rol Admin
-    _get_or_create_user("admin@crm.com", [r_admin])
+    # Creamos al admin. Al ser is_superuser=True, no necesita estar 
+    # en la tabla UserOrganization para tener permisos totales.
+    _get_or_create_superadmin("admin@crm.com")
     
-    db.commit() 
+    db.commit()
+
+def seed_test_tenants(db):
+    print("🏢 Iniciando Seed de Organizaciones de Prueba (Multi-Tenant)...")
+
+    # 1. Crear Organizaciones
+    org_alpha = db.query(Organization).filter_by(name="Empresa Alpha").first()
+    if not org_alpha:
+        org_alpha = Organization(name="Empresa Alpha", description="Tenant A para pruebas")
+        db.add(org_alpha)
+    
+    org_beta = db.query(Organization).filter_by(name="Empresa Beta").first()
+    if not org_beta:
+        org_beta = Organization(name="Empresa Beta", description="Tenant B para pruebas")
+        db.add(org_beta)
+
+    db.flush() # Flush para que la DB les asigne los IDs
+
+    # 2. Obtener el rol global de Admin (creado previamente por seed_rbac)
+    role_base = db.query(Role).filter_by(code="admin", organization_id=None).first()
+    if not role_base:
+        print("⚠️ Advertencia: No se encontró el rol 'admin'. Asegúrate de ejecutar seed_rbac primero.")
+        return
+
+    # 3. Helper interno para crear al usuario y sus membresías
+    def _create_test_user(email, memberships_info):
+        """
+        memberships_info es una lista de tuplas: [(org_obj, role_obj), ...]
+        """
+        user = db.query(User).filter_by(email=email).first()
+        if not user:
+            # IMPORTANTE: is_superuser=False para que la seguridad actúe sobre ellos
+            user = User(email=email, is_superuser=False)
+            db.add(user)
+            db.flush()
+
+        for org_obj, role_obj in memberships_info:
+            from app.models.security_models import UserOrganization
+            
+            membership = db.query(UserOrganization).filter_by(
+                user_id=user.id, 
+                organization_id=org_obj.id
+            ).first()
+            
+            if not membership:
+                membership = UserOrganization(
+                    user_id=user.id,
+                    organization_id=org_obj.id,
+                    active=True
+                )
+                # Asignamos el rol a esta membresía específica
+                membership.roles = [role_obj]
+                db.add(membership)
+        
+        db.flush()
+        return user
+
+    # 4. Crear los Usuarios de Prueba
+    
+    # A. Usuario de una sola empresa (Alpha)
+    _create_test_user("user_alpha@test.com", [(org_alpha, role_base)])
+    
+    # B. Usuario de una sola empresa (Beta)
+    _create_test_user("user_beta@test.com", [(org_beta, role_base)])
+    
+    # C. Usuario Multi-Empresa (Alpha y Beta)
+    user_multi = _create_test_user("user_multi@test.com", [
+        (org_alpha, role_base), 
+        (org_beta, role_base)
+    ])
+
+    print("✅ Organizaciones y Usuarios de prueba creados con éxito.")
 
 
 def get_or_create_nomenclator(db, name):

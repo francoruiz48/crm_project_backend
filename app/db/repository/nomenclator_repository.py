@@ -15,6 +15,8 @@ class NomenclatorRepository(BaseRepository):
 
         query = session.query(cls.model)
 
+        query = cls._apply_tenant_filter(query)
+
         if campaign_id is not None:
             if global_nomenclator is True:
                 query = query.filter(or_(cls.model.campaign_id == campaign_id, cls.model.campaign_id.is_(None)))
