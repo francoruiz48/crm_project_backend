@@ -8,6 +8,7 @@ BASE_URL = "http://localhost:8000"
 LOCALE = 'es_AR'
 
 fake = Faker(LOCALE)
+# Usamos una sesión global para persistir los Headers en todas las peticiones
 session = requests.Session()
 
 # --- CONSTANTES ---
@@ -91,8 +92,9 @@ def create_organization(name, description=None):
     print(f"❌ Error creando Organization: {resp.text}")
     return None
 
-def create_workspace(name, organization_id):
-    resp = session.post(f"{BASE_URL}/workspaces/", json={"name": name, "description": "Auto Generated", "organization_id": organization_id})
+def create_workspace(name):
+    # ELIMINADO: organization_id del payload. Ahora viaja en el Header.
+    resp = session.post(f"{BASE_URL}/workspaces/", json={"name": name, "description": "Auto Generated"})
     if resp.status_code in [200, 201]:
         return resp.json()['id']
     print(f"❌ Error creando Workspace: {resp.text}")
@@ -167,17 +169,14 @@ def setup_base_campaign(campaign_id, sections):
     f_map["apellido"], _ = create_field(campaign_id, sections["Personal"], template_code="LAST_NAME", required=True)
     f_map["dni"], _ = create_field(campaign_id, sections["Personal"], template_code="DNI_ARG", required=True)
     
-    # CAMBIO: Usamos el tipo EMAIL nativo, no STRING
     f_map["email"], _ = create_field(campaign_id, sections["Detalles"], name="Email Personal", type_code=TYPES["EMAIL"])
     
     return f_map
 
 def setup_complex_campaign(campaign_id, sections):
     f_map = {}
-    # Fechas
     f_map["fecha_nac"], _ = create_field(campaign_id, sections["Personal"], template_code="BIRTH_DATE")
     
-    # --- NUEVOS TIPOS DE DATOS ---
     f_map["presupuesto"], _ = create_field(campaign_id, sections["Detalles"], name="Presupuesto Estimado", type_code=TYPES["MONEY"])
     
     f_map["website"], _ = create_field(campaign_id, sections["Detalles"], name="Sitio Web", 
@@ -192,7 +191,6 @@ def setup_complex_campaign(campaign_id, sections):
     f_map["ubicacion"], _ = create_field(campaign_id, sections["Detalles"], name="Ubicación GPS", 
                                          type_code=TYPES["ADDRESS"], subtype_code=SUBTYPES["ADDR_COORDS"])
 
-    # Nomencladores
     f_map["pais_sel"], _ = create_field(campaign_id, sections["Combos"], name="País (Selector)", 
                                         type_code=TYPES["SELECTOR"], subtype_code=SUBTYPES["SEL_SINGLE"], nom_id=1)
     
@@ -231,42 +229,32 @@ def generate_data(campaign_id, f_map, count, nom_data, target_leads_ids=None):
     for _ in range(count):
         values = []
         
-        # Datos Básicos
         if f_map.get("nombre"): values.append({"field_id": f_map["nombre"], "value": fake.first_name()})
         if f_map.get("apellido"): values.append({"field_id": f_map["apellido"], "value": fake.last_name()})
         if f_map.get("dni"): values.append({"field_id": f_map["dni"], "value": str(fake.unique.random_number(digits=8))})
         if f_map.get("email"): values.append({"field_id": f_map["email"], "value": fake.email()})
-        
-        # Fechas
         if f_map.get("fecha_nac"): values.append({"field_id": f_map["fecha_nac"], "value": fake.date_of_birth().isoformat()})
         
-        # --- GENERACIÓN NUEVOS TIPOS ---
         if f_map.get("presupuesto"): 
-            # Money: número float o int (ej: 1500.50)
             values.append({"field_id": f_map["presupuesto"], "value": round(random.uniform(500, 50000), 2)})
             
         if f_map.get("website"): 
             values.append({"field_id": f_map["website"], "value": fake.url()})
             
         if f_map.get("celular"): 
-            # Formato simple para pasar validaciones básicas si las hay (+549...)
             phone_val = f"+54 9 {fake.msisdn()[3:]}" 
             values.append({"field_id": f_map["celular"], "value": phone_val})
             
         if f_map.get("calificacion"): 
-            # Star Rating es 1-5
             values.append({"field_id": f_map["calificacion"], "value": random.randint(1, 5)})
             
         if f_map.get("ubicacion"): 
-            # Coordinates "lat, long"
             coords = f"{fake.latitude()}, {fake.longitude()}"
             values.append({"field_id": f_map["ubicacion"], "value": coords})
 
-        # Cálculos (Inputs)
         if f_map.get("precio"): values.append({"field_id": f_map["precio"], "value": round(random.uniform(10.5, 999.9), 2)})
         if f_map.get("cantidad"): values.append({"field_id": f_map["cantidad"], "value": random.randint(1, 50)})
 
-        # Nomencladores
         if paises:
             pais_rnd = random.choice(paises)['id']
             if f_map.get("pais_sel"): values.append({"field_id": f_map["pais_sel"], "value": pais_rnd})
@@ -276,7 +264,6 @@ def generate_data(campaign_id, f_map, count, nom_data, target_leads_ids=None):
             provs_ids = [p['id'] for p in provs_rnd]
             if f_map.get("prov_multi"): values.append({"field_id": f_map["prov_multi"], "value": provs_ids})
 
-        # Relaciones
         if target_leads_ids and f_map.get("referido_por"):
             related = random.sample(target_leads_ids, k=random.randint(1, 2))
             values.append({"field_id": f_map["referido_por"], "value": related})
@@ -288,6 +275,18 @@ def generate_data(campaign_id, f_map, count, nom_data, target_leads_ids=None):
 def run_seed():
     print("\n--- 🚀 SEEDING MASTER V7 (Tipos Avanzados) ---")
     
+    # 1. Crear Organización PRIMERO para obtener el ID
+    org_id = create_organization("Empresa Demo")
+    if not org_id:
+        print("❌ Abortando: No se pudo crear la Organización Base.")
+        return
+
+    log(f"Organización creada: ID {org_id}")
+
+    # 2. INYECTAR HEADER MÁGICO EN LA SESIÓN GLOBAL
+    session.headers.update({"X-Organization-Id": str(org_id)})
+
+    # 3. AHORA SÍ buscar Secciones y Nomencladores (aprovechando el header)
     sections = {
         "Personal": get_lead_field_section("Datos Personales"),
         "Detalles": get_lead_field_section("Detalles de Venta"),
@@ -302,9 +301,8 @@ def run_seed():
     if not nom_data['paises']: print("⚠️ Advertencia: Nomenclador 1 (Países) vacío.")
     if not nom_data['provincias']: print("⚠️ Advertencia: Nomenclador 2 (Provincias) vacío.")
 
-    org_id = create_organization("Empresa Demo")
-
-    ws_id = create_workspace(f"Demo Full {datetime.now().strftime('%H:%M:%S')}", org_id)
+    # 4. Continuar con el flujo normal (ya sin pasar org_id a los métodos)
+    ws_id = create_workspace(f"Demo Full {datetime.now().strftime('%H:%M:%S')}")
     if not ws_id: return
 
     log(f"Workspace creado: ID {ws_id}")
