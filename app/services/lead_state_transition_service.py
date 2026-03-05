@@ -21,19 +21,19 @@ class LeadStateTransitionService(BaseService):
             # 2. Validar Existencia y Pertenencia a la campaña (Acumulando errores)
             if not from_state:
                 errors.append({"field": "from_state_id", "message": "El estado de origen no existe."})
-            elif from_state.campaign_id != obj_in.campaign_id:
-                errors.append({"field": "from_state_id", "message": "El estado de origen no pertenece a la campaña enviada."})
+            elif from_state.lead_flow_id != obj_in.lead_flow_id:
+                errors.append({"field": "from_state_id", "message": "El estado de origen no pertenece al flujo de leads enviado."})
 
             if not to_state:
                 errors.append({"field": "to_state_id", "message": "El estado de destino no existe."})
-            elif to_state.campaign_id != obj_in.campaign_id:
-                errors.append({"field": "to_state_id", "message": "El estado de destino no pertenece a la campaña enviada."})
+            elif to_state.lead_flow_id != obj_in.lead_flow_id:
+                errors.append({"field": "to_state_id", "message": "El estado de destino no pertenece al flujo de leads enviado."})
 
             # 3. Validar Duplicados (Solo si los estados anteriores son válidos para evitar cruces raros)
             if not errors:
                 existing_route = cls.repository.get_all(
                     uow.session,
-                    campaign_id=obj_in.campaign_id, 
+                    lead_flow_id=obj_in.lead_flow_id, 
                     from_state_id=obj_in.from_state_id, 
                     to_state_id=obj_in.to_state_id
                 )

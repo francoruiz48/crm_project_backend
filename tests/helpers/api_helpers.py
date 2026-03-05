@@ -57,11 +57,12 @@ class ApiClient:
     # ==========================
     # CAMPAÑAS
     # ==========================
-    def create_campaign(self, workspace_id: int, name="Campaña Test", expected_status=None) -> Dict:
+    def create_campaign(self, workspace_id: int, name="Campaña Test", lead_flow_id: int = 1, expected_status=None) -> Dict:
         headers = self._inject_context()
         payload = {
             "name": name, 
             "workspace_id": workspace_id, 
+            "lead_flow_id": lead_flow_id,
             "description": "Created by ApiHelper",
             "active": True
         }

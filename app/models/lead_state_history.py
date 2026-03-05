@@ -15,3 +15,5 @@ class LeadStateHistory(BaseModelDB):
 
     from_state = relationship("LeadState", foreign_keys=[from_state_id])
     to_state = relationship("LeadState", foreign_keys=[to_state_id])
+
+    lead = relationship("Lead", foreign_keys=[lead_id], back_populates="state_history")

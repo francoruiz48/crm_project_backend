@@ -4,7 +4,7 @@ from pydantic import BaseModel, computed_field, Field
 from typing import List, Dict, Any, Optional
 
 class LeadStateBase(BaseModel):
-    campaign_id: int = Field(gt=0)
+    lead_flow_id: int = Field(gt=0)
     name: str = Field(..., min_length=1, max_length=255)
     color: Optional[str] = Field(default=None, max_length=7)  # Ej: "#FF5733"
     category: str = Field(default="OPEN", pattern="^(OPEN|WON|LOST)$")

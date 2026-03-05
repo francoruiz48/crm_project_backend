@@ -3,6 +3,7 @@ import json
 from app.models.lead_field import LeadField
 from app.models.lead import Lead
 from app.models.campaign import Campaign
+from app.models.lead_state import LeadState
 
 # =============================================================================
 # FIXTURES
@@ -20,10 +21,19 @@ def relationship_setup(api, db_session, initial_structure):
     org_id = initial_structure["org_id"]
     ws_id = initial_structure["workspace_id"]
     camp_source_id = initial_structure["campaign_id"]
+    lead_flow_id = initial_structure["lead_flow_id"]
     
     # Campaña Destino
-    camp_target = Campaign(name="Campaña Destino (Pool)", workspace_id=ws_id, organization_id=org_id)
+    camp_target = Campaign(name="Campaña Destino (Pool)", workspace_id=ws_id, lead_flow_id=lead_flow_id, organization_id=org_id)
     db_session.add(camp_target)
+    db_session.flush()
+
+    #Inyectar estado inicial en campaña destino para evitar errores de integridad
+    state_target = LeadState(
+        lead_flow_id=lead_flow_id, organization_id=org_id, 
+        name="Nuevo", category="OPEN", is_initial=True, order=1
+    )
+    db_session.add(state_target)
     db_session.commit()
 
     # Campo simple en target para crear leads
@@ -214,6 +224,7 @@ def test_update_field_change_related_campaign_success(api, db_session, initial_s
     camp_source_id = initial_structure["campaign_id"]
     ws_id = initial_structure["workspace_id"]
     org_id = initial_structure["org_id"]
+    lead_flow_id = initial_structure["lead_flow_id"]
     
     # Crear campo virgen
     res_f = api.client.post("/lead_fields/", json={
@@ -224,7 +235,7 @@ def test_update_field_change_related_campaign_success(api, db_session, initial_s
     f_id = res_f.json()["id"]
 
     # Nueva campaña
-    camp_new = Campaign(name="Otra", workspace_id=ws_id, organization_id=org_id)
+    camp_new = Campaign(name="Otra", workspace_id=ws_id, lead_flow_id=lead_flow_id, organization_id=org_id)
     db_session.add(camp_new)
     db_session.commit()
 
@@ -249,13 +260,21 @@ def test_create_lead_fail_cross_campaign_id(api, db_session, relationship_setup,
     El campo espera leads de 'Camp_Target', pero enviamos uno de 'Camp_Extra'.
     """
     setup = relationship_setup
+    lead_flow_id = initial_structure["lead_flow_id"]
 
     # 1. Crear una Tercera Campaña "Extra" y un Lead ahí
     ws_id = initial_structure["workspace_id"]
     org_id = initial_structure["org_id"]
-    camp_extra = Campaign(name="Campaña Extra", workspace_id=ws_id, organization_id=org_id)
+    camp_extra = Campaign(name="Campaña Extra", workspace_id=ws_id, lead_flow_id=lead_flow_id, organization_id=org_id)
     db_session.add(camp_extra)
-    db_session.commit()
+    db_session.flush()
+    
+    # Inyectar estado inicial a la campaña extra ---
+    state_extra = LeadState(
+        lead_flow_id=lead_flow_id, organization_id=org_id, 
+        name="Nuevo Extra", category="OPEN", is_initial=True, order=1
+    )
+    db_session.add(state_extra)
     
     f_dummy = LeadField(name="Dummy", field_type_code="STRING", campaign_id=camp_extra.id, order=1, lead_field_section_id=1, organization_id=org_id, active=True)
     db_session.add(f_dummy)

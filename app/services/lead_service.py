@@ -448,7 +448,7 @@ class LeadService(BaseService):
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "campaign_id", "message": "La campaña no existe."}])
 
             #Validamos y obtenemos el estado inicial para asignarlo al lead. Si no hay estado inicial, la campaña no tiene un flujo válido.
-            initial_state = cls.state_repository.get_all(uow.session, campaign_id=obj_in.campaign_id, is_initial=True)
+            initial_state = cls.state_repository.get_all(uow.session, lead_flow_id=campaign.lead_flow_id, is_initial=True)
             initial_state = initial_state[0] if initial_state else None
             if not initial_state:
                 raise HTTPException(
@@ -495,12 +495,14 @@ class LeadService(BaseService):
                     status.HTTP_400_BAD_REQUEST, 
                     detail=[{"field": "new_state_id", "message": "El lead ya se encuentra en este estado."}]
                 )
+            
+            campaign = cls.campaign_repository.get_by_id(uow.session, lead.campaign_id)
 
             # 2. Validar que el salto esté permitido en la campaña
             if current_state_id is not None:
                 transition = cls.state_transition_repository.get_all(
                     uow.session, 
-                    campaign_id=lead.campaign_id, 
+                    lead_flow_id=campaign.lead_flow_id, 
                     from_state_id=current_state_id, 
                     to_state_id=new_state_id
                 )

@@ -14,5 +14,6 @@ from app.models.organization import Organization
 from app.models.lead_state import LeadState
 from app.models.lead_state_transition import LeadStateTransition
 from app.models.lead_state_history import LeadStateHistory
+from app.models.lead_flow import LeadFlow
 
-__all__ = ["Lead", "LeadState", "LeadStateTransition", "LeadStateHistory", "LeadFieldType", "LeadField", "LeadFieldValue", "Campaign", "Nomenclator", "NomenclatorItem", "ValidationRule", "Workspace", "LeadFieldSection", "LeadFieldSubtype", "LeadComment", "Organization"]
+__all__ = ["Lead", "LeadState", "LeadStateTransition", "LeadStateHistory", "LeadFlow","LeadFieldType", "LeadField", "LeadFieldValue", "Campaign", "Nomenclator", "NomenclatorItem", "ValidationRule", "Workspace", "LeadFieldSection", "LeadFieldSubtype", "LeadComment", "Organization"]

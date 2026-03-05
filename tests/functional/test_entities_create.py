@@ -21,8 +21,20 @@ def test_create_full_hierarchy_flow(api):
     res_ws = api.create_workspace(name=f"WS Test {rnd}")
     ws_id = res_ws["id"]
 
-    # 3. Campaign
-    res_camp = api.create_campaign(workspace_id=ws_id, name=f"Camp {rnd}")
+    #Crear lead_flow
+    res_flow = api.client.post("/lead_flows/", json={
+        "name": f"Flujo Test {rnd}"
+    }, headers=api.headers)
+
+    assert res_flow.status_code == 200, f"Fallo creando LeadFlow: {res_flow.text}"
+    flow_id = res_flow.json()["id"]
+
+    # 3. Campaign (Agregamos el lead_flow_id)
+    res_camp = api.create_campaign(
+        workspace_id=ws_id, 
+        name=f"Camp {rnd}",
+        lead_flow_id=flow_id
+    )
     camp_id = res_camp["id"]
 
     # 4. Lead Field

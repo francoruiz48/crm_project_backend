@@ -21,6 +21,7 @@ from app.controllers.organization_controller import router as organization_route
 from app.controllers.lead_state_controller import router as lead_state_router
 from app.controllers.lead_state_transition_controller import router as lead_state_transition_router
 from app.controllers.lead_state_history_controller import router as lead_state_history_router
+from app.controllers.lead_flow_controller import router as lead_flow_router
 
 router = APIRouter()
 
@@ -46,3 +47,4 @@ router.include_router(organization_router)
 router.include_router(lead_state_router)
 router.include_router(lead_state_transition_router)
 router.include_router(lead_state_history_router)
+router.include_router(lead_flow_router)

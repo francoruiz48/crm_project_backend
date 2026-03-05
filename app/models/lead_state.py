@@ -1,11 +1,13 @@
 
+from sqlalchemy.orm import relationship
+
 from app.models.base_model import BaseModelDB
 from sqlalchemy import Column, Integer, String, ForeignKey, Boolean
 
 class LeadState(BaseModelDB):
     __tablename__ = "lead_state"
     
-    campaign_id = Column(Integer, ForeignKey("campaign.id"), nullable=False)
+    lead_flow_id = Column(Integer, ForeignKey("lead_flow.id"), nullable=False)
     organization_id = Column(Integer, ForeignKey("organization.id"), nullable=False)
     
     name = Column(String, nullable=False) 
@@ -19,3 +21,5 @@ class LeadState(BaseModelDB):
     
     # Solo aplica para los category="OPEN" para ordenar las columnas
     order = Column(Integer, nullable=True)
+
+    lead_flow = relationship("LeadFlow", back_populates="states")
