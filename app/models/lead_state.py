@@ -18,4 +18,4 @@ class LeadState(BaseModelDB):
     is_initial = Column(Boolean, default=False)
     
     # Solo aplica para los category="OPEN" para ordenar las columnas
-    order = Column(Integer, nullable=True) 
+    order = Column(Integer, nullable=True)

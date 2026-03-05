@@ -16,6 +16,6 @@ class LeadStateTransitionResponse(LeadStateTransitionBase, BaseResponse):
     pass
 
 class LeadStateTransitionDetailedResponse(LeadStateTransitionBase, BaseDetailResponse):
-    from_state = Optional[LeadStateDetailedResponse] = None
-    to_state = LeadStateDetailedResponse
+    from_state : LeadStateDetailedResponse
+    to_state : LeadStateDetailedResponse
 

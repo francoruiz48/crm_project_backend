@@ -17,7 +17,7 @@ class LeadStateHistoryResponse(LeadStateHistoryBase, BaseResponse):
     pass
 
 class LeadStateHistoryDetailedResponse(LeadStateHistoryBase, BaseDetailResponse):
-    from_state = Optional[LeadStateDetailedResponse] = None
-    to_state = LeadStateDetailedResponse
+    from_state : Optional[LeadStateDetailedResponse] = None
+    to_state : LeadStateDetailedResponse
 
     

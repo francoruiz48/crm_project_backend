@@ -9,7 +9,7 @@ class LeadStateTransition(BaseModelDB):
     
     campaign_id = Column(Integer, ForeignKey("campaign.id"), nullable=False)
     
-    from_state_id = Column(Integer, ForeignKey("lead_state.id"), nullable=True)
+    from_state_id = Column(Integer, ForeignKey("lead_state.id"), nullable=False)
     to_state_id = Column(Integer, ForeignKey("lead_state.id"), nullable=False)
 
     __table_args__ = (
