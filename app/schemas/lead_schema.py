@@ -4,6 +4,7 @@ from pydantic import BaseModel, computed_field, Field
 from typing import List, Dict, Any
 from app.schemas.lead_comment_shema import LeadCommentDetailedResponse
 from app.schemas.lead_field_value_schema import LeadFieldValueCreate, LeadFieldValueDetailedResponse, LeadFieldValueResponse
+from app.schemas.lead_state_schema import LeadStateDetailedResponse, LeadStateResponse
 
 
 class LeadBase(BaseModel):
@@ -17,6 +18,7 @@ class LeadResponse(LeadBase, BaseResponse):
         default_factory=list
     )
     organization_id : int
+    current_state: LeadStateResponse
 
 class LeadDetailedResponse(LeadBase, BaseDetailResponse):
     field_values: List[LeadFieldValueDetailedResponse] = Field(
@@ -24,5 +26,6 @@ class LeadDetailedResponse(LeadBase, BaseDetailResponse):
     )
     comments: List[LeadCommentDetailedResponse] = None
     organization_id : int
+    current_state: LeadStateDetailedResponse
 
 

@@ -16,3 +16,4 @@ class Lead(BaseModelDB):
     organization = relationship("Organization", foreign_keys=[organization_id])
 
     current_state_id = Column(Integer, ForeignKey("lead_state.id"), nullable=True)
+    current_state = relationship("LeadState", foreign_keys=[current_state_id])

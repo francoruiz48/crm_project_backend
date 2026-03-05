@@ -12,12 +12,18 @@ from app.services.lead_validation_logic import LeadValidationLogic
 from app.services.excel_formula_evaluator_service import ExcelFormulaEvaluatorService
 from app.services.storage_service import StorageService
 from app.db.repository.campaign_repository import CampaignRepository
-
+from app.db.repository.lead_state_repository import LeadStateRepository
+from app.db.repository.lead_state_transition_repository import LeadStateTransitionRepository
+from app.db.repository.lead_state_history_repository import LeadStateHistoryRepository
 
 class LeadService(BaseService):
     repository = LeadRepository
     field_repository = LeadFieldRepository
     campaign_repository = CampaignRepository
+
+    state_repository = LeadStateRepository
+    state_transition_repository = LeadStateTransitionRepository
+    state_history_repository = LeadStateHistoryRepository
 
     class ItemProxy:
         def __init__(self, data_dict):
@@ -441,17 +447,84 @@ class LeadService(BaseService):
             if not campaign:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "campaign_id", "message": "La campaña no existe."}])
 
-            # Persistencia Real
+            #Validamos y obtenemos el estado inicial para asignarlo al lead. Si no hay estado inicial, la campaña no tiene un flujo válido.
+            initial_state = cls.state_repository.get_all(uow.session, campaign_id=obj_in.campaign_id, is_initial=True)
+            initial_state = initial_state[0] if initial_state else None
+            if not initial_state:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST, 
+                    detail=[{"field": "general", "message": "La campaña no tiene un flujo de estados válido (falta configurar un estado inicial)."}]
+                )
+
+            # Persistencia Real (Ahora inyectamos el current_state_id)
             lead_data = {
-                'campaign_id': obj_in.campaign_id
+                'campaign_id': obj_in.campaign_id,
+                'current_state_id': initial_state.id 
             }
 
             lead = cls.repository.create(uow.session, lead_data, created_by=created_by)
             cls.repository.upsert_values(uow.session, lead.id, clean_values)
             lead_id = lead.id
+
+            state_history_data = {
+                "lead_id": lead_id,
+                "from_state_id": None,
+                "to_state_id": initial_state.id,
+                "notes": "Ingreso al sistema"
+            }
+            cls.state_history_repository.create(uow.session, state_history_data, created_by=created_by)
         
         return cls.get_by_id(lead_id, detailed=True)
 
+    @classmethod
+    def change_state(cls, obj_id: int, new_state_id: int, notes: str = None, user_id: int = None):
+        """
+        Cambia el estado de un lead verificando que la transición sea permitida en el flujo.
+        Registra el evento en el historial.
+        """
+        with UnitOfWork() as uow:
+            lead = cls.repository.get_by_id(uow.session, obj_id)
+            if not lead:
+                cls._not_found(obj_id)
+
+            current_state_id = lead.current_state_id
+
+            # 1. Validar que no estemos moviéndolo al mismo estado
+            if current_state_id == new_state_id:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST, 
+                    detail=[{"field": "new_state_id", "message": "El lead ya se encuentra en este estado."}]
+                )
+
+            # 2. Validar que el salto esté permitido en la campaña
+            if current_state_id is not None:
+                transition = cls.state_transition_repository.get_all(
+                    uow.session, 
+                    campaign_id=lead.campaign_id, 
+                    from_state_id=current_state_id, 
+                    to_state_id=new_state_id
+                )
+
+                if not transition:
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST, 
+                        detail=[{"field": "new_state_id", "message": "Transición no permitida. No hay una ruta válida hacia este estado."}]
+                    )
+
+            # 3. Actualizar el estado actual del Lead
+            cls.repository.update(uow.session, obj_id, {"current_state_id": new_state_id})
+
+            # 4. Inyectar el historial
+            history_data = {
+                "lead_id": lead.id,
+                "from_state_id": current_state_id,
+                "to_state_id": new_state_id,
+                "notes": notes
+            }
+            cls.state_history_repository.create(uow.session, history_data, created_by=user_id)
+
+        # Devolvemos el Lead actualizado para el Frontend
+        return cls.get_by_id(obj_id, detailed=True)
 
     @classmethod
     def simulate_create(cls, obj_in, created_by=None, files_map: dict = None):
