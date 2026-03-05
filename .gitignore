@@ -8,3 +8,4 @@ app/schemas/__pycache__/pagination_schema.cpython-311.pyc
 test_results.log
 test_results.log
 test_results.log
+*.log
