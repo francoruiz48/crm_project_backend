@@ -18,7 +18,7 @@ class LeadResponse(LeadBase, BaseResponse):
         default_factory=list
     )
     organization_id : int
-    current_state: LeadStateResponse
+    current_state_id: int
 
 class LeadDetailedResponse(LeadBase, BaseDetailResponse):
     field_values: List[LeadFieldValueDetailedResponse] = Field(
@@ -27,5 +27,6 @@ class LeadDetailedResponse(LeadBase, BaseDetailResponse):
     comments: List[LeadCommentDetailedResponse] = None
     organization_id : int
     current_state: LeadStateDetailedResponse
+    current_state_id: int
 
 

@@ -11,6 +11,4 @@ class LeadStateController(BaseController):
 
     enabled_methods = {"GET_ALL", "GET_ONE", "POST", "PUT", "DELETE", "ACTIVE"}
 
-    
-
 router = LeadStateController.get_router()
