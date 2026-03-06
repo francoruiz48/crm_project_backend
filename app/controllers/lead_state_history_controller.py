@@ -5,10 +5,10 @@ from app.schemas.lead_state_history_schema import (
     LeadStateHistoryResponse, 
     LeadStateHistoryDetailedResponse
 )
-from typing import Union, Optional
+from typing import Union
 from app.schemas.pagination_schema import PaginatedResponse
 from app.core.constans import DEFAULT_PAGE_SIZE
-from fastapi import Body, Depends, HTTPException, Query, Request, UploadFile
+from fastapi import Query
 
 class LeadStateHistoryController(BaseController):
     router_prefix = "/lead_state_history"
@@ -17,7 +17,7 @@ class LeadStateHistoryController(BaseController):
     schema_out = LeadStateHistoryResponse
     schema_out_detail = LeadStateHistoryDetailedResponse
 
-    enabled_methods = {}
+    enabled_methods = {"GET ONE"}
 
     @classmethod
     def get_router(cls):
