@@ -19,3 +19,11 @@ class LeadStateTransitionDetailedResponse(LeadStateTransitionBase, BaseDetailRes
     from_state : LeadStateDetailedResponse
     to_state : LeadStateDetailedResponse
 
+
+class TransitionPair(BaseModel):
+    from_state_id: int = Field(gt=0)
+    to_state_id: int = Field(gt=0)
+
+class LeadStateTransitionBulkCreate(BaseModel):
+    lead_flow_id: int = Field(gt=0)
+    transitions: List[TransitionPair] = Field(..., min_length=1)
