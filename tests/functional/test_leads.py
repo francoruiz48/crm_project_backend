@@ -1,5 +1,6 @@
 import pytest
 from app.models.lead_field import LeadField
+from app.models.lead_state import LeadState
 from app.models.nomenclator import Nomenclator
 from app.models.nomenclator_item import NomenclatorItem
 from app.models.campaign import Campaign
@@ -410,10 +411,18 @@ def test_get_leads_filtering(api, db_session, initial_structure):
     camp_a_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
     workspace_id = initial_structure["workspace_id"]
+    lead_flow_id = initial_structure["lead_flow_id"]
     
-    camp_b = Campaign(name="Campaña B", workspace_id=workspace_id, organization_id=org_id)
+    camp_b = Campaign(name="Campaña B", workspace_id=workspace_id, lead_flow_id=lead_flow_id, organization_id=org_id)
     db_session.add(camp_b)
-    db_session.commit() # ID generado
+    db_session.flush()
+    
+    # --- Inyectar estado inicial a la campaña extra ---
+    state_extra = LeadState(
+        lead_flow_id=lead_flow_id, organization_id=org_id, 
+        name="Nuevo Extra", category="OPEN", is_initial=True, order=1
+    )
+    db_session.add(state_extra)
 
     f_nom_a = LeadField(name="Nombre A", field_type_code="STRING", campaign_id=camp_a_id, order=1, lead_field_section_id=1, organization_id=org_id, active=True)
     f_nom_b = LeadField(name="Nombre B", field_type_code="STRING", campaign_id=camp_b.id, order=1, lead_field_section_id=1, organization_id=org_id, active=True)

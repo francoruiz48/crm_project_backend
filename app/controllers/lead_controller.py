@@ -11,6 +11,7 @@ from app.schemas.filter_schema import LeadSearchRequest
 from app.schemas.pagination_schema import PaginatedResponse
 from app.services.lead_service import LeadService
 from app.schemas.lead_schema import LeadCreate, LeadDetailedResponse, LeadResponse
+from pydantic import BaseModel, Field
 
 class LeadController(BaseController):
     router_prefix = "/leads"
@@ -206,6 +207,23 @@ class LeadController(BaseController):
             # 2. Llamada a Servicio de Simulación
             result = cls.service.simulate_create(obj_in, created_by=current_user.id, files_map=files_map)
             return result
+        
+        class ChangeStateRequest(BaseModel):
+            new_state_id: int = Field(gt=0)
+            notes: str = None
+
+        @router.post("/{id}/change_state", response_model=ResponseModelItem, dependencies=cls._get_deps("update"))
+        async def change_lead_state(
+            id: int,
+            payload: ChangeStateRequest = Body(...),
+            current_user = Depends(get_current_user)
+        ):
+            return cls.service.change_state(
+                obj_id=id, 
+                new_state_id=payload.new_state_id, 
+                notes=payload.notes, 
+                user_id=current_user.id
+            )
         
         return router
 

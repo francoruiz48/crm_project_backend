@@ -18,3 +18,6 @@ class Campaign(BaseModelDB):
 
     organization_id = Column(Integer, ForeignKey("organization.id"), nullable=False)
     organization = relationship("Organization", foreign_keys=[organization_id])
+
+    lead_flow_id = Column(Integer, ForeignKey("lead_flow.id"), nullable=False) 
+    lead_flow = relationship("LeadFlow", back_populates="campaigns")

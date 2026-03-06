@@ -4,6 +4,7 @@ from app.db.session import SessionLocal
 from app.models.campaign import Campaign
 from app.models.lead_field import LeadField
 from app.models.lead_field_type import LeadFieldType
+from app.models.lead_flow import LeadFlow
 from app.models.nomenclator import Nomenclator
 from app.models.nomenclator_item import NomenclatorItem
 from app.models.security_models import Permission, Role, User

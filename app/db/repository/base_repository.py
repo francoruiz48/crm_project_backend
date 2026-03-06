@@ -296,8 +296,7 @@ class BaseRepository:
             session.add(obj)
             session.flush()  # flush para obtener ID antes de commit
             session.refresh(obj)
-            schema_to_use = cls.schema_out_detail or cls.schema_out
-            return schema_to_use.model_validate(obj) if schema_to_use else obj
+            return cls.schema_out_detail.model_validate(obj)
 
         except IntegrityError as e:
             session.rollback()
@@ -328,8 +327,7 @@ class BaseRepository:
 
             session.flush()
             session.refresh(obj)
-            schema_to_use = cls.schema_out_detail or cls.schema_out
-            return schema_to_use.model_validate(obj) if schema_to_use else obj
+            return cls.schema_out_detail.model_validate(obj)
 
         except IntegrityError as e:
             session.rollback()

@@ -71,6 +71,7 @@ def test_workspace_delete_when_exists_campaign(api, initial_structure):
     api.create_campaign(
         workspace_id=workspace_id, 
         name="Campaign Test Bloqueadora", 
+        lead_flow_id=initial_structure["lead_flow_id"],
         expected_status=200
     )
 
