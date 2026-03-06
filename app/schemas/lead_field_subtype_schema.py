@@ -13,7 +13,6 @@ class LeadFieldSubtypeCreate(LeadFieldSubtypeBase, BaseCreate):
 class LeadFieldSubtypeUpdate(BaseModel):
     code: Optional[str] = Field(default=None, min_length=2, max_length=100)
     description: Optional[str] = Field(default=None, min_length=2, max_length=200)
-    lead_field_type_code: Optional[str] = Field(default=None, min_length=2, max_length=100)
 
 class LeadFieldSubtypeResponse(LeadFieldSubtypeBase, BaseResponse):
     pass

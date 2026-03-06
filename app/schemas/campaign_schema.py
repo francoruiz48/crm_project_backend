@@ -16,7 +16,6 @@ class CampaignCreate(CampaignBase, BaseCreate):
 class CampaignUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=3, max_length=100)
     description: Optional[str] = Field(default=None, max_length=500)
-    workspace_id: Optional[int] = Field(default=None, gt=0)
     lead_flow_id: Optional[int] = Field(default=None)
 
 class CampaignResponse(CampaignBase, BaseResponse):

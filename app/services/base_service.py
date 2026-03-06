@@ -91,15 +91,6 @@ class BaseService:
             func=lambda uow: cls.repository.update(uow.session, obj_id, obj_data),
             success_msg=SUCCESS_UPDATE
         )
-    
-    @classmethod
-    def partial_update(cls, obj_id: int, obj_data):
-        return cls._execute(
-            action="Actualizando parcialmente",
-            obj_id=obj_id,
-            func=lambda uow: cls.repository.update(uow.session, obj_id, obj_data),
-            success_msg=SUCCESS_UPDATE
-        )
 
     @classmethod
     def delete(cls, obj_id: int):

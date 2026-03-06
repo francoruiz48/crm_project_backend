@@ -176,7 +176,7 @@ class LeadController(BaseController):
             obj_in = None
             if lead_dict:
                 try:
-                    obj_in = cls.schema_in(**lead_dict)
+                    obj_in = cls.schema_update(**lead_dict)
                 except Exception as e:
                     raise HTTPException(422, detail=str(e))
             

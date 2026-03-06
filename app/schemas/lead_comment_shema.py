@@ -14,7 +14,6 @@ class LeadCommentCreate(LeadCommentBase, BaseCreate):
 
 class LeadCommentUpdate(BaseModel):
     content: Optional[str] = Field(default=None, min_length=1, max_length=600)
-    lead_id: Optional[int] = Field(default=None, gt=0)
 
 class LeadCommentResponse(LeadCommentBase, BaseResponse):
     pass

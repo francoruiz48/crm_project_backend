@@ -82,19 +82,13 @@ class BaseController:
         if "PUT" in cls.enabled_methods:
             @router.put("/{obj_id}", response_model=ResponseModelItem, 
                 dependencies=cls._get_deps("update"))
-            def update(obj_id: int, obj_in: cls.schema_in = Body(...)):
+            def update(obj_id: int, obj_in: cls.schema_update = Body(...)):
                 return cls.service.update(obj_id, obj_in)
 
         if "DELETE" in cls.enabled_methods:
             @router.delete("/{obj_id}", dependencies=cls._get_deps("delete"))
             def delete(obj_id: int):
                 return cls.service.delete(obj_id)
-            
-        if "PATCH" in cls.enabled_methods:
-            @router.patch("/{obj_id}", response_model=ResponseModelItem, 
-                dependencies=cls._get_deps("update"))
-            def partial_update(obj_id: int, obj_in: cls.schema_update = Body(...)):
-                return cls.service.partial_update(obj_id, obj_in)
             
         if "ACTIVE" in cls.enabled_methods:
             @router.put("/active/{obj_id}", dependencies=cls._get_deps("active"))
