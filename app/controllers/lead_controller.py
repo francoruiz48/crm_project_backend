@@ -10,13 +10,14 @@ from app.models.lead_field_value import LeadFieldValue
 from app.schemas.filter_schema import LeadSearchRequest
 from app.schemas.pagination_schema import PaginatedResponse
 from app.services.lead_service import LeadService
-from app.schemas.lead_schema import LeadCreate, LeadDetailedResponse, LeadResponse
+from app.schemas.lead_schema import LeadCreate, LeadDetailedResponse, LeadResponse, LeadUpdate
 from pydantic import BaseModel, Field
 
 class LeadController(BaseController):
     router_prefix = "/leads"
     service = LeadService
     schema_in = LeadCreate
+    schema_update = LeadUpdate
     schema_out = LeadResponse
     schema_out_detail = LeadDetailedResponse
 

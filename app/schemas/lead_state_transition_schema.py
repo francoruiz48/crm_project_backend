@@ -12,6 +12,10 @@ class LeadStateTransitionBase(BaseModel):
 class LeadStateTransitionCreate(LeadStateTransitionBase, BaseCreate):
     pass
 
+class LeadStateTransitionUpdate(BaseModel):
+    from_state_id: Optional[int] = Field(default=None, gt=0)
+    to_state_id: Optional[int] = Field(default=None, gt=0)
+
 class LeadStateTransitionResponse(LeadStateTransitionBase, BaseResponse):
     pass
 

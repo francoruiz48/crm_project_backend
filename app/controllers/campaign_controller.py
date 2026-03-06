@@ -4,13 +4,14 @@ from fastapi import Query
 from app.controllers.base_controller import BaseController
 from app.schemas.pagination_schema import PaginatedResponse
 from app.services.campaign_service import CampaignService
-from app.schemas.campaign_schema import CampaignDetailedResponse, CampaignResponse, CampaignCreate
+from app.schemas.campaign_schema import CampaignDetailedResponse, CampaignResponse, CampaignCreate, CampaignUpdate
 from app.core.constans import DEFAULT_PAGE_SIZE, PAGE_SIZE_LIMIT, READ_WRITE
 
 class CampaignController(BaseController):
     router_prefix = "/campaigns"
     service = CampaignService
     schema_in = CampaignCreate
+    schema_update = CampaignUpdate
     schema_out = CampaignResponse
     schema_out_detail = CampaignDetailedResponse
     enabled_methods = {"GET_ONE", "POST", "PUT", "DELETE", "ACTIVE"}

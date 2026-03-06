@@ -3,13 +3,15 @@ from app.services.lead_flow_service import LeadFlowService
 from app.schemas.lead_flow_schema import (
     LeadFlowCreate, 
     LeadFlowResponse, 
-    LeadFlowDetailedResponse
+    LeadFlowDetailedResponse,
+    LeadFlowUpdate
 )
 
 class LeadFlowController(BaseController):
     router_prefix = "/lead_flows"
     service = LeadFlowService
     schema_in = LeadFlowCreate
+    schema_update = LeadFlowUpdate
     schema_out = LeadFlowResponse
     schema_out_detail = LeadFlowDetailedResponse
 

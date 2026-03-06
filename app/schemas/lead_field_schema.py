@@ -29,6 +29,22 @@ class LeadFieldCreate(LeadFieldBase, BaseCreate):
     related_campaign_id: Optional[int] = Field(default=None, gt=0)
     lead_field_section_id: int = Field(default=None, gt=0)
 
+class LeadFieldUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=3, max_length=150)
+    required: Optional[bool] = None
+    default_value: Optional[str] = Field(default=None, min_length=2, max_length=500)
+    is_primary: Optional[bool] = None
+    input_mask: Optional[str] = Field(default=None, min_length=2, max_length=150)
+    is_visible: Optional[bool] = None
+    order: Optional[int] = Field(default=None, gt=0)
+    campaign_id: Optional[int] = Field(default=None, gt=0)
+    calculation_expression: Optional[str] = Field(default=None, min_length=2, max_length=1000)
+    configuration: Optional[Dict[str, Any]] = None
+    field_type_code: Optional[str] = Field(default=None, min_length=2, max_length=100)
+    field_subtype_code: Optional[str] = Field(default=None, min_length=2, max_length=100)
+    nomenclator_id: Optional[int] = Field(default=None, gt=0)
+    lead_field_section_id: Optional[int] = Field(default=None, gt=0)
+
 class LeadFieldResponse(LeadFieldBase, BaseResponse):
     field_template_name: Optional[str] = None
     field_type: Optional[LeadFieldTypeResponse]
@@ -37,7 +53,6 @@ class LeadFieldResponse(LeadFieldBase, BaseResponse):
     nomenclator_id: Optional[int] = None
     related_campaign_id: Optional[int] = None
     organization_id : int
-    
     
 
 class LeadFieldDetailedResponse(LeadFieldBase, BaseDetailResponse):

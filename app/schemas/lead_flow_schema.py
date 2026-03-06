@@ -13,6 +13,10 @@ class LeadFlowBase(BaseModel):
 class LeadFlowCreate(LeadFlowBase, BaseCreate):
     pass
 
+class LeadFlowUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    description: Optional[str] = Field(default=None, max_length=1000)
+
 class LeadFlowResponse(LeadFlowBase, BaseResponse):
     organization_id: int = Field(gt=0)
 

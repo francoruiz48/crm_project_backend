@@ -13,6 +13,11 @@ class NomenclatorItemBase(BaseModel):
 class NomenclatorItemCreate(NomenclatorItemBase, BaseCreate):
     pass
 
+class NomenclatorItemUpdate(BaseModel):
+    code: Optional[str] = Field(default=None, min_length=2, max_length=50)
+    value: Optional[str] = Field(default=None, min_length=2, max_length=100)
+    nomenclator_id: Optional[int] = Field(default=None, gt=0)
+    parent_item_id: Optional[int] = Field(default=None, gt=0)
 
 class NomenclatorItemResponse(NomenclatorItemBase, BaseResponse):
     organization_id: Optional[int] = Field(default=None, gt=0)
