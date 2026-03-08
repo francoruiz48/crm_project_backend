@@ -8,9 +8,10 @@ class BaseController:
     router_prefix = ""
     service = None
     schema_in = None
+    schema_update = None
     schema_out = None
     schema_out_detail = None
-    enabled_methods = {"GET_ALL", "GET_ONE", "POST", "PUT", "DELETE", "ACTIVE"}
+    enabled_methods = {"GET_ALL", "GET_ONE", "POST", "PUT", "DELETE", "ACTIVE", "PATCH"}
 
     required_permissions: Dict[str, str] = {}
 
@@ -81,24 +82,19 @@ class BaseController:
         if "PUT" in cls.enabled_methods:
             @router.put("/{obj_id}", response_model=ResponseModelItem, 
                 dependencies=cls._get_deps("update"))
-            def update(obj_id: int, obj_in: cls.schema_in = Body(...)):
-                return cls.service.update(obj_id, obj_in)
+            def update(obj_id: int, obj_in: cls.schema_update = Body(...),
+                       current_user = Depends(get_current_user)):
+                return cls.service.update(obj_id, obj_in, updated_by=current_user.id)
 
         if "DELETE" in cls.enabled_methods:
             @router.delete("/{obj_id}", dependencies=cls._get_deps("delete"))
-            def delete(obj_id: int):
-                return cls.service.delete(obj_id)
-            
-        #if "SOFT_DELETE" in cls.enabled_methods:
-        #    @router.put("/disable/{obj_id}", dependencies=cls._get_deps("disable"))
-        #    def set_disable(obj_id: int):
-        #        cls.service.set_disable(obj_id)
-        #        return {"disabled": True}
+            def delete(obj_id: int, current_user = Depends(get_current_user)):
+                return cls.service.delete(obj_id, updated_by=current_user.id)
             
         if "ACTIVE" in cls.enabled_methods:
             @router.put("/active/{obj_id}", dependencies=cls._get_deps("active"))
-            def set_active(obj_id: int):
-                cls.service.set_active(obj_id)
+            def set_active(obj_id: int, current_user = Depends(get_current_user)):
+                cls.service.set_active(obj_id, updated_by=current_user.id)
                 return {"actived": True}
             
         if "GET_ONE" in cls.enabled_methods:

@@ -268,7 +268,7 @@ class LeadFieldService(BaseService):
     # =========================================================================
 
     @classmethod
-    def update(cls, obj_id: int, obj_in):
+    def update(cls, obj_id: int, obj_in, updated_by=None):
         def do_update(uow):
             errors = []
             current_field = cls.repository.get_by_id(uow.session, obj_id, detailed=False)
@@ -276,30 +276,17 @@ class LeadFieldService(BaseService):
 
             data = obj_in.model_dump(exclude_unset=True)
 
-            # 1. Inmutabilidad de Tipo
-            new_type = data.get("field_type_code")
-            if new_type and new_type != current_field.field_type_code:
-                errors.append({"field": "field_type_code", "message": "No se puede cambiar el tipo de dato de un campo existente."})
-
-            # Inmutabilidad de Plantilla (Template)
-            if "field_template_code" in data:
-                if data["field_template_code"] != current_field.field_template_code:
-                    errors.append({
-                        "field": "field_template_code", 
-                        "message": "No se puede modificar ni asignar una plantilla a un campo ya creado."
-                    })
-
-            # 2. Validar Unicidad de Nombre
+            # 1. Validar Unicidad de Nombre
             new_name = data.get("name")
             if new_name and new_name != current_field.name:
                 cls._check_name_uniqueness(uow.session, current_field.campaign_id, new_name, errors, exclude_id=obj_id)
 
-            # 3. Validar Unicidad de Orden
+            # 2. Validar Unicidad de Orden
             new_order = data.get("order")
             if new_order is not None and new_order != current_field.order:
                 cls._check_order_uniqueness(uow.session, current_field.campaign_id, new_order, errors, exclude_id=obj_id)
 
-            # 4. Validar Restricciones Históricas
+            # 3. Validar Restricciones Históricas
             new_required = data.get("required")
             new_primary = data.get("is_primary")
             
@@ -348,7 +335,7 @@ class LeadFieldService(BaseService):
                 if new_expr and new_expr != current_field.calculation_expression:
                     expression_changed = True
 
-            updated_field = cls.repository.update(uow.session, obj_id, data)
+            updated_field = cls.repository.update(uow.session, obj_id, data, updated_by=updated_by)
 
             if expression_changed:
                 cls._recalculate_leads_formula(uow, updated_field)
@@ -367,7 +354,7 @@ class LeadFieldService(BaseService):
     # =========================================================================
 
     @classmethod
-    def set_active(cls, field_id: int):
+    def set_active(cls, field_id: int, updated_by=None):
         def do_reactivate(uow):
             errors = []
             field = uow.session.get(LeadField, field_id)
@@ -391,6 +378,7 @@ class LeadFieldService(BaseService):
                 max_order = cls.repository.get_max_order(uow.session, field.campaign_id)
                 field.order = max_order + 1
 
+            field.updated_by = updated_by
             field.active = True
             uow.session.add(field)
             return field

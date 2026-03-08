@@ -88,7 +88,7 @@ class LeadStateService(BaseService):
             return created_obj
 
     @classmethod
-    def update(cls, obj_id: int, obj_in):
+    def update(cls, obj_id: int, obj_in, updated_by=None):
         errors = []
         
         with UnitOfWork() as uow:
@@ -148,5 +148,5 @@ class LeadStateService(BaseService):
             if errors:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
 
-            cls.repository.update(uow.session, obj_id, update_data)
+            cls.repository.update(uow.session, obj_id, update_data, updated_by=updated_by)
             return cls.repository.get_by_id(uow.session, obj_id)

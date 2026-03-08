@@ -1,13 +1,14 @@
 from app.controllers.base_controller import BaseController
 from app.models.security_models import Role, User, UserOrganization
 from app.services.security_services.user_service import UserService
-from app.schemas.security_schemas.user_schema import UserDetailResponse, UserResponse, UserCreate
+from app.schemas.security_schemas.user_schema import UserDetailResponse, UserResponse, UserCreate, UserUpdate
 from app.core.constans import READ_WRITE
 
 class UserController(BaseController):
     router_prefix = "/users"
     service = UserService
     schema_in = UserCreate
+    schema_update = UserUpdate
     schema_out = UserResponse
     schema_out_detail = UserDetailResponse
     enabled_methods = READ_WRITE

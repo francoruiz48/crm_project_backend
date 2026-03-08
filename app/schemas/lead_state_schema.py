@@ -14,6 +14,13 @@ class LeadStateBase(BaseModel):
 class LeadStateCreate(LeadStateBase, BaseCreate):
     pass
 
+class LeadStateUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    color: Optional[str] = Field(default=None, max_length=7)  # Ej: "#FF5733"
+    category: Optional[str] = Field(default=None, pattern="^(OPEN|WON|LOST)$")
+    is_initial: Optional[bool] = None
+    order: Optional[int] = Field(default=None, gt=0)
+
 class LeadStateResponse(LeadStateBase, BaseResponse):
     organization_id: int
 

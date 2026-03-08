@@ -11,6 +11,10 @@ class OrganizationBase(BaseModel):
 class OrganizationCreate(OrganizationBase, BaseCreate):
     pass
 
+class OrganizationUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=3, max_length=150)
+    description: Optional[str] = Field(default=None, min_length=3, max_length=500)
+
 class OrganizationResponse(OrganizationBase, BaseResponse):
     pass
 

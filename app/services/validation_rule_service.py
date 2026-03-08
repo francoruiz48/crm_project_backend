@@ -202,7 +202,7 @@ class ValidationRuleService(BaseService):
         )
 
     @classmethod
-    def update(cls, obj_id: int, obj_data):
+    def update(cls, obj_id: int, obj_data, updated_by=None):
         def do_update(uow):
             errors = []
             current_obj = cls.repository.get_by_id(uow.session, obj_id)
@@ -213,16 +213,6 @@ class ValidationRuleService(BaseService):
                 data = obj_data.model_dump(exclude_unset=True)
             else:
                 data = obj_data.copy()
-
-            # ===============================================================
-            # 1. Inmutabilidad de Plantilla (Template)
-            # ===============================================================
-            if "template_code" in data:
-                if data["template_code"] != current_obj.template_code:
-                    errors.append({
-                        "field": "template_code",
-                        "message": "No se puede modificar ni asignar una plantilla a una regla ya creada."
-                    })
 
             new_expr = data.get("expression")
             new_tmpl_params = data.get("template_params")
@@ -271,7 +261,7 @@ class ValidationRuleService(BaseService):
             if errors:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
 
-            return cls.repository.update(uow.session, obj_id, data)
+            return cls.repository.update(uow.session, obj_id, data, updated_by=updated_by)
 
         return cls._execute(
             action="Actualizando Regla",

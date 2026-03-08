@@ -10,13 +10,14 @@ from app.models.lead_field_value import LeadFieldValue
 from app.schemas.filter_schema import LeadSearchRequest
 from app.schemas.pagination_schema import PaginatedResponse
 from app.services.lead_service import LeadService
-from app.schemas.lead_schema import LeadCreate, LeadDetailedResponse, LeadResponse
+from app.schemas.lead_schema import LeadCreate, LeadDetailedResponse, LeadResponse, LeadUpdate
 from pydantic import BaseModel, Field
 
 class LeadController(BaseController):
     router_prefix = "/leads"
     service = LeadService
     schema_in = LeadCreate
+    schema_update = LeadUpdate
     schema_out = LeadResponse
     schema_out_detail = LeadDetailedResponse
 
@@ -175,7 +176,7 @@ class LeadController(BaseController):
             obj_in = None
             if lead_dict:
                 try:
-                    obj_in = cls.schema_in(**lead_dict)
+                    obj_in = cls.schema_update(**lead_dict)
                 except Exception as e:
                     raise HTTPException(422, detail=str(e))
             
@@ -184,7 +185,7 @@ class LeadController(BaseController):
                 raise HTTPException(400, "Debe enviar datos JSON o archivos para actualizar.")
 
             # 3. Llamamos al servicio
-            return cls.service.update(id, obj_in, files_map=files_map)
+            return cls.service.update(id, obj_in, files_map=files_map, updated_by=current_user.id)
 
     
         @router.post("/simulate", response_model=LeadResponse) # O usa un schema específico si prefieres

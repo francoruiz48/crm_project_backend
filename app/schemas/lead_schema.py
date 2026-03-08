@@ -1,7 +1,7 @@
 
 from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
 from pydantic import BaseModel, computed_field, Field
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from app.schemas.lead_comment_shema import LeadCommentDetailedResponse
 from app.schemas.lead_field_value_schema import LeadFieldValueCreate, LeadFieldValueDetailedResponse, LeadFieldValueResponse
 from app.schemas.lead_state_schema import LeadStateDetailedResponse, LeadStateResponse
@@ -12,6 +12,9 @@ class LeadBase(BaseModel):
 
 class LeadCreate(LeadBase, BaseCreate):
     values: List[LeadFieldValueCreate]
+
+class LeadUpdate(BaseModel):
+    values: Optional[List[LeadFieldValueCreate]] = None
 
 class LeadResponse(LeadBase, BaseResponse):
     field_values: List[LeadFieldValueResponse] = Field(

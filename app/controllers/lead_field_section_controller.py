@@ -3,13 +3,14 @@ from fastapi import Query
 from app.controllers.base_controller import BaseController
 from app.schemas.pagination_schema import PaginatedResponse
 from app.services.lead_field_section_service import LeadFieldSectionService
-from app.schemas.lead_field_section_schema import LeadFieldSectionDetailedResponse, LeadFieldSectionResponse, LeadFieldSectionCreate
+from app.schemas.lead_field_section_schema import LeadFieldSectionDetailedResponse, LeadFieldSectionResponse, LeadFieldSectionCreate, LeadFieldSectionUpdate
 from app.core.constans import DEFAULT_PAGE_SIZE, PAGE_SIZE_LIMIT, READ_WRITE
 
 class LeadFieldSectionController(BaseController):
     router_prefix = "/lead_field_sections"
     service = LeadFieldSectionService
     schema_in = LeadFieldSectionCreate
+    schema_update = LeadFieldSectionUpdate
     schema_out = LeadFieldSectionResponse
     schema_out_detail = LeadFieldSectionDetailedResponse
     enabled_methods = {"GET_ONE", "POST", "PUT", "DELETE", "ACTIVE"}

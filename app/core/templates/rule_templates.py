@@ -225,7 +225,7 @@ STANDARD_RULES = {
         code="NOT_IN_LIST",
         name="Lista Negra",
         description="El valor no puede estar en la lista prohibida (separada por |).",
-        expression_fmt='REGEXMATCH(value, "^({options})$") = FALSE',
+        expression_fmt='NOT(REGEXMATCH(value, "^({options})$"))',
         params=["options"],
         error_message="El valor no está permitido."
     ),

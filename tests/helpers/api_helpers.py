@@ -1,5 +1,5 @@
 from typing import Dict, Any, Optional, Union, List
-from app.core.context import TENANT_ORG_ID  # <--- IMPORTANTE
+from app.core.context import TENANT_ORG_ID
 
 def validate(response, expected_status: Union[int, List[int], None] = None, msg: str = ""):
     if expected_status is None:
