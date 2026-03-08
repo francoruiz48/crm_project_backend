@@ -14,7 +14,7 @@ from app.models.lead_field_value import LeadFieldValue
 from app.core.error_messages import SUCCESS_UPDATE
 from app.models.lead_field import LeadField
 from app.db.repository.campaign_repository import CampaignRepository
-from app.core.templates.field_rules_map import DEFAULT_SUBTYPE_RULES, DEFAULT_TYPE_RULES
+from app.core.templates.field_rules_map import DEFAULT_SUBTYPE_RULES, DEFAULT_TYPE_RULES,STANDARD_INPUT_MASKS, DEFAULT_TYPE_MASKS, DEFAULT_SUBTYPE_MASKS
 from sqlalchemy.orm import selectinload
 from app.models.lead import Lead
 from app.services.excel_formula_evaluator_service import ExcelFormulaEvaluatorService
@@ -98,11 +98,13 @@ class LeadFieldService(BaseService):
 
             # --- 2. EXTRACCIÓN DE DATOS ---
             template_code = data.get("field_template_code")
+            mask_template_code = data.pop("mask_template_code", None)
             field_type_code = data.get("field_type_code")
             subtype_code = data.get("field_subtype_code")
             nomenclator_id = data.get("nomenclator_id")
             calc_expr = data.get("calculation_expression")
             name = data.get("name")
+            current_mask = data.get("input_mask")
 
             # --- 3. LÓGICA DE TEMPLATE (Pre-llenado) ---
             rules_to_create = []
@@ -121,6 +123,11 @@ class LeadFieldService(BaseService):
                     field_type_code = template.field_type_code
                     rules_to_create = template.rules
 
+                    # 3.1 INYECTAR MÁSCARA DEL TEMPLATE (Si no se envió una manual)
+                    if template.input_mask and not current_mask:
+                        data["input_mask"] = template.input_mask
+                        current_mask = template.input_mask
+
             elif nomenclator_id:
                 # Si viene de nomenclador y no tiene nombre, usamos el del nomenclador
                 nomenclator = uow.session.query(Nomenclator).get(nomenclator_id)
@@ -129,6 +136,21 @@ class LeadFieldService(BaseService):
                 elif not name:
                     data["name"] = nomenclator.name
                     name = nomenclator.name
+
+            # --- 3.5. ASIGNACIÓN INTELIGENTE DE INPUT MASK ---
+            if not current_mask: # Si todavía no tenemos máscara
+                if mask_template_code:
+                    # El usuario eligió una máscara del listado del frontend
+                    if mask_template_code in STANDARD_INPUT_MASKS:
+                        data["input_mask"] = STANDARD_INPUT_MASKS[mask_template_code]["mask"]
+                    else:
+                        errors.append({"field": "mask_template_code", "message": f"Plantilla de máscara '{mask_template_code}' no válida."})
+                else:
+                    # Aplicar default implícito por Subtipo o Tipo
+                    if subtype_code and subtype_code in DEFAULT_SUBTYPE_MASKS:
+                        data["input_mask"] = DEFAULT_SUBTYPE_MASKS[subtype_code]
+                    elif field_type_code in DEFAULT_TYPE_MASKS:
+                        data["input_mask"] = DEFAULT_TYPE_MASKS[field_type_code]
 
             # --- 4. VALIDACIONES DE TIPO (Acumulativas) ---
             
