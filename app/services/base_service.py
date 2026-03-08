@@ -84,37 +84,28 @@ class BaseService:
         )
 
     @classmethod
-    def update(cls, obj_id: int, obj_data):
+    def update(cls, obj_id: int, obj_data, updated_by=None):
         return cls._execute(
             action="Actualizando",
             obj_id=obj_id,
-            func=lambda uow: cls.repository.update(uow.session, obj_id, obj_data),
+            func=lambda uow: cls.repository.update(uow.session, obj_id, obj_data, updated_by=updated_by),
             success_msg=SUCCESS_UPDATE
         )
 
     @classmethod
-    def delete(cls, obj_id: int):
+    def delete(cls, obj_id: int, updated_by=None):
         return cls._execute(
             action="Eliminando",
             obj_id=obj_id,
-            func=lambda uow: cls.repository.delete(uow.session, obj_id),
+            func=lambda uow: cls.repository.delete(uow.session, obj_id, updated_by=updated_by),
             success_msg=SUCCESS_DELETE
         )
 
     @classmethod
-    def set_disable(cls, obj_id: int):
-        return cls._execute(
-            action="Desactivando",
-            obj_id=obj_id,
-            func=lambda uow: cls.repository.update(uow.session, obj_id, {"active": False}),
-            success_msg=SUCCESS_UPDATE
-        )
-
-    @classmethod
-    def set_active(cls, obj_id: int):
+    def set_active(cls, obj_id: int, updated_by=None):
         return cls._execute(
             action="Activando",
             obj_id=obj_id,
-            func=lambda uow: cls.repository.update(uow.session, obj_id, {"active": True}),
+            func=lambda uow: cls.repository.update(uow.session, obj_id, {"active": True}, updated_by=updated_by),
             success_msg=SUCCESS_UPDATE
         )

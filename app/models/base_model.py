@@ -12,6 +12,7 @@ class BaseModelDB(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     active = Column(Boolean, default=True, nullable=False)
     created_by = Column(Integer, ForeignKey("user.id"), nullable=True)
+    updated_by = Column(Integer, ForeignKey("user.id"), nullable=True)
 
     @declared_attr
     def creator(cls):

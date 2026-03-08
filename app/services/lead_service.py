@@ -582,7 +582,7 @@ class LeadService(BaseService):
             }
 
     @classmethod
-    def update(cls, obj_id: int, obj_in, files_map: dict = None):
+    def update(cls, obj_id: int, obj_in, files_map: dict = None, updated_by=None):
         errors = [] 
         
         with UnitOfWork() as uow:
@@ -592,7 +592,7 @@ class LeadService(BaseService):
             # Update base
             lead_data = obj_in.model_dump(exclude_unset=True, exclude={"values"})
             if lead_data:
-                cls.repository.update(uow.session, obj_id, lead_data)
+                cls.repository.update(uow.session, obj_id, lead_data, updated_by=updated_by)
 
             if obj_in.values is not None:
                 all_field_defs = cls.field_repository.get_all_active_with_rules(uow.session, campaign_id=current_lead.campaign_id)

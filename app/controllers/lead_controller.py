@@ -185,7 +185,7 @@ class LeadController(BaseController):
                 raise HTTPException(400, "Debe enviar datos JSON o archivos para actualizar.")
 
             # 3. Llamamos al servicio
-            return cls.service.update(id, obj_in, files_map=files_map)
+            return cls.service.update(id, obj_in, files_map=files_map, updated_by=current_user.id)
 
     
         @router.post("/simulate", response_model=LeadResponse) # O usa un schema específico si prefieres

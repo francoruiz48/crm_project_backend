@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload
 from app.core.exceptions.exceptions import AppException, NotFoundException
 from app.core.error_messages import ERROR_DATABASE, ERROR_NOT_FOUND
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import inspect, or_
+from sqlalchemy import func, inspect, or_
 from app.core.context import TENANT_ORG_ID
 
 class BaseRepository:
@@ -307,7 +307,7 @@ class BaseRepository:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
     @classmethod
-    def update(cls, session, obj_id: int, obj_data):
+    def update(cls, session, obj_id: int, obj_data, updated_by=None):
         """Actualiza un objeto por id"""
         try:
             data = cls._normalize_data(obj_data)
@@ -317,6 +317,9 @@ class BaseRepository:
             obj = query.first()
             if not obj:
                 return None
+            
+            if updated_by is not None and hasattr(cls.model, "updated_by"):
+                data["updated_by"] = updated_by
 
             # IMPORTANTE: Prevenir que el usuario transfiera objetos a otra organización
             if "organization_id" in data:
@@ -338,7 +341,7 @@ class BaseRepository:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
     @classmethod
-    def delete(cls, session, obj_id: int) -> Dict[str, str]:
+    def delete(cls, session, obj_id: int, updated_by= None) -> Dict[str, str]:
         """
         Intenta eliminar un objeto físicamente.
         
@@ -357,6 +360,7 @@ class BaseRepository:
 
         if not obj:
             raise NotFoundException(detail=f"{cls.model.__name__} no encontrado.")
+        
 
         try:
             with session.begin_nested():
@@ -372,6 +376,9 @@ class BaseRepository:
             # Verificamos si el modelo soporta 'active' (Soft Delete)
             if obj_fresh and hasattr(obj_fresh, 'active'):
                 obj_fresh.active = False
+                if updated_by is not None and hasattr(cls.model, "updated_by"):
+                    obj_fresh.updated_by = updated_by
+
                 session.add(obj_fresh)
                 session.flush()
                 session.refresh(obj_fresh)

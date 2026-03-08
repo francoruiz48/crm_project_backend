@@ -202,7 +202,7 @@ class ValidationRuleService(BaseService):
         )
 
     @classmethod
-    def update(cls, obj_id: int, obj_data):
+    def update(cls, obj_id: int, obj_data, updated_by=None):
         def do_update(uow):
             errors = []
             current_obj = cls.repository.get_by_id(uow.session, obj_id)
@@ -261,7 +261,7 @@ class ValidationRuleService(BaseService):
             if errors:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
 
-            return cls.repository.update(uow.session, obj_id, data)
+            return cls.repository.update(uow.session, obj_id, data, updated_by=updated_by)
 
         return cls._execute(
             action="Actualizando Regla",

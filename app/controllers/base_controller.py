@@ -82,18 +82,19 @@ class BaseController:
         if "PUT" in cls.enabled_methods:
             @router.put("/{obj_id}", response_model=ResponseModelItem, 
                 dependencies=cls._get_deps("update"))
-            def update(obj_id: int, obj_in: cls.schema_update = Body(...)):
-                return cls.service.update(obj_id, obj_in)
+            def update(obj_id: int, obj_in: cls.schema_update = Body(...),
+                       current_user = Depends(get_current_user)):
+                return cls.service.update(obj_id, obj_in, updated_by=current_user.id)
 
         if "DELETE" in cls.enabled_methods:
             @router.delete("/{obj_id}", dependencies=cls._get_deps("delete"))
-            def delete(obj_id: int):
-                return cls.service.delete(obj_id)
+            def delete(obj_id: int, current_user = Depends(get_current_user)):
+                return cls.service.delete(obj_id, updated_by=current_user.id)
             
         if "ACTIVE" in cls.enabled_methods:
             @router.put("/active/{obj_id}", dependencies=cls._get_deps("active"))
-            def set_active(obj_id: int):
-                cls.service.set_active(obj_id)
+            def set_active(obj_id: int, current_user = Depends(get_current_user)):
+                cls.service.set_active(obj_id, updated_by=current_user.id)
                 return {"actived": True}
             
         if "GET_ONE" in cls.enabled_methods:

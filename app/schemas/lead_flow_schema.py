@@ -22,8 +22,5 @@ class LeadFlowResponse(LeadFlowBase, BaseResponse):
 
 class LeadFlowDetailedResponse(LeadFlowBase, BaseDetailResponse):
     organization_id: int = Field(gt=0)
-    transitions: List[LeadStateTransitionDetailedResponse] = [] 
-    campaigns: List[CampaignDetailedResponse] = []
-    states: List[LeadStateDetailedResponse] = []
 
     
