@@ -48,7 +48,12 @@ class LeadStateTransitionService(BaseService):
             transition_data = obj_in.model_dump(exclude_unset=True)
             transition_data.update(kwargs)
             
-            created_obj = cls.repository.create(uow.session, transition_data)
+            created_by = kwargs.get("created_by")
+            created_obj = cls.repository.create(uow.session, transition_data, created_by=created_by)
+            uow.session.flush()
+
+            cls._log_audit(uow.session, created_obj, action="CREATE", changes=transition_data, user_id=created_by)
+
             return created_obj
         
     # Se utiliza para crear multiples transiciones a la vez, lo cual es útil para poblar un flujo de leads nuevo sin tener que hacer múltiples requests desde el front
@@ -107,6 +112,7 @@ class LeadStateTransitionService(BaseService):
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
 
             # 5. Insertar todo
+            created_by = kwargs.get("created_by")
             for t in obj_in.transitions:
                 transition_data = {
                     "lead_flow_id": obj_in.lead_flow_id,
@@ -114,7 +120,11 @@ class LeadStateTransitionService(BaseService):
                     "to_state_id": t.to_state_id
                 }
                 transition_data.update(kwargs)
-                new_obj = cls.repository.create(uow.session, transition_data)
+                new_obj = cls.repository.create(uow.session, transition_data, created_by=created_by)
+                uow.session.flush()
+                
+                cls._log_audit(uow.session, new_obj, action="CREATE", changes=transition_data, user_id=created_by)
+                
                 created_transitions.append(new_obj)
                 
         # Retornamos la lista de objetos creados

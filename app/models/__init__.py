@@ -15,5 +15,6 @@ from app.models.lead_state import LeadState
 from app.models.lead_state_transition import LeadStateTransition
 from app.models.lead_state_history import LeadStateHistory
 from app.models.lead_flow import LeadFlow
+from app.models.system_audit_log import SystemAuditLog
 
-__all__ = ["Lead", "LeadState", "LeadStateTransition", "LeadStateHistory", "LeadFlow","LeadFieldType", "LeadField", "LeadFieldValue", "Campaign", "Nomenclator", "NomenclatorItem", "ValidationRule", "Workspace", "LeadFieldSection", "LeadFieldSubtype", "LeadComment", "Organization"]
+__all__ = ["Lead", "LeadState", "LeadStateTransition", "LeadStateHistory", "LeadFlow","LeadFieldType", "LeadField", "LeadFieldValue", "Campaign", "Nomenclator", "NomenclatorItem", "ValidationRule", "Workspace", "LeadFieldSection", "LeadFieldSubtype", "LeadComment", "Organization", "SystemAuditLog"]

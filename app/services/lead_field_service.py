@@ -273,6 +273,8 @@ class LeadFieldService(BaseService):
                             field_type_code=new_field.field_type_code
                         )
 
+                cls._log_audit(uow.session, new_field, action="CREATE", changes=data, user_id=created_by)
+
                 return new_field
 
             except Exception as e:
@@ -357,11 +359,21 @@ class LeadFieldService(BaseService):
                 if new_expr and new_expr != current_field.calculation_expression:
                     expression_changed = True
 
+            changes = {}
+            for key, new_val in data.items():
+                if hasattr(current_field, key):
+                    old_val = getattr(current_field, key)
+                    if old_val != new_val:
+                        changes[key] = {"old": old_val, "new": new_val}
+
             updated_field = cls.repository.update(uow.session, obj_id, data, updated_by=updated_by)
+            uow.session.flush() 
 
             if expression_changed:
                 cls._recalculate_leads_formula(uow, updated_field)
-            # ===============================================================
+            
+            if changes:
+                cls._log_audit(uow.session, updated_field, action="UPDATE", changes=changes, user_id=updated_by)
 
             return updated_field
 
@@ -400,9 +412,16 @@ class LeadFieldService(BaseService):
                 max_order = cls.repository.get_max_order(uow.session, field.campaign_id)
                 field.order = max_order + 1
 
+            was_active = field.active
+
             field.updated_by = updated_by
             field.active = True
             uow.session.add(field)
+            uow.session.flush()
+
+            if not was_active:
+                cls._log_audit(uow.session, field, action="ACTIVATE", changes={"active": {"old": False, "new": True}}, user_id=updated_by)
+
             return field
 
         return cls._execute(

@@ -155,7 +155,13 @@ class ValidationRuleService(BaseService):
             return None
 
         # 4. CREAR
-        return cls.repository.create(session, obj_data, created_by)
+        new_rule = cls.repository.create(session, obj_data, created_by)
+        session.flush()
+
+        # 5. LOG DE AUDITORÍA (Aquí obj_data ya es el dict procesado con exclude_unset=True)
+        cls._log_audit(session, new_rule, action="CREATE", changes=obj_data, user_id=created_by)
+
+        return new_rule
 
     @classmethod
     def create(cls, obj_data, created_by=None):
@@ -261,8 +267,22 @@ class ValidationRuleService(BaseService):
             if errors:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
 
-            return cls.repository.update(uow.session, obj_id, data, updated_by=updated_by)
+            # ARMAMOS EL DIFF PARA LA AUDITORÍA
+            changes = {}
+            for key, new_val in data.items():
+                if hasattr(current_obj, key):
+                    old_val = getattr(current_obj, key)
+                    if old_val != new_val:
+                        changes[key] = {"old": old_val, "new": new_val}
 
+            updated_rule = cls.repository.update(uow.session, obj_id, data, updated_by=updated_by)
+            uow.session.flush()
+
+            if changes:
+                cls._log_audit(uow.session, updated_rule, action="UPDATE", changes=changes, user_id=updated_by)
+
+            return updated_rule
+        
         return cls._execute(
             action="Actualizando Regla",
             obj_id=obj_id,
