@@ -47,7 +47,7 @@ def get_dynamic_value(val_str):
     # 3. DOCUMENTACIÓN
     ("ID_GLOBAL", "AB12345", "AB 12"), # Tiene un espacio, falla NO_SPACES
     ("DNI_ARG", "12345678", "123456"), # Muy corto, falla MIN_LENGTH (7)
-    ("CUIT_CUIL", "20123456789", "20-1234-9"), # Tiene guiones, falla ONLY_DIGITS
+    ("CUIT_CUIL", "20-12345637-8", "20-1234-9"), # Tiene guiones,
     
     # 3. DATOS DE CONTACTO
     ("POSTAL_CODE", "C1425AB", "C 1425"), # Tiene espacio, falla ALPHANUMERIC
@@ -59,7 +59,7 @@ def get_dynamic_value(val_str):
 
     # 5. FINANCIERO Y NEGOCIOS
     ("CBU_ALIAS", "micbu.alias.ok", "corto"), # 'corto' tiene 5 letras, falla MIN_LENGTH (6)
-    ("CREDIT_CARD_SIMPLE", "1234567890123456", "123456789012"), # 12 dígitos, falla expr >=13
+    ("CREDIT_CARD_SIMPLE", "1234-5678-9012-3456", "123456789012"), # 12 dígitos, falla expr >=13
 
     # 6. WEB Y REDES SOCIALES
     ("INSTAGRAM_USER", "@mi_usuario", "mi_usuario"), # No tiene @, falla STARTS_WITH

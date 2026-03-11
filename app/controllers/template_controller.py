@@ -5,6 +5,7 @@ from app.schemas.template_schema import ValidationTemplateResponse
 from app.core.templates.rule_templates import STANDARD_RULES
 from app.core.templates.excel_formulas import EXCEL_FORMULAS
 from app.schemas.template_schema import ExcelFormulaReponse
+from app.core.templates.field_rules_map import STANDARD_INPUT_MASKS
 
 class TemplateController:
     router_prefix = "/templates"
@@ -21,9 +22,18 @@ class TemplateController:
                     "code": key,
                     "name": t.name,
                     "field_type_code": t.field_type_code,
-                    "rules": t.rules
+                    "rules": t.rules,
+                    "input_mask": t.input_mask
                 })
             return templates
+        
+        @router.get("/lead_fields/input_masks")
+        def get_available_input_masks():
+            """Retorna las plantillas de máscaras para usar en el frontend"""
+            return [
+                {"code": code, "name": data["name"], "mask": data["mask"]} 
+                for code, data in STANDARD_INPUT_MASKS.items()
+            ]
 
         @router.get("/validation_rules", response_model=list[ValidationTemplateResponse])
         def get_validation_templates():

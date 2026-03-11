@@ -28,6 +28,10 @@ class LeadFieldCreate(LeadFieldBase, BaseCreate):
     nomenclator_id: Optional[int] = Field(default=None, gt=0)
     related_campaign_id: Optional[int] = Field(default=None, gt=0)
     lead_field_section_id: int = Field(default=None, gt=0)
+    mask_template_code: Optional[str] = Field(
+        default=None, 
+        description="Código de máscara predefinida (Ej: DNI_ARG, MOBILE_AR)"
+    )
 
 class LeadFieldUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=3, max_length=150)
