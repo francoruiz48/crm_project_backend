@@ -24,6 +24,13 @@ class WorkspaceService(BaseService):
             if errors:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
             
-            return cls.repository.create(uow.session, obj_in.model_dump(), created_by)
+            data = obj_in.model_dump()
+            new_ws = cls.repository.create(uow.session, data, created_by)
+            uow.session.flush()
+
+            # LOG DE AUDITORÍA
+            cls._log_audit(uow.session, new_ws, action="CREATE", changes=data, user_id=created_by)
+
+            return new_ws
 
         return cls._execute(action="Crear workspace", func=do_create)

@@ -10,9 +10,6 @@ class LeadStateHistoryBase(BaseModel):
     to_state_id: int = Field(gt=0)
     notes: Optional[str] = Field(default=None, max_length=1000) # Motivo del cambio
 
-class LeadStateHistoryCreate(LeadStateHistoryBase, BaseCreate):
-    pass
-
 class LeadStateHistoryResponse(LeadStateHistoryBase, BaseResponse):
     pass
 

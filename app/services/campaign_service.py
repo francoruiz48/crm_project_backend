@@ -66,6 +66,18 @@ class CampaignService(BaseService):
 
             # 1. Crear la campaña base
             new_campaign = cls.repository.create(uow.session, data, created_by)
+            
+            # 2. Flush para que la BD le asigne un ID a new_campaign (necesario para el log)
+            uow.session.flush() 
+
+            # 3. LOG DE AUDITORÍA (Llamamos al helper del BaseService)
+            cls._log_audit(
+                session=uow.session,
+                obj=new_campaign,
+                action="CREATE",
+                changes=data,
+                user_id=created_by
+            )
 
             return new_campaign
 

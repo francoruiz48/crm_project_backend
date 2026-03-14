@@ -155,7 +155,13 @@ class ValidationRuleService(BaseService):
             return None
 
         # 4. CREAR
-        return cls.repository.create(session, obj_data, created_by)
+        new_rule = cls.repository.create(session, obj_data, created_by)
+        session.flush()
+
+        # 5. LOG DE AUDITORÍA (Aquí obj_data ya es el dict procesado con exclude_unset=True)
+        cls._log_audit(session, new_rule, action="CREATE", changes=obj_data, user_id=created_by)
+
+        return new_rule
 
     @classmethod
     def create(cls, obj_data, created_by=None):
@@ -202,7 +208,7 @@ class ValidationRuleService(BaseService):
         )
 
     @classmethod
-    def update(cls, obj_id: int, obj_data):
+    def update(cls, obj_id: int, obj_data, updated_by=None):
         def do_update(uow):
             errors = []
             current_obj = cls.repository.get_by_id(uow.session, obj_id)
@@ -213,16 +219,6 @@ class ValidationRuleService(BaseService):
                 data = obj_data.model_dump(exclude_unset=True)
             else:
                 data = obj_data.copy()
-
-            # ===============================================================
-            # 1. Inmutabilidad de Plantilla (Template)
-            # ===============================================================
-            if "template_code" in data:
-                if data["template_code"] != current_obj.template_code:
-                    errors.append({
-                        "field": "template_code",
-                        "message": "No se puede modificar ni asignar una plantilla a una regla ya creada."
-                    })
 
             new_expr = data.get("expression")
             new_tmpl_params = data.get("template_params")
@@ -271,8 +267,22 @@ class ValidationRuleService(BaseService):
             if errors:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
 
-            return cls.repository.update(uow.session, obj_id, data)
+            # ARMAMOS EL DIFF PARA LA AUDITORÍA
+            changes = {}
+            for key, new_val in data.items():
+                if hasattr(current_obj, key):
+                    old_val = getattr(current_obj, key)
+                    if old_val != new_val:
+                        changes[key] = {"old": old_val, "new": new_val}
 
+            updated_rule = cls.repository.update(uow.session, obj_id, data, updated_by=updated_by)
+            uow.session.flush()
+
+            if changes:
+                cls._log_audit(uow.session, updated_rule, action="UPDATE", changes=changes, user_id=updated_by)
+
+            return updated_rule
+        
         return cls._execute(
             action="Actualizando Regla",
             obj_id=obj_id,

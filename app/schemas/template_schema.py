@@ -1,5 +1,5 @@
-from typing import Any, Dict, List
-from pydantic import BaseModel
+from typing import Any, Dict, List, Optional
+from pydantic import BaseModel, Field
 
 
 class ValidationTemplateResponse(BaseModel):
@@ -15,6 +15,9 @@ class LeadFieldTemplateResponse(BaseModel):
     name: str
     field_type_code: str
     rules: List[Dict[str, Any]]
+    input_mask: Optional[str] = Field(
+        default=None, description="Código de máscara predefinida (Ej: DNI_ARG, MOBILE_AR)"
+    )
 
 class ExcelFormulaReponse(BaseModel):
     name_spanish: str

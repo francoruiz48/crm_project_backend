@@ -14,7 +14,7 @@ from app.models.lead_field_value import LeadFieldValue
 from app.core.error_messages import SUCCESS_UPDATE
 from app.models.lead_field import LeadField
 from app.db.repository.campaign_repository import CampaignRepository
-from app.core.templates.field_rules_map import DEFAULT_SUBTYPE_RULES, DEFAULT_TYPE_RULES
+from app.core.templates.field_rules_map import DEFAULT_SUBTYPE_RULES, DEFAULT_TYPE_RULES,STANDARD_INPUT_MASKS, DEFAULT_TYPE_MASKS, DEFAULT_SUBTYPE_MASKS
 from sqlalchemy.orm import selectinload
 from app.models.lead import Lead
 from app.services.excel_formula_evaluator_service import ExcelFormulaEvaluatorService
@@ -98,11 +98,13 @@ class LeadFieldService(BaseService):
 
             # --- 2. EXTRACCIÓN DE DATOS ---
             template_code = data.get("field_template_code")
+            mask_template_code = data.pop("mask_template_code", None)
             field_type_code = data.get("field_type_code")
             subtype_code = data.get("field_subtype_code")
             nomenclator_id = data.get("nomenclator_id")
             calc_expr = data.get("calculation_expression")
             name = data.get("name")
+            current_mask = data.get("input_mask")
 
             # --- 3. LÓGICA DE TEMPLATE (Pre-llenado) ---
             rules_to_create = []
@@ -121,6 +123,11 @@ class LeadFieldService(BaseService):
                     field_type_code = template.field_type_code
                     rules_to_create = template.rules
 
+                    # 3.1 INYECTAR MÁSCARA DEL TEMPLATE (Si no se envió una manual)
+                    if template.input_mask and not current_mask:
+                        data["input_mask"] = template.input_mask
+                        current_mask = template.input_mask
+
             elif nomenclator_id:
                 # Si viene de nomenclador y no tiene nombre, usamos el del nomenclador
                 nomenclator = uow.session.query(Nomenclator).get(nomenclator_id)
@@ -129,6 +136,21 @@ class LeadFieldService(BaseService):
                 elif not name:
                     data["name"] = nomenclator.name
                     name = nomenclator.name
+
+            # --- 3.5. ASIGNACIÓN INTELIGENTE DE INPUT MASK ---
+            if not current_mask: # Si todavía no tenemos máscara
+                if mask_template_code:
+                    # El usuario eligió una máscara del listado del frontend
+                    if mask_template_code in STANDARD_INPUT_MASKS:
+                        data["input_mask"] = STANDARD_INPUT_MASKS[mask_template_code]["mask"]
+                    else:
+                        errors.append({"field": "mask_template_code", "message": f"Plantilla de máscara '{mask_template_code}' no válida."})
+                else:
+                    # Aplicar default implícito por Subtipo o Tipo
+                    if subtype_code and subtype_code in DEFAULT_SUBTYPE_MASKS:
+                        data["input_mask"] = DEFAULT_SUBTYPE_MASKS[subtype_code]
+                    elif field_type_code in DEFAULT_TYPE_MASKS:
+                        data["input_mask"] = DEFAULT_TYPE_MASKS[field_type_code]
 
             # --- 4. VALIDACIONES DE TIPO (Acumulativas) ---
             
@@ -251,6 +273,8 @@ class LeadFieldService(BaseService):
                             field_type_code=new_field.field_type_code
                         )
 
+                cls._log_audit(uow.session, new_field, action="CREATE", changes=data, user_id=created_by)
+
                 return new_field
 
             except Exception as e:
@@ -268,7 +292,7 @@ class LeadFieldService(BaseService):
     # =========================================================================
 
     @classmethod
-    def update(cls, obj_id: int, obj_in):
+    def update(cls, obj_id: int, obj_in, updated_by=None):
         def do_update(uow):
             errors = []
             current_field = cls.repository.get_by_id(uow.session, obj_id, detailed=False)
@@ -276,30 +300,17 @@ class LeadFieldService(BaseService):
 
             data = obj_in.model_dump(exclude_unset=True)
 
-            # 1. Inmutabilidad de Tipo
-            new_type = data.get("field_type_code")
-            if new_type and new_type != current_field.field_type_code:
-                errors.append({"field": "field_type_code", "message": "No se puede cambiar el tipo de dato de un campo existente."})
-
-            # Inmutabilidad de Plantilla (Template)
-            if "field_template_code" in data:
-                if data["field_template_code"] != current_field.field_template_code:
-                    errors.append({
-                        "field": "field_template_code", 
-                        "message": "No se puede modificar ni asignar una plantilla a un campo ya creado."
-                    })
-
-            # 2. Validar Unicidad de Nombre
+            # 1. Validar Unicidad de Nombre
             new_name = data.get("name")
             if new_name and new_name != current_field.name:
                 cls._check_name_uniqueness(uow.session, current_field.campaign_id, new_name, errors, exclude_id=obj_id)
 
-            # 3. Validar Unicidad de Orden
+            # 2. Validar Unicidad de Orden
             new_order = data.get("order")
             if new_order is not None and new_order != current_field.order:
                 cls._check_order_uniqueness(uow.session, current_field.campaign_id, new_order, errors, exclude_id=obj_id)
 
-            # 4. Validar Restricciones Históricas
+            # 3. Validar Restricciones Históricas
             new_required = data.get("required")
             new_primary = data.get("is_primary")
             
@@ -348,11 +359,21 @@ class LeadFieldService(BaseService):
                 if new_expr and new_expr != current_field.calculation_expression:
                     expression_changed = True
 
-            updated_field = cls.repository.update(uow.session, obj_id, data)
+            changes = {}
+            for key, new_val in data.items():
+                if hasattr(current_field, key):
+                    old_val = getattr(current_field, key)
+                    if old_val != new_val:
+                        changes[key] = {"old": old_val, "new": new_val}
+
+            updated_field = cls.repository.update(uow.session, obj_id, data, updated_by=updated_by)
+            uow.session.flush() 
 
             if expression_changed:
                 cls._recalculate_leads_formula(uow, updated_field)
-            # ===============================================================
+            
+            if changes:
+                cls._log_audit(uow.session, updated_field, action="UPDATE", changes=changes, user_id=updated_by)
 
             return updated_field
 
@@ -367,7 +388,7 @@ class LeadFieldService(BaseService):
     # =========================================================================
 
     @classmethod
-    def set_active(cls, field_id: int):
+    def set_active(cls, field_id: int, updated_by=None):
         def do_reactivate(uow):
             errors = []
             field = uow.session.get(LeadField, field_id)
@@ -391,8 +412,16 @@ class LeadFieldService(BaseService):
                 max_order = cls.repository.get_max_order(uow.session, field.campaign_id)
                 field.order = max_order + 1
 
+            was_active = field.active
+
+            field.updated_by = updated_by
             field.active = True
             uow.session.add(field)
+            uow.session.flush()
+
+            if not was_active:
+                cls._log_audit(uow.session, field, action="ACTIVATE", changes={"active": {"old": False, "new": True}}, user_id=updated_by)
+
             return field
 
         return cls._execute(

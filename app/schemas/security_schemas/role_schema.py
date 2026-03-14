@@ -16,3 +16,7 @@ class RoleDetailResponse(RoleBase, BaseDetailResponse):
 
 class RoleCreate(RoleBase, BaseCreate):
     organization_id: Optional[int] = Field(gt=0)
+
+class RoleUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=2, max_length=100)
+    code: Optional[str] = Field(default=None, min_length=2, max_length=50)

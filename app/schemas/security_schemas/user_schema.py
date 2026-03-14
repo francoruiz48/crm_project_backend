@@ -24,4 +24,7 @@ class UserDetailResponse(UserResponse):
 class UserCreate(UserBase, BaseCreate):
     pass
 
+class UserUpdate(BaseModel):
+    email: Optional[str] = None
+
 

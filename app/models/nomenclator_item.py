@@ -6,7 +6,7 @@ from sqlalchemy.orm import relationship
 
 class NomenclatorItem(BaseModelDB):
     __tablename__ = "nomenclator_item"
-    code = Column(String, nullable=False, unique=True)
+    code = Column(String, nullable=False)
     value = Column(String, nullable=False)
     
     nomenclator_id = Column(Integer, ForeignKey("nomenclator.id"), nullable=False)

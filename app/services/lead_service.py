@@ -4,6 +4,7 @@ from fastapi import HTTPException, UploadFile, status
 from app.core.constans import ALLOWED_DOCUMENT_TYPES, ALLOWED_IMAGE_TYPES, DATE_FORMAT, DATE_TIME_FORMAT, DEFAULT_PAGE_SIZE, NOMENCLATOR_FIELD_TYPES
 from app.core.exceptions.exceptions import ValidationError 
 from app.models.lead import Lead
+from app.models.lead_activity_history import LeadActivityHistory
 from app.services.base_service import BaseService
 from app.db.repository.lead_repository import LeadRepository
 from app.db.repository.lead_field_repository import LeadFieldRepository
@@ -35,9 +36,25 @@ class LeadService(BaseService):
         def model_dump(self, **kwargs): return self._data
         def __getitem__(self, item): return self._data.get(item)
 
+    
+
     # ---------------------------------------------------------
     # Helpers de Lógica de Negocio
     # ---------------------------------------------------------
+
+    @classmethod
+    def _log_activity(cls, session, lead_id: int, activity_type: str, details: dict, user_id: int = None):
+        """
+        Guarda un registro en la línea de tiempo del Lead.
+        activity_type puede ser: 'CREATED', 'FIELD_UPDATED', 'NOTE_ADDED', etc.
+        """
+        activity = LeadActivityHistory(
+            lead_id=lead_id,
+            activity_type=activity_type,
+            details=details,
+            created_by=user_id
+        )
+        session.add(activity)
 
     @classmethod
     def _convert_value_by_type(cls, value, field_def):
@@ -473,6 +490,16 @@ class LeadService(BaseService):
                 "notes": "Ingreso al sistema"
             }
             cls.state_history_repository.create(uow.session, state_history_data, created_by=created_by)
+
+            cls._log_activity(
+                session=uow.session,
+                lead_id=lead_id,
+                activity_type="LEAD_CREATED",
+                details={"message": "Lead creado e ingresado a la campaña."},
+                user_id=created_by
+            )
+
+            cls._log_audit(uow.session, lead, action="CREATE", changes=None, user_id=created_by)
         
         return cls.get_by_id(lead_id, detailed=True)
 
@@ -524,6 +551,10 @@ class LeadService(BaseService):
                 "notes": notes
             }
             cls.state_history_repository.create(uow.session, history_data, created_by=user_id)
+
+            # Pasamos 'lead' y formateamos el old vs new
+            diff_state = {"current_state_id": {"old": current_state_id, "new": new_state_id}}
+            cls._log_audit(uow.session, lead, action="UPDATE", changes=diff_state, user_id=user_id)
 
         # Devolvemos el Lead actualizado para el Frontend
         return cls.get_by_id(obj_id, detailed=True)
@@ -582,7 +613,7 @@ class LeadService(BaseService):
             }
 
     @classmethod
-    def update(cls, obj_id: int, obj_in, files_map: dict = None):
+    def update(cls, obj_id: int, obj_in, files_map: dict = None, updated_by=None):
         errors = [] 
         
         with UnitOfWork() as uow:
@@ -592,7 +623,7 @@ class LeadService(BaseService):
             # Update base
             lead_data = obj_in.model_dump(exclude_unset=True, exclude={"values"})
             if lead_data:
-                cls.repository.update(uow.session, obj_id, lead_data)
+                cls.repository.update(uow.session, obj_id, lead_data, updated_by=updated_by)
 
             if obj_in.values is not None:
                 all_field_defs = cls.field_repository.get_all_active_with_rules(uow.session, campaign_id=current_lead.campaign_id)
@@ -645,8 +676,48 @@ class LeadService(BaseService):
                     if field.field_type_code == "CALCULATED" and field.id in full_context:
                         incoming_data[field.id] = full_context[field.id]
 
+
+                # HISTORIAL DEL LEAD
+                changes = []
+                
+                # Función auxiliar para comparar tipos mixtos (str vs int vs list) de forma segura
+                def _norm_for_compare(val):
+                    if isinstance(val, list): return sorted([str(x) for x in val])
+                    if val is None: return ""
+                    if isinstance(val, float): return str(round(val, 4)) # Prevenir falsos positivos por decimales
+                    return str(val).strip()
+
+                for fid, new_val in incoming_data.items():
+                    field_def = defs_map.get(fid)
+                    if not field_def: continue
+                    
+                    old_val = db_values.get(fid)
+
+                    # Comparamos si el valor realmente cambió
+                    if _norm_for_compare(old_val) != _norm_for_compare(new_val):
+                        changes.append({
+                            "field_id": fid,
+                            "field_name": field_def.name,
+                            "old_value": old_val,
+                            "new_value": new_val
+                        })
+
+                # ------------------
+
                 clean_values = cls._reconstruct_items_for_repo(incoming_data, current_campaign_defs)
                 cls.repository.upsert_values(uow.session, obj_id, clean_values)
+
+                cls._log_audit(uow.session, current_lead, action="UPDATE", changes=changes, user_id=updated_by)
+
+                # --- GUARDAR LOG SI HUBO CAMBIOS --
+                if changes:
+                    cls._log_activity(
+                        session=uow.session,
+                        lead_id=obj_id,
+                        activity_type="FIELDS_UPDATED",
+                        details={"changes": changes},
+                        user_id=updated_by
+                    )
 
         return cls.get_by_id(obj_id, detailed=True)
 

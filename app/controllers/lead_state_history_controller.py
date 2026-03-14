@@ -1,7 +1,6 @@
 from app.controllers.base_controller import BaseController
 from app.services.lead_state_history_service import LeadStateHistoryService
 from app.schemas.lead_state_history_schema import (
-    LeadStateHistoryCreate, 
     LeadStateHistoryResponse, 
     LeadStateHistoryDetailedResponse
 )
@@ -13,7 +12,6 @@ from fastapi import Query
 class LeadStateHistoryController(BaseController):
     router_prefix = "/lead_state_history"
     service = LeadStateHistoryService
-    schema_in = LeadStateHistoryCreate # Necesario para la clase base, aunque no usemos POST
     schema_out = LeadStateHistoryResponse
     schema_out_detail = LeadStateHistoryDetailedResponse
 

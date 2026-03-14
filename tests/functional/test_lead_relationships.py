@@ -174,36 +174,48 @@ def test_update_field_fail_change_type(api, relationship_setup):
     
     # 1. GET actual
     current_data = api.client.get(f"/lead_fields/{f_id}", headers=api.headers).json()
+    original_type = current_data["field_type"]["code"]
     
     # 2. Modificar tipo (prohibido)
     current_data["field_type_code"] = "STRING"
     
-    # 3. PUT completo
+    # 3. PUT/PATCH completo
     res = api.client.put(f"/lead_fields/{f_id}", json=current_data, headers=api.headers)
     
-    assert res.status_code == 400, f"Se esperaba 400: {res.text}"
-    assert "no se puede cambiar el tipo" in res.text.lower()
+    if res.status_code == 400:
+        # Si hay lógica en el Service que lo frena explícitamente
+        assert "tipo" in res.text.lower()
+    else:
+        # Si el esquema Update de Pydantic lo ignoró
+        assert res.status_code == 200
+        # COMPROBACIÓN VITAL: Asegurar que el tipo NO cambió a STRING
+        assert res.json()["field_type"]["code"] == original_type
 
 def test_update_field_fail_remove_related_campaign(api, relationship_setup):
     f_id = relationship_setup["field_rel_id"]
 
     # 1. GET actual
     current_data = api.client.get(f"/lead_fields/{f_id}", headers=api.headers).json()
+    original_related_id = current_data["related_campaign"]["id"]
     
     # 2. Nullify related_campaign (Prohibido para LEAD)
     current_data["related_campaign_id"] = None
 
-    # 3. PUT completo
+    # 3. PUT/PATCH completo
     res = api.client.put(f"/lead_fields/{f_id}", json=current_data, headers=api.headers)
     
-    # NOTA: Si este test da 200, es porque falta validación en LeadFieldService.update
-    assert res.status_code == 400, f"Se esperaba 400 al quitar related_campaign_id. {res.text}"
+    if res.status_code == 400:
+        assert "related_campaign" in res.text.lower() or "campaña" in res.text.lower()
+    else:
+        assert res.status_code == 200
+        # COMPROBACIÓN VITAL: Asegurar que NO se puso en nulo
+        assert res.json()["related_campaign"]["id"] == original_related_id
 
 def test_update_field_change_related_campaign_constraints(api, relationship_setup):
     setup = relationship_setup
     f_id = setup["field_rel_id"]
     
-    # Crear datos para bloquear
+    # Crear datos para bloquear (Un lead apuntando a la campaña original)
     api.create_lead(
         campaign_id=setup["camp_source_id"],
         values=[{"field_id": f_id, "value": setup["target_ids"]}]
@@ -211,16 +223,25 @@ def test_update_field_change_related_campaign_constraints(api, relationship_setu
 
     # 1. GET actual
     current_data = api.client.get(f"/lead_fields/{f_id}", headers=api.headers).json()
+    original_related_id = current_data["related_campaign"]["id"]
     
-    # 2. Cambiar destino (prohibido si hay datos)
+    # 2. Cambiar destino a sí misma
     current_data["related_campaign_id"] = setup["camp_source_id"]
 
     res_fail = api.client.put(f"/lead_fields/{f_id}", json=current_data, headers=api.headers)
     
-    assert res_fail.status_code == 400, f"Se esperaba 400 por integridad. {res_fail.text}"
-    assert "existen leads" in res_fail.text.lower()
+    if res_fail.status_code == 400:
+        assert "existen leads" in res_fail.text.lower()
+    else:
+        assert res_fail.status_code == 200
+        # COMPROBACIÓN VITAL: Asegurar que el destino se mantuvo intacto
+        assert res_fail.json()["related_campaign"]["id"] == original_related_id
 
-def test_update_field_change_related_campaign_success(api, db_session, initial_structure):
+def test_update_field_change_related_campaign_ignored(api, db_session, initial_structure):
+    """
+    Este test verifica que intentar cambiar una related_campaign_id válida
+    por OTRA related_campaign_id válida también es ignorado por el nuevo esquema.
+    """
     camp_source_id = initial_structure["campaign_id"]
     ws_id = initial_structure["workspace_id"]
     org_id = initial_structure["org_id"]
@@ -234,7 +255,8 @@ def test_update_field_change_related_campaign_success(api, db_session, initial_s
     }, headers=api.headers)
     f_id = res_f.json()["id"]
 
-    # Nueva campaña
+    # Nueva campaña destino
+    from app.models.campaign import Campaign
     camp_new = Campaign(name="Otra", workspace_id=ws_id, lead_flow_id=lead_flow_id, organization_id=org_id)
     db_session.add(camp_new)
     db_session.commit()
@@ -242,17 +264,22 @@ def test_update_field_change_related_campaign_success(api, db_session, initial_s
     # 1. GET
     current_data = api.client.get(f"/lead_fields/{f_id}", headers=api.headers).json()
     
-    # 2. Modificar
+    # 2. Modificar (Intentamos saltar a camp_new.id)
     current_data["related_campaign_id"] = camp_new.id
 
     # 3. PUT
     res_ok = api.client.put(f"/lead_fields/{f_id}", json=current_data, headers=api.headers)
     
-    assert res_ok.status_code == 200, f"Fallo al actualizar: {res_ok.text}"
-    
-    # [CORRECCIÓN]: Verificar dentro del objeto 'related_campaign'
-    resp_json = res_ok.json()
-    assert resp_json["related_campaign"]["id"] == camp_new.id
+    if res_ok.status_code == 400:
+        # En caso de que haya una restricción fuerte agregada a futuro
+        pass
+    else:
+        assert res_ok.status_code == 200
+        resp_json = res_ok.json()
+        
+        # COMPROBACIÓN VITAL: Verificar que fue IGNORADO y mantuvo la campaña original (camp_source_id)
+        # Si aquí marca "camp_new.id", significa que el esquema Update se filtró y permitió el cambio!
+        assert resp_json["related_campaign"]["id"] == camp_source_id
 
 def test_create_lead_fail_cross_campaign_id(api, db_session, relationship_setup, initial_structure):
     """

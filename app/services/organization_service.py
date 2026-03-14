@@ -64,9 +64,13 @@ class OrganizationService(BaseService):
             org_data = obj_in.model_dump(exclude_unset=True)
             org_data.update(kwargs)
             org = cls.repository.create(uow.session, org_data, created_by)
+            uow.session.flush() # Obligatorio para tener org.id
             
-            # --- MAGIA: Inyectar el flujo por defecto ---
+            # --- Inyectar el flujo por defecto ---
             cls._create_default_lead_flow(uow.session, org.id, created_by)
+            
+            # LOG DE AUDITORÍA
+            cls._log_audit(uow.session, org, action="CREATE", changes=org_data, user_id=created_by)
             
             return org
 

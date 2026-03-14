@@ -35,6 +35,11 @@ class ValidationRuleCreate(ValidationRuleBase, BaseCreate):
                 
         return data
 
+class ValidationRuleUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=3, max_length=100)
+    expression: Optional[str] = Field(default=None, min_length=1)
+    error_message: Optional[str] = Field(default=None, max_length=255)
+    template_params: Optional[Dict[str, Any]] = None
 
 class ValidationRuleResponse(ValidationRuleBase, BaseResponse):
     pass

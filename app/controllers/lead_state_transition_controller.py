@@ -5,7 +5,8 @@ from app.schemas.lead_state_transition_schema import (
     LeadStateTransitionBulkCreate,
     LeadStateTransitionCreate, 
     LeadStateTransitionResponse, 
-    LeadStateTransitionDetailedResponse
+    LeadStateTransitionDetailedResponse,
+    LeadStateTransitionUpdate
 )
 from typing import List, Optional, Union
 from app.schemas.pagination_schema import PaginatedResponse
@@ -16,6 +17,7 @@ class LeadStateTransitionController(BaseController):
     router_prefix = "/lead_state_transitions"
     service = LeadStateTransitionService
     schema_in = LeadStateTransitionCreate
+    schema_update = LeadStateTransitionUpdate
     schema_out = LeadStateTransitionResponse
     schema_out_detail = LeadStateTransitionDetailedResponse
 

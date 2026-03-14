@@ -9,6 +9,9 @@ class LeadFieldSectionBase(BaseModel):
 class LeadFieldSectionCreate(LeadFieldSectionBase, BaseCreate):
     pass
 
+class LeadFieldSectionUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=3, max_length=100)
+
 class LeadFieldSectionResponse(LeadFieldSectionBase, BaseResponse):
     organization_id: Optional[int]
 

@@ -21,6 +21,28 @@ class BaseService:
         raise NotFoundException(
             detail=ERROR_NOT_FOUND.format(model=cls._model_name(), id=obj_id)
         )
+    
+    @classmethod
+    def _log_audit(cls, session, obj, action: str, changes: dict = None, user_id: int = None):
+        """Helper para registrar la auditoría genérica del sistema."""
+        # Evitamos auditar los logs de auditoría o los historiales de leads para no hacer bucles
+        ignored_models = ["LeadActivityHistory", "LeadStateHistory", "SystemAuditLog"]
+        model_name = cls._model_name()
+        
+        if model_name in ignored_models:
+            return
+
+        from app.models.system_audit_log import SystemAuditLog # Importación tardía para evitar ciclos
+
+        audit = SystemAuditLog(
+            organization_id=getattr(obj, "organization_id", None),
+            entity_type=model_name,
+            entity_id=obj.id,
+            action=action,
+            changes=changes,
+            created_by=user_id
+        )
+        session.add(audit)
 
     @classmethod
     def _execute(
@@ -77,44 +99,98 @@ class BaseService:
 
     @classmethod
     def create(cls, obj_data, created_by=None):
-        return cls._execute(
-            action="Creando",
-            func=lambda uow: cls.repository.create(uow.session, obj_data, created_by=created_by),
-            success_msg=SUCCESS_CREATE
-        )
+        def do_create(uow):
+            # Guardamos el objeto
+            new_obj = cls.repository.create(uow.session, obj_data, created_by=created_by)
+            uow.session.flush() # Genera el ID del objeto
+            
+            # Formateamos el payload que envió el usuario
+            payload = cls.repository._normalize_data(obj_data)
+            
+            # LOG DE AUDITORÍA
+            cls._log_audit(uow.session, new_obj, action="CREATE", changes=payload, user_id=created_by)
+            
+            return new_obj
+            
+        return cls._execute(action="Creando", func=do_create, success_msg=SUCCESS_CREATE)
 
     @classmethod
-    def update(cls, obj_id: int, obj_data):
-        return cls._execute(
-            action="Actualizando",
-            obj_id=obj_id,
-            func=lambda uow: cls.repository.update(uow.session, obj_id, obj_data),
-            success_msg=SUCCESS_UPDATE
-        )
+    def update(cls, obj_id: int, obj_data, updated_by=None):
+        def do_update(uow):
+            # 1. Obtener el objeto viejo (para comparar qué cambió)
+            old_obj = cls.repository.get_by_id(uow.session, obj_id, detailed=False)
+            if not old_obj:
+                cls._not_found(obj_id)
+
+            payload = cls.repository._normalize_data(obj_data)
+            
+            # 2. Armar el diff (viejo vs nuevo)
+            changes = {}
+            for key, new_val in payload.items():
+                if hasattr(old_obj, key):
+                    old_val = getattr(old_obj, key)
+                    if old_val != new_val:
+                        changes[key] = {"old": old_val, "new": new_val}
+            
+            # 3. Actualizar la base de datos
+            updated_obj = cls.repository.update(uow.session, obj_id, payload, updated_by=updated_by)
+            uow.session.flush()
+            
+            # 4. LOG DE AUDITORÍA (Solo si realmente hubo cambios)
+            if changes:
+                cls._log_audit(uow.session, updated_obj, action="UPDATE", changes=changes, user_id=updated_by)
+            
+            return updated_obj
+
+        return cls._execute(action="Actualizando", obj_id=obj_id, func=do_update, success_msg=SUCCESS_UPDATE)
 
     @classmethod
-    def delete(cls, obj_id: int):
-        return cls._execute(
-            action="Eliminando",
-            obj_id=obj_id,
-            func=lambda uow: cls.repository.delete(uow.session, obj_id),
-            success_msg=SUCCESS_DELETE
-        )
+    def delete(cls, obj_id: int, updated_by=None):
+        def do_delete(uow):
+            # Necesitamos el objeto antes de borrarlo para tener su organization_id
+            obj_to_delete = cls.repository.get_by_id(uow.session, obj_id, detailed=False)
+            if not obj_to_delete:
+                cls._not_found(obj_id)
+                
+            # Ejecutamos el borrado (Físico o Soft)
+            result = cls.repository.delete(uow.session, obj_id, updated_by=updated_by)
+            
+            # LOG DE AUDITORÍA
+            action = "SOFT_DELETE" if result.get("action") == "disabled" else "DELETE"
+            cls._log_audit(uow.session, obj_to_delete, action=action, changes=None, user_id=updated_by)
+            
+            return result
+
+        return cls._execute(action="Eliminando", obj_id=obj_id, func=do_delete, success_msg=SUCCESS_DELETE)
 
     @classmethod
-    def set_disable(cls, obj_id: int):
-        return cls._execute(
-            action="Desactivando",
-            obj_id=obj_id,
-            func=lambda uow: cls.repository.update(uow.session, obj_id, {"active": False}),
-            success_msg=SUCCESS_UPDATE
-        )
+    def set_active(cls, obj_id: int, updated_by=None):
+        def do_activate(uow):
+            # 1. Buscamos el objeto para saber su estado actual
+            old_obj = cls.repository.get_by_id(uow.session, obj_id, detailed=False)
+            if not old_obj:
+                cls._not_found(obj_id)
 
-    @classmethod
-    def set_active(cls, obj_id: int):
+            was_active = getattr(old_obj, "active", None)
+
+            # 2. Ejecutamos la actualización
+            updated_obj = cls.repository.update(uow.session, obj_id, {"active": True}, updated_by=updated_by)
+            
+            # 3. LOG DE AUDITORÍA (Solo logueamos si realmente estaba inactivo y lo activamos)
+            if was_active is False:
+                cls._log_audit(
+                    session=uow.session, 
+                    obj=updated_obj, 
+                    action="ACTIVATE", 
+                    changes={"active": {"old": False, "new": True}}, 
+                    user_id=updated_by
+                )
+
+            return updated_obj
+
         return cls._execute(
             action="Activando",
             obj_id=obj_id,
-            func=lambda uow: cls.repository.update(uow.session, obj_id, {"active": True}),
+            func=do_activate,
             success_msg=SUCCESS_UPDATE
         )

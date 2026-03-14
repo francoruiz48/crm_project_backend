@@ -47,7 +47,7 @@ class LeadStateService(BaseService):
 
 
     @classmethod
-    def create(cls, obj_in: LeadStateCreate, **kwargs):
+    def create(cls, obj_in: LeadStateCreate, created_by=None, **kwargs):
         errors = []
         
         with UnitOfWork() as uow:
@@ -84,11 +84,16 @@ class LeadStateService(BaseService):
             # Forzamos el order calculado
             state_data["order"] = calculated_order 
             
-            created_obj = cls.repository.create(uow.session, state_data)
+            created_obj = cls.repository.create(uow.session, state_data, created_by=created_by)
+            uow.session.flush()
+
+            # LOG DE AUDITORÍA
+            cls._log_audit(uow.session, created_obj, action="CREATE", changes=state_data, user_id=created_by)
+
             return created_obj
 
     @classmethod
-    def update(cls, obj_id: int, obj_in):
+    def update(cls, obj_id: int, obj_in, updated_by=None):
         errors = []
         
         with UnitOfWork() as uow:
@@ -148,5 +153,19 @@ class LeadStateService(BaseService):
             if errors:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
 
-            cls.repository.update(uow.session, obj_id, update_data)
-            return cls.repository.get_by_id(uow.session, obj_id)
+            # ARMAMOS EL DIFF DE AUDITORÍA
+            changes = {}
+            for key, new_val in update_data.items():
+                if hasattr(current_state, key):
+                    old_val = getattr(current_state, key)
+                    if old_val != new_val:
+                        changes[key] = {"old": old_val, "new": new_val}
+
+            cls.repository.update(uow.session, obj_id, update_data, updated_by=updated_by)
+            uow.session.flush()
+            updated_state = cls.repository.get_by_id(uow.session, obj_id)
+
+            if changes:
+                cls._log_audit(uow.session, updated_state, action="UPDATE", changes=changes, user_id=updated_by)
+
+            return updated_state

@@ -105,7 +105,7 @@ def test_field_phone_logic(api, initial_structure):
             "field_type_code": "PHONE", 
             "field_subtype_code": "MOBILE"
         },
-        valid_val="+54 9 11 1234-5678",
+        valid_val="+54 9 111 2345678",
         invalid_val="12345abc", # Letras no permitidas
         error_fragment="inválidos" 
     )
