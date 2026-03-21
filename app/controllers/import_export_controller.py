@@ -51,7 +51,7 @@ def export_leads(
     """
     Descarga un Excel con todos los leads de la campaña.
     """
-    excel_file = LeadImportExportService.export_leads(db, campaign_id)
+    excel_file = LeadImportExportService.export_leads(db, campaign_id, user_id=current_user.id)
     
     headers = {
         'Content-Disposition': f'attachment; filename="leads_campaign_{campaign_id}.xlsx"'

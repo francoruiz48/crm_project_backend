@@ -10,7 +10,7 @@ class RoleBase(BaseModel):
 class RoleResponse(RoleBase, BaseDetailResponse):
     organization_id: Optional[int] = Field(default=None, gt=0)
 
-class RoleDetailResponse(RoleBase, BaseDetailResponse):
+class RoleDetailedResponse(RoleBase, BaseDetailResponse):
     organization_id: Optional[int] = Field(default=None, gt=0)
     permissions: List[PermissionResponse] = []
 

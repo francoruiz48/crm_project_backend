@@ -1,7 +1,7 @@
 from app.controllers.base_controller import BaseController
 from app.models.security_models import Role, User, UserOrganization
 from app.services.security_services.user_service import UserService
-from app.schemas.security_schemas.user_schema import UserDetailResponse, UserResponse, UserCreate, UserUpdate
+from app.schemas.security_schemas.user_schema import UserDetailedResponse, UserResponse, UserCreate, UserUpdate
 from app.core.constans import READ_WRITE
 
 class UserController(BaseController):
@@ -10,7 +10,7 @@ class UserController(BaseController):
     schema_in = UserCreate
     schema_update = UserUpdate
     schema_out = UserResponse
-    schema_out_detail = UserDetailResponse
+    schema_out_detail = UserDetailedResponse
     enabled_methods = READ_WRITE
 
     relationships = [

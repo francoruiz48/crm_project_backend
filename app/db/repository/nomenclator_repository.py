@@ -1,13 +1,13 @@
 from typing import Optional
 from app.db.repository.base_repository import BaseRepository
 from app.models.nomenclator import Nomenclator
-from app.schemas.nomenclator_schema import NomenclatorResponse, NomenclatorDetailResponse
+from app.schemas.nomenclator_schema import NomenclatorResponse, NomenclatorDetailedResponse
 from sqlalchemy import or_
 
 class NomenclatorRepository(BaseRepository):
     model = Nomenclator
     schema_out = NomenclatorResponse
-    schema_out_detail = NomenclatorDetailResponse
+    schema_out_detail = NomenclatorDetailedResponse
 
     @classmethod
     def get_all(cls, session, page: int = 0, page_size: int = 0, only_active: bool = True, detailed: bool = False, 

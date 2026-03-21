@@ -290,7 +290,7 @@ class LeadImportExportService:
         }
 
     @classmethod
-    def export_leads(cls, db: Session, campaign_id: int) -> io.BytesIO:
+    def export_leads(cls, db: Session, campaign_id: int, user_id: int) -> io.BytesIO:
         """
         Genera un Excel con todos los leads de la campaña.
         Columnas = Nombres de los campos.
@@ -306,7 +306,7 @@ class LeadImportExportService:
 
         # 2. Obtener Leads (Filas)
         # Usamos get_all sin paginación (cuidado con volumen masivo)
-        leads = LeadRepository.get_all(db, campaign_id=campaign_id, only_active=True, page=0, page_size=0)
+        leads = LeadRepository.get_all(db, user_id=user_id, campaign_id=campaign_id, only_active=True, page=0, page_size=0)
 
         # 3. Construir Dataset
         data = []

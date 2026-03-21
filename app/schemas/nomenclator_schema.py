@@ -21,6 +21,6 @@ class NomenclatorUpdate(BaseModel):
 class NomenclatorResponse(NomenclatorBase, BaseResponse):
     organization_id: Optional[int] = Field(default=None, gt=0)
 
-class NomenclatorDetailResponse(NomenclatorBase, BaseDetailResponse):
+class NomenclatorDetailedResponse(NomenclatorBase, BaseDetailResponse):
     sub_nomenclators: List["NomenclatorResponse"] = Field(default_factory=list)
     organization_id: Optional[int] = Field(default=None, gt=0)

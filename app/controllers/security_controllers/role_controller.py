@@ -1,6 +1,6 @@
 from app.controllers.base_controller import BaseController
 from app.services.security_services.role_service import RoleService
-from app.schemas.security_schemas.role_schema import RoleDetailResponse, RoleResponse, RoleCreate, RoleUpdate
+from app.schemas.security_schemas.role_schema import RoleDetailedResponse, RoleResponse, RoleCreate, RoleUpdate
 from app.core.constans import READ_WRITE
 
 class RoleController(BaseController):
@@ -9,7 +9,7 @@ class RoleController(BaseController):
     schema_in = RoleCreate
     schema_update = RoleUpdate
     schema_out = RoleResponse
-    schema_out_detail = RoleDetailResponse
+    schema_out_detail = RoleDetailedResponse
     enabled_methods = READ_WRITE
 
 router = RoleController.get_router()

@@ -196,14 +196,16 @@ def seed_rbac(db):
         "lead", "lead_field", "validation_rule",
         "campaign", "nomenclator", "nomenclator_item", "user",
         "role", "workspace", "lead_field_section",
-        "lead_comment", "organization"
+        "lead_comment", "organization", "lead_flow", "lead_state", 
+        "lead_state_transition", "team", "team_member", 
+        "team_workspace_access", "team_campaign_access", "lead_routing_rule"
     ]
 
     # 2. Entidades de Solo Lectura (Catálogos del sistema)
     READ_ONLY_ENTITIES = [
         "lead_field_type", 
         "lead_field_subtype",
-        "permission"
+        "permission", "lead_state_history", "system_audit_log", "lead_activity_history"
     ]
 
     ACTIONS = {

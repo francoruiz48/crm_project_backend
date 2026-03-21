@@ -1,5 +1,6 @@
 from fastapi import status, HTTPException
 from sqlalchemy import desc
+from app.core.constans import DEFAULT_PAGE_SIZE
 from app.db.repository.lead_flow_repository import LeadFlowRepository
 from app.models.lead_flow import LeadFlow
 from app.services.base_service import BaseService
@@ -82,3 +83,4 @@ class CampaignService(BaseService):
             return new_campaign
 
         return cls._execute(action="Crear Campaña", func=do_create)
+    

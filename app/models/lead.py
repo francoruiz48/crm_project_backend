@@ -23,3 +23,8 @@ class Lead(BaseModelDB):
         back_populates="lead", 
         cascade="all, delete-orphan"
     )
+
+    team_id = Column(Integer, ForeignKey("team.id", ondelete="SET NULL"), nullable=True)
+    assigned_to_user_id = Column(Integer, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
+
+    

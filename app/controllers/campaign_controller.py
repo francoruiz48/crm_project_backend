@@ -1,6 +1,6 @@
 from typing import Optional, Union
-
-from fastapi import Query
+from app.core.security import get_current_user
+from fastapi import Query, Depends
 from app.controllers.base_controller import BaseController
 from app.schemas.pagination_schema import PaginatedResponse
 from app.services.campaign_service import CampaignService
@@ -37,12 +37,16 @@ class CampaignController(BaseController):
             only_active: bool = True, 
             detailed: bool = Query(False),
             search: Optional[str] = Query(None, description="Buscar dentro de campañas"),
-            workspace_id: Optional[int] = Query(None, description="ID del workspace para filtrar campañas")
+            workspace_id: Optional[int] = Query(None, description="ID del workspace para filtrar campañas"),
+            current_user = Depends(get_current_user)
         ):
+            
+            super_admin_flag = getattr(current_user, 'is_superuser', False)
 
-            total, items_pydantic = cls.service.get_all(
+            total, items_pydantic = cls.service.get_all(user_id=current_user.id,
                     page=page, 
                     page_size=page_size, 
+                    is_super_admin=super_admin_flag,
                     only_active=only_active,
                     detailed=detailed,
                     search=search, search_fields=['name', 'description'],
