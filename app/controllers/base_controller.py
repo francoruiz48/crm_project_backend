@@ -1,5 +1,5 @@
 from typing import Dict, List, Union
-from fastapi import APIRouter, Body, HTTPException, Query, Depends
+from fastapi import APIRouter, Body, HTTPException, Query, Depends, Request
 from app.core.constans import DEFAULT_PAGE_SIZE, PAGE_SIZE_LIMIT
 from app.core.security import PermissionChecker, get_current_user
 from app.schemas.pagination_schema import PaginatedResponse
@@ -52,16 +52,37 @@ class BaseController:
             @router.get("/", response_model=ResponseModelPaginated,
                         dependencies=cls._get_deps("read"))
             def get_all(
+                request: Request,
                 page: int = Query(1, ge=1),
                 page_size: int = DEFAULT_PAGE_SIZE,
                 only_active: bool = True, 
-                detailed: bool = Query(False)
+                detailed: bool = Query(False),
+                search: str = Query(None, description="Búsqueda global"),
+                search_fields: str = Query(None, description="Campos para búsqueda global, separados por comas"),
+                current_user = Depends(get_current_user)
             ):
+                # Definimos los parámetros reservados que no deben tratarse como filtros de columna
+                reserved_params = {"page", "page_size", "only_active", "detailed", "search", "search_fields"}
+
+                # Convertimos el string "field1,field2" en una lista ["field1", "field2"]
+                search_fields = [f.strip() for f in search_fields.split(",")] if search_fields else None
+
+                # Atrapamos cualquier otro parámetro de la URL (ej: ?campaign_id=5&name=Test)
+                dynamic_filters = {
+                    key: value for key, value in request.query_params.items()
+                    if key not in reserved_params
+                }
+
                 total, items_pydantic = cls.service.get_all(
+                    consulted_by=current_user.id,
+                    is_super_admin=getattr(current_user, 'is_superuser', False),
                     page=page,
                     page_size=page_size,
                     only_active=only_active, 
-                    detailed=detailed
+                    detailed=detailed,
+                    search=search,
+                    search_fields=search_fields, 
+                    **dynamic_filters
                 )
 
                 return PaginatedResponse.create(

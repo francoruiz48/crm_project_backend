@@ -179,13 +179,14 @@ class BaseRepository:
 
     # ----------------- CRUD Genérico -----------------
     @classmethod
-    def get_all(cls, session, only_active: bool = True, detailed: bool = False, **kwargs):
+    def get_all(cls, session, consulted_by: int = None, is_super_admin: bool = False, only_active: bool = True, detailed: bool = False, base_query=None, **kwargs):
         """
         Trae todos los objetos con filtros dinámicos.
         Cualquier argumento extra (ej: campaign_id=1) se aplica como filtro "=" 
         si el modelo tiene ese atributo.
         """
-        query = session.query(cls.model)
+
+        query = base_query if base_query is not None else session.query(cls.model)
 
         query = cls._apply_tenant_filter(query)
             

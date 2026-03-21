@@ -1,6 +1,7 @@
 from app.services.base_service import BaseService
 from app.db.repository.workspace_repository import WorkspaceRepository
 from fastapi import status, HTTPException
+from app.core.constans import DEFAULT_PAGE_SIZE
 
 class WorkspaceService(BaseService):
     repository = WorkspaceRepository
@@ -34,3 +35,4 @@ class WorkspaceService(BaseService):
             return new_ws
 
         return cls._execute(action="Crear workspace", func=do_create)
+    

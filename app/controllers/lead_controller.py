@@ -1,6 +1,6 @@
 import json
 from typing import List, Union, Optional
-from fastapi import Body, Depends, HTTPException, Query, Request, UploadFile
+from fastapi import Body, Depends, HTTPException, Query, Request
 from app.controllers.base_controller import BaseController
 from app.core.constans import DEFAULT_PAGE_SIZE, PAGE_SIZE_LIMIT
 from app.core.security import PermissionChecker, get_current_user
@@ -12,6 +12,7 @@ from app.schemas.pagination_schema import PaginatedResponse
 from app.services.lead_service import LeadService
 from app.schemas.lead_schema import LeadCreate, LeadDetailedResponse, LeadResponse, LeadUpdate
 from pydantic import BaseModel, Field
+from app.schemas.team_member_schema import BulkAssignRequest
 
 class LeadController(BaseController):
     router_prefix = "/leads"
@@ -93,15 +94,20 @@ class LeadController(BaseController):
             dependencies=cls._get_deps("read")
         )
         def search_leads(
+            current_user = Depends(get_current_user),
             page: int = Query(1, ge=1),
             page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=PAGE_SIZE_LIMIT),
             search_req: LeadSearchRequest = Body(...),
             detailed: bool = Query(False)
         ):
+            
+            super_admin_flag = getattr(current_user, 'is_superuser', False)
 
             total, items_pydantic = cls.service.search(
+                consulted_by=current_user.id,
                 page=page,
                 page_size=page_size,
+                is_super_admin=super_admin_flag,
                 search_req=search_req, 
                 detailed=detailed
             )
@@ -117,6 +123,7 @@ class LeadController(BaseController):
         @router.get("/", response_model=ResponseModelPaginated,
                 dependencies=cls._get_deps("read"))
         def get_all(
+            current_user = Depends(get_current_user),
             page: int = Query(1, ge=1),
             page_size: int = DEFAULT_PAGE_SIZE,
             only_active: bool = True, 
@@ -124,10 +131,14 @@ class LeadController(BaseController):
             campaign_id: Optional[int] = Query(None, description="Filtrar por ID de campaña"),
             query: Optional[str] = Query(None, description="Buscar leads")
         ):
+            
+            super_admin_flag = getattr(current_user, 'is_superuser', False)
 
             total, items_pydantic = cls.service.get_all(
+                    consulted_by=current_user.id,
                     page=page, 
                     page_size=page_size, 
+                    is_super_admin=super_admin_flag,
                     only_active=only_active,
                     detailed=detailed,
                     query=query,
@@ -224,6 +235,29 @@ class LeadController(BaseController):
                 new_state_id=payload.new_state_id, 
                 notes=payload.notes, 
                 user_id=current_user.id
+            )
+        
+
+        @router.patch("/bulk-assign", response_model=List[ResponseModelItem], dependencies=cls._get_deps("update"))
+        async def bulk_assign_leads(
+            payload: BulkAssignRequest = Body(...),
+            current_user = Depends(get_current_user)
+        ):
+            """
+            Reasignación masiva de Leads a un Equipo y/o Usuario.
+            """
+            # Validamos que al menos envíen un destino
+            if not payload.target_team_id and not payload.target_user_id:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="Debe especificar al menos un equipo destino o un usuario destino."
+                )
+
+            return cls.service.bulk_assign(
+                lead_ids=payload.lead_ids,
+                target_team_id=payload.target_team_id,
+                target_user_id=payload.target_user_id,
+                updated_by=current_user.id
             )
         
         return router

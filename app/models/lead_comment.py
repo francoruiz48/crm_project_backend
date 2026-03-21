@@ -6,6 +6,7 @@ from sqlalchemy.orm import relationship
 class LeadComment(BaseModelDB):
     __tablename__ = "lead_comment"
     content = Column(String, nullable=False)
+    color = Column(String, nullable=True)
 
     lead_id = Column(Integer, ForeignKey("lead.id"), nullable=False)
 

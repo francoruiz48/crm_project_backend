@@ -9,6 +9,8 @@ from app.schemas.lead_state_schema import LeadStateDetailedResponse, LeadStateRe
 
 class LeadBase(BaseModel):
     campaign_id: int = Field(gt=0)
+    assigned_to_user_id: Optional[int] = Field(default=None, gt=0)
+    team_id: Optional[int] = Field(default=None, gt=0)
 
 class LeadCreate(LeadBase, BaseCreate):
     values: List[LeadFieldValueCreate]
