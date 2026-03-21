@@ -7,6 +7,7 @@ from app.schemas.lead_field_value_schema import LeadFieldValueCreate, LeadFieldV
 
 class LeadCommentBase(BaseModel):
     content: str = Field(min_length=1, max_length=600)
+    color : Optional[str] = Field(default=None, max_length=7) # Ej: "#FF5733"
     lead_id: int = Field(gt=0)
 
 class LeadCommentCreate(LeadCommentBase, BaseCreate):
