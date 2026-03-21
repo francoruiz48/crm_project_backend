@@ -5,8 +5,7 @@ from app.core.constans import READ_ONLY
 
 class LeadFieldSubtypeController(BaseController):
     router_prefix = "/lead_field_subtypes"
-    service = LeadFieldSubtypeService
-    
+    service = LeadFieldSubtypeService   
     schema_out = LeadFieldSubtypeResponse
     schema_out_detail = LeadFieldSubtypeDetailedResponse
     enabled_methods = READ_ONLY

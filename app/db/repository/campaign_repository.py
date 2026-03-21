@@ -16,12 +16,12 @@ class CampaignRepository(BaseRepository):
 
 
     @classmethod
-    def apply_security_filter(cls, session, query, user_id: int, is_super_admin: bool = False):
+    def apply_security_filter(cls, session, query, consulted_by: int, is_super_admin: bool = False):
         if is_super_admin:
             return query
 
         user_team_ids = session.query(TeamMember.team_id).filter(
-            TeamMember.user_id == user_id
+            TeamMember.user_id == consulted_by
         )
 
         # 1. Campañas con acceso directo
@@ -41,7 +41,7 @@ class CampaignRepository(BaseRepository):
         return query.filter(
             or_(
                 cls.model.is_public == True,           # 1. Es pública
-                cls.model.created_by == user_id,       # 2. Soy el dueño/creador
+                cls.model.created_by == consulted_by,       # 2. Soy el dueño/creador
                 cls.model.id.in_(direct_camp_ids),     # 3. Mi equipo tiene acceso directo
                 cls.model.id.in_(inherited_camp_ids)   # 4. Mi equipo tiene acceso heredado
             )
@@ -52,13 +52,13 @@ class CampaignRepository(BaseRepository):
         # 1. Armamos el query base
         query = base_query if base_query is not None else session.query(cls.model)
         
-        # 2. Extraemos el user_id de los kwargs (si no viene, será None)
-        user_id = kwargs.pop('user_id', None)
+        # 2. Extraemos el consulted_by de los kwargs (si no viene, será None)
+        consulted_by = kwargs.pop('consulted_by', None)
         is_super_admin = kwargs.pop('is_super_admin', False)
         
-        # 3. Le inyectamos la Bóveda de seguridad SOLO si viene un user_id
-        if user_id is not None:
-            query = cls.apply_security_filter(session, query, user_id, is_super_admin)
+        # 3. Le inyectamos la Bóveda de seguridad SOLO si viene un consulted_by
+        if consulted_by is not None:
+            query = cls.apply_security_filter(session, query, consulted_by, is_super_admin)
 
         # 4. Llamamos al padre pasándole el query blindado y el resto de los kwargs intactos
         return super().get_all(
