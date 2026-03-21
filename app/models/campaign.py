@@ -1,6 +1,6 @@
 
 from app.models.base_model import BaseModelDB
-from sqlalchemy import Column, ForeignKey, String,Integer, UniqueConstraint
+from sqlalchemy import Boolean, Column, ForeignKey, String,Integer, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 
@@ -8,6 +8,7 @@ class Campaign(BaseModelDB):
     __tablename__ = "campaign"
     name = Column(String, nullable=False)
     description = Column(String, nullable=True)
+    is_public = Column(Boolean, default=True, nullable=False)
 
     nomenclators = relationship("Nomenclator", back_populates="campaign")
 
@@ -21,3 +22,5 @@ class Campaign(BaseModelDB):
 
     lead_flow_id = Column(Integer, ForeignKey("lead_flow.id"), nullable=False) 
     lead_flow = relationship("LeadFlow", back_populates="campaigns")
+
+    team_access = relationship("TeamCampaignAccess", back_populates="campaign", cascade="all, delete-orphan")

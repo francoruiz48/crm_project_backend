@@ -4,7 +4,7 @@ from app.controllers.base_controller import BaseController
 from app.core.constans import DEFAULT_PAGE_SIZE, PAGE_SIZE_LIMIT
 from app.schemas.pagination_schema import PaginatedResponse
 from app.services.nomenclator_item_service import NomenclatorItemService
-from app.schemas.nomenclator_item_schema import NomenclatorItemResponse, NomenclatorItemCreate, NomenclatorItemDetailResponse, NomenclatorItemUpdate
+from app.schemas.nomenclator_item_schema import NomenclatorItemResponse, NomenclatorItemCreate, NomenclatorItemDetailedResponse, NomenclatorItemUpdate
 
 class NomenclatorItemController(BaseController):
     router_prefix = "/nomenclator_items"
@@ -12,7 +12,7 @@ class NomenclatorItemController(BaseController):
     schema_in = NomenclatorItemCreate
     schema_update = NomenclatorItemUpdate
     schema_out = NomenclatorItemResponse
-    schema_out_detail = NomenclatorItemDetailResponse
+    schema_out_detail = NomenclatorItemDetailedResponse
     
     enabled_methods = {"GET_ONE", "POST", "PUT", "DELETE", "ACTIVE", "PATCH"} 
 

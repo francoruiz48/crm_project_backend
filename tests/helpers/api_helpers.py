@@ -32,13 +32,12 @@ class ApiClient:
         """
         return self._inject_context()
 
-    # ========================================================
-    # LA SOLUCIÓN MÁGICA: Inyectar el Tenant antes del Request
-    # ========================================================
     def _inject_context(self, custom_org_id=None):
         org_id_to_use = custom_org_id if custom_org_id else self.org_id
         TENANT_ORG_ID.set(org_id_to_use)
         return {"X-Organization-Id": str(org_id_to_use)}
+    
+
 
     # ==========================
     # ORGANIZACIÓN Y WORKSPACE
@@ -48,26 +47,82 @@ class ApiClient:
         resp = self.client.post("/organizations/", json={"name": name}, headers=headers)
         return validate(resp, expected_status, "crear Organization")
 
-    def create_workspace(self, name="Workspace Test", expected_status=None, custom_org_id=None) -> Dict:
+    def create_workspace(self, name="Workspace Test", expected_status=None, is_public: bool = True, custom_org_id=None) -> Dict:
         headers = self._inject_context(custom_org_id)
-        payload = {"name": name}
+        payload = {"name": name, "is_public": is_public}
         resp = self.client.post("/workspaces/", json=payload, headers=headers)
         return validate(resp, expected_status, "crear Workspace")
 
     # ==========================
     # CAMPAÑAS
     # ==========================
-    def create_campaign(self, workspace_id: int, name="Campaña Test", lead_flow_id: int = 1, expected_status=None) -> Dict:
+    def create_campaign(self, workspace_id: int, name="Campaña Test", lead_flow_id: int = 1, is_public: bool = True, expected_status=None) -> Dict:
         headers = self._inject_context()
         payload = {
             "name": name, 
             "workspace_id": workspace_id, 
             "lead_flow_id": lead_flow_id,
+            "is_public": is_public,
             "description": "Created by ApiHelper",
             "active": True
         }
         resp = self.client.post("/campaigns/", json=payload, headers=headers)
         return validate(resp, expected_status, "crear Campaign")
+
+    # ==========================
+    # EQUIPOS Y ACCESOS
+    # ==========================
+    def create_team(self, name: str, is_visibility_shared: bool = True, expected_status=None) -> Dict:
+        headers = self._inject_context()
+        payload = {"name": name, "is_visibility_shared": is_visibility_shared}
+        resp = self.client.post("/teams/", json=payload, headers=headers)
+        return validate(resp, expected_status, f"crear Team '{name}'")
+
+    def add_team_member(self, team_id: int, user_id: int, role: str = "AGENT", expected_status=None) -> Dict:
+        headers = self._inject_context()
+        payload = {"team_id": team_id, "user_id": user_id, "role": role}
+        resp = self.client.post("/team_members/", json=payload, headers=headers)
+        return validate(resp, expected_status, f"agregar User {user_id} a Team {team_id}")
+
+    def grant_workspace_access(self, team_id: int, workspace_id: int, expected_status=None) -> Dict:
+        headers = self._inject_context()
+        payload = {"team_id": team_id, "workspace_id": workspace_id}
+        resp = self.client.post("/team_workspace_access/", json=payload, headers=headers)
+        return validate(resp, expected_status, "acceso Workspace")
+
+    def grant_campaign_access(self, team_id: int, campaign_id: int, expected_status=None) -> Dict:
+        headers = self._inject_context()
+        payload = {"team_id": team_id, "campaign_id": campaign_id}
+        resp = self.client.post("/team_campaign_access/", json=payload, headers=headers)
+        return validate(resp, expected_status, "acceso Campaign")
+    
+    # ==========================
+    # ENRUTAMIENTO Y ASIGNACIÓN
+    # ==========================
+    def create_routing_rule(self, condition_type: str, condition_target_id: int, condition_value: str, 
+                            target_team_id: int, campaign_id: int = None, order: int = None, expected_status=None) -> Dict:
+        headers = self._inject_context()
+        payload = {
+            "condition_type": condition_type,
+            "condition_target_id": condition_target_id,
+            "condition_value": condition_value,
+            "target_team_id": target_team_id
+        }
+        if campaign_id: payload["campaign_id"] = campaign_id
+        if order: payload["order"] = order
+        
+        resp = self.client.post("/lead_routing_rules/", json=payload, headers=headers)
+        return validate(resp, expected_status, "crear Regla de Enrutamiento")
+
+    def bulk_assign(self, lead_ids: list, target_team_id: int = None, target_user_id: int = None, expected_status=None) -> Dict:
+        headers = self._inject_context()
+        payload = {"lead_ids": lead_ids}
+        if target_team_id: payload["target_team_id"] = target_team_id
+        if target_user_id: payload["target_user_id"] = target_user_id
+        
+        # OJO: Asumiendo que configuraste el PATCH en el LeadController como hablamos
+        resp = self.client.patch("/leads/bulk-assign", json=payload, headers=headers)
+        return validate(resp, expected_status, "asignación masiva")
 
     # ==========================
     # CAMPOS Y SECCIONES

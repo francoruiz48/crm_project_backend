@@ -1,5 +1,6 @@
 from datetime import date, datetime
 import re
+from sqlalchemy import or_
 from fastapi import HTTPException, UploadFile, status
 from app.core.constans import ALLOWED_DOCUMENT_TYPES, ALLOWED_IMAGE_TYPES, DATE_FORMAT, DATE_TIME_FORMAT, DEFAULT_PAGE_SIZE, NOMENCLATOR_FIELD_TYPES
 from app.core.exceptions.exceptions import ValidationError 
@@ -16,6 +17,7 @@ from app.db.repository.campaign_repository import CampaignRepository
 from app.db.repository.lead_state_repository import LeadStateRepository
 from app.db.repository.lead_state_transition_repository import LeadStateTransitionRepository
 from app.db.repository.lead_state_history_repository import LeadStateHistoryRepository
+from app.models.lead_routing_rule import LeadRoutingRule
 
 class LeadService(BaseService):
     repository = LeadRepository
@@ -75,6 +77,66 @@ class LeadService(BaseService):
             return value
         except (ValueError, TypeError):
             return value
+
+    @classmethod
+    def _evaluate_routing_rules(cls, session, campaign, context_data: dict, field_defs_list: list):
+        """
+        Evalúa las reglas de enrutamiento activas para asignar un equipo al Lead.
+        Retorna el team_id ganador o None si no hay coincidencias.
+        """
+
+        # 1. Obtener reglas aplicables (Globales de la Org + Específicas de la Campaña)
+        # Ordenadas estrictamente por prioridad (order ASC)
+        rules = session.query(LeadRoutingRule).filter(
+            LeadRoutingRule.organization_id == campaign.organization_id,
+            LeadRoutingRule.active == True,
+            or_(LeadRoutingRule.campaign_id.is_(None), LeadRoutingRule.campaign_id == campaign.id)
+        ).order_by(LeadRoutingRule.order.asc()).all()
+
+        if not rules:
+            return None
+
+        # 2. Mapear qué campos del Lead apuntan a qué Nomenclador
+        # (Para evaluar reglas globales sin importar de qué campaña vengan)
+        nom_to_fields = {}
+        for f in field_defs_list:
+            if getattr(f, 'nomenclator_id', None):
+                if f.nomenclator_id not in nom_to_fields:
+                    nom_to_fields[f.nomenclator_id] = []
+                nom_to_fields[f.nomenclator_id].append(f.id)
+
+        # 3. Evaluar reglas en cascada
+        for rule in rules:
+            if rule.condition_type == "NOMENCLATOR":
+                nom_id = rule.condition_target_id
+                target_val = rule.condition_value # Ej: "45" (ID del item Mendoza)
+                
+                # Buscar si alguno de los campos ligados a este nomenclador tiene el valor buscado
+                related_field_ids = nom_to_fields.get(nom_id, [])
+                for fid in related_field_ids:
+                    lead_val = context_data.get(fid)
+                    if not lead_val: continue
+                    
+                    # El valor en el dict puede ser un ID único o una lista de IDs
+                    if isinstance(lead_val, list):
+                        if any(str(x) == target_val for x in lead_val):
+                            return rule.target_team_id
+                    else:
+                        if str(lead_val) == target_val:
+                            return rule.target_team_id
+
+            elif rule.condition_type == "CUSTOM_FIELD":
+                fid = rule.condition_target_id
+                target_val = rule.condition_value
+                
+                lead_val = context_data.get(fid)
+                if lead_val is not None:
+                    # Comparamos ignorando mayúsculas y espacios para evitar errores de tipeo
+                    if str(lead_val).strip().lower() == str(target_val).strip().lower():
+                        return rule.target_team_id
+
+        # Si el lead pasó por todas las reglas y ninguna coincidió, queda huérfano
+        return None
 
     @classmethod
     def _evaluate_calculated_fields(cls, input_data: dict, field_defs_list: list):
@@ -458,7 +520,7 @@ class LeadService(BaseService):
         # porque _prepare_creation_data gestiona la lista y lanza HTTPException.
         with UnitOfWork() as uow:
             # Usamos la lógica compartida
-            clean_values, _, _ = cls._prepare_creation_data(uow, obj_in, files_map, created_by, is_simulation=False)
+            clean_values, context_data, current_campaign_defs = cls._prepare_creation_data(uow, obj_in, files_map, created_by, is_simulation=False)
             
             campaign = cls.campaign_repository.get_by_id(uow.session, obj_in.campaign_id)
             if not campaign:
@@ -472,11 +534,20 @@ class LeadService(BaseService):
                     status.HTTP_400_BAD_REQUEST, 
                     detail=[{"field": "general", "message": "La campaña no tiene un flujo de estados válido (falta configurar un estado inicial)."}]
                 )
+            
+            #Ejecución de Motor de enrutamiento
+            assigned_team_id = cls._evaluate_routing_rules(
+                session=uow.session, 
+                campaign=campaign, 
+                context_data=context_data, 
+                field_defs_list=current_campaign_defs
+            )
 
             # Persistencia Real (Ahora inyectamos el current_state_id)
             lead_data = {
                 'campaign_id': obj_in.campaign_id,
-                'current_state_id': initial_state.id 
+                'current_state_id': initial_state.id,
+                'team_id': assigned_team_id
             }
 
             lead = cls.repository.create(uow.session, lead_data, created_by=created_by)
@@ -502,6 +573,51 @@ class LeadService(BaseService):
             cls._log_audit(uow.session, lead, action="CREATE", changes=None, user_id=created_by)
         
         return cls.get_by_id(lead_id, detailed=True)
+
+    @classmethod
+    def bulk_assign(cls, lead_ids: list[int], target_team_id: int = None, target_user_id: int = None, updated_by=None):
+        """
+        Reasigna un lote de leads a un equipo o usuario específico.
+        """
+        def do_bulk(uow):
+            leads = uow.session.query(Lead).filter(Lead.id.in_(lead_ids)).all()
+            if not leads:
+                return []
+            
+            for lead in leads:
+                old_team = lead.team_id
+                old_user = lead.assigned_to_user_id
+
+                # Solo actualizamos si se envió un valor nuevo
+                if target_team_id is not None:
+                    lead.team_id = target_team_id
+                if target_user_id is not None:
+                    lead.assigned_to_user_id = target_user_id
+                
+                # 1. Timeline del Lead
+                cls._log_activity(
+                    session=uow.session,
+                    lead_id=lead.id,
+                    activity_type="LEAD_REASSIGNED",
+                    details={"new_team_id": lead.team_id, "new_user_id": lead.assigned_to_user_id},
+                    user_id=updated_by
+                )
+                
+                # 2. Auditoría Global del Sistema
+                cls._log_audit(
+                    session=uow.session,
+                    obj=lead,
+                    action="UPDATE",
+                    changes={
+                        "team_id": {"old": old_team, "new": lead.team_id},
+                        "assigned_to_user_id": {"old": old_user, "new": lead.assigned_to_user_id}
+                    },
+                    user_id=updated_by
+                )
+                
+            return leads
+            
+        return cls._execute(action="Reasignación Masiva", func=do_bulk, success_msg="Leads reasignados con éxito.")
 
     @classmethod
     def change_state(cls, obj_id: int, new_state_id: int, notes: str = None, user_id: int = None):
@@ -722,12 +838,13 @@ class LeadService(BaseService):
         return cls.get_by_id(obj_id, detailed=True)
 
     @classmethod
-    def search(cls, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, detailed: bool = False, search_req=None):
+    def search(cls, user_id: int,page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, is_super_admin: bool = False, detailed: bool = False, search_req=None):
         def do_search(uow):
             total, items = cls.repository.search(
-                session=uow.session,
+                session=uow.session, user_id=user_id,
                 page=page,
                 page_size=page_size,
+                is_super_admin=is_super_admin,
                 search_params=search_req,
                 detailed=detailed
             )
@@ -743,13 +860,14 @@ class LeadService(BaseService):
         )
     
     @classmethod
-    def get_all(cls, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, only_active: bool = True, detailed: bool = False, query=None, **kwargs):
+    def get_all(cls, user_id: int, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, is_super_admin: bool = False, only_active: bool = True, detailed: bool = False, query=None, **kwargs):
         total, items = cls._execute(
             action=f"Obteniendo listado de leads",
             func=lambda uow: cls.repository.get_all(
-                session=uow.session,
+                session=uow.session, user_id=user_id,
                 page=page,
                 page_size=page_size,
+                is_super_admin=is_super_admin,
                 only_active=only_active,
                 detailed=detailed,
                 search=query,

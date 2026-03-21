@@ -3,6 +3,8 @@ from sqlalchemy import cast, Float, or_, and_, func, insert, delete
 from app.db.repository.base_repository import BaseRepository
 from app.models.lead import Lead
 from app.models.nomenclator_item import NomenclatorItem
+from app.models.team import Team
+from app.models.team_member import TeamMember
 from app.schemas.lead_schema import LeadDetailedResponse, LeadResponse
 from app.models.lead_field_value import LeadFieldValue, lead_field_value_leads_assoc
 from app.models.lead_field import LeadField
@@ -18,14 +20,21 @@ class LeadRepository(BaseRepository):
         (Lead.field_values, LeadFieldValue.nomenclator_items) 
     ]
 
+    
+
     @classmethod
-    def get_all(cls, session, only_active: bool = True, detailed: bool = False, search: str = None, search_fields: list = None, **kwargs):
+    def get_all(cls, session, user_id: int, only_active: bool = True, detailed: bool = False, search: str = None, search_fields: list = None, **kwargs):
         """
         Sobrescribe get_all para manejar la búsqueda compleja en tablas relacionadas.
         """
         query = session.query(cls.model)
 
         query = cls._apply_tenant_filter(query)
+
+        is_super_admin = kwargs.pop('is_super_admin', False)
+
+        #Filtrar por equipo
+        query = cls.apply_security_filter(session, query, user_id, is_super_admin)
 
         # 1. Filtro Active (Base)
         if only_active:
@@ -86,10 +95,13 @@ class LeadRepository(BaseRepository):
         return items
 
     @classmethod
-    def search(cls, session, search_params, detailed: bool = False, page: int = 0, page_size: int = 0):
+    def search(cls, session, user_id, search_params, is_super_admin: bool = False, detailed: bool = False, page: int = 0, page_size: int = 0):
         query = session.query(cls.model)
 
         query = cls._apply_tenant_filter(query)
+
+        #Inyectar seguridad de equipos
+        query = cls.apply_security_filter(session, query, user_id, is_super_admin)
 
         for f in search_params.filters:
             lv_alias = aliased(LeadFieldValue)
@@ -302,3 +314,28 @@ class LeadRepository(BaseRepository):
         query = cls._apply_tenant_filter(query)
         
         return query.limit(1).first() is not None
+    
+
+    @classmethod
+    def apply_security_filter(cls, session, query, user_id: int, is_super_admin: bool = False):
+        if is_super_admin:
+            return query
+
+        query = query.outerjoin(Team, cls.model.team_id == Team.id) \
+                     .outerjoin(TeamMember, and_(Team.id == TeamMember.team_id, TeamMember.user_id == user_id))
+
+        security_condition = or_(
+            cls.model.team_id.is_(None),                 # 1. Huérfano general
+            cls.model.assigned_to_user_id == user_id,    # 2. Es mi lead directo
+            cls.model.created_by == user_id,             # 3. Yo mismo lo creé (opcional, pero útil)
+            and_(
+                TeamMember.id.isnot(None),               # 4. Pertenezco al equipo del lead
+                or_(
+                    TeamMember.role == "MANAGER",        # -> Y soy el jefe
+                    Team.is_visibility_shared == True,   # -> O somos un equipo colaborativo
+                    cls.model.assigned_to_user_id.is_(None) # -> O está en mi equipo pero nadie lo tomó
+                )
+            )
+        )
+
+        return query.filter(security_condition)

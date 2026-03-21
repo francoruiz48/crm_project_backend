@@ -1,3 +1,4 @@
+from app.core.constans import INITIAL_ROUTES_STATES, INITIAL_STATES
 from app.services.base_service import BaseService
 from app.db.repository.organization_repository import OrganizationRepository
 from app.db.unit_of_work import UnitOfWork
@@ -20,14 +21,7 @@ class OrganizationService(BaseService):
         session.flush() # Necesario para obtener flow.id
 
         # 2. Definir los Estados
-        states_data = [
-            {"name": "Ingresado", "category": "OPEN", "is_initial": True, "order": 1},
-            {"name": "Contactado", "category": "OPEN", "is_initial": False, "order": 2},
-            {"name": "Reunión Agendada", "category": "OPEN", "is_initial": False, "order": 3},
-            {"name": "Propuesta enviada", "category": "OPEN", "is_initial": False, "order": 4},
-            {"name": "Venta concretada", "category": "WON", "is_initial": False, "order": None},
-            {"name": "No interesado", "category": "LOST", "is_initial": False, "order": None},
-        ]
+        states_data = INITIAL_STATES
 
         created_states = []
         for data in states_data:
@@ -39,14 +33,7 @@ class OrganizationService(BaseService):
 
         # 3. Construir el Grafo (Las Transiciones)
         # Índices: 0(Ing), 1(Cont), 2(Reu), 3(Prop), 4(Venta), 5(NoInt)
-        routes = [
-            # Happy Path lineal
-            (0, 1), (1, 2), (2, 3), (3, 4),
-            # Vías directas a "No interesado" desde cualquier punto activo
-            (0, 5), (1, 5), (2, 5), (3, 5),
-            # Y si nos equivocamos y lo dimos por perdido, que pueda volver a "Contactado"
-            (5, 1) 
-        ]
+        routes = INITIAL_ROUTES_STATES
 
         for from_idx, to_idx in routes:
             transition = LeadStateTransition(
