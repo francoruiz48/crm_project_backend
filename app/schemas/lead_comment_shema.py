@@ -15,6 +15,7 @@ class LeadCommentCreate(LeadCommentBase, BaseCreate):
 
 class LeadCommentUpdate(BaseModel):
     content: Optional[str] = Field(default=None, min_length=1, max_length=600)
+    color : Optional[str] = Field(default=None, max_length=7)
 
 class LeadCommentResponse(LeadCommentBase, BaseResponse):
     pass
