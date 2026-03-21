@@ -179,7 +179,7 @@ class BaseRepository:
 
     # ----------------- CRUD Genérico -----------------
     @classmethod
-    def get_all(cls, session, only_active: bool = True, detailed: bool = False, base_query=None, **kwargs):
+    def get_all(cls, session, consulted_by: int = None, is_super_admin: bool = False, only_active: bool = True, detailed: bool = False, base_query=None, **kwargs):
         """
         Trae todos los objetos con filtros dinámicos.
         Cualquier argumento extra (ej: campaign_id=1) se aplica como filtro "=" 

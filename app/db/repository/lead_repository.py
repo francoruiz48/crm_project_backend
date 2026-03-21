@@ -23,7 +23,7 @@ class LeadRepository(BaseRepository):
     
 
     @classmethod
-    def get_all(cls, session, user_id: int, only_active: bool = True, detailed: bool = False, search: str = None, search_fields: list = None, **kwargs):
+    def get_all(cls, session, consulted_by: int = None, only_active: bool = True, detailed: bool = False, search: str = None, search_fields: list = None, **kwargs):
         """
         Sobrescribe get_all para manejar la búsqueda compleja en tablas relacionadas.
         """
@@ -34,7 +34,8 @@ class LeadRepository(BaseRepository):
         is_super_admin = kwargs.pop('is_super_admin', False)
 
         #Filtrar por equipo
-        query = cls.apply_security_filter(session, query, user_id, is_super_admin)
+        if consulted_by is not None:
+            query = cls.apply_security_filter(session, query, consulted_by, is_super_admin) 
 
         # 1. Filtro Active (Base)
         if only_active:
@@ -95,13 +96,13 @@ class LeadRepository(BaseRepository):
         return items
 
     @classmethod
-    def search(cls, session, user_id, search_params, is_super_admin: bool = False, detailed: bool = False, page: int = 0, page_size: int = 0):
+    def search(cls, session, consulted_by: int, search_params, is_super_admin: bool = False, detailed: bool = False, page: int = 0, page_size: int = 0):
         query = session.query(cls.model)
 
         query = cls._apply_tenant_filter(query)
 
         #Inyectar seguridad de equipos
-        query = cls.apply_security_filter(session, query, user_id, is_super_admin)
+        query = cls.apply_security_filter(session, query, consulted_by, is_super_admin)
 
         for f in search_params.filters:
             lv_alias = aliased(LeadFieldValue)
@@ -317,17 +318,17 @@ class LeadRepository(BaseRepository):
     
 
     @classmethod
-    def apply_security_filter(cls, session, query, user_id: int, is_super_admin: bool = False):
+    def apply_security_filter(cls, session, query, consulted_by: int, is_super_admin: bool = False):
         if is_super_admin:
             return query
 
         query = query.outerjoin(Team, cls.model.team_id == Team.id) \
-                     .outerjoin(TeamMember, and_(Team.id == TeamMember.team_id, TeamMember.user_id == user_id))
+                     .outerjoin(TeamMember, and_(Team.id == TeamMember.team_id, TeamMember.user_id == consulted_by))
 
         security_condition = or_(
             cls.model.team_id.is_(None),                 # 1. Huérfano general
-            cls.model.assigned_to_user_id == user_id,    # 2. Es mi lead directo
-            cls.model.created_by == user_id,             # 3. Yo mismo lo creé (opcional, pero útil)
+            cls.model.assigned_to_user_id == consulted_by,    # 2. Es mi lead directo
+            cls.model.created_by == consulted_by,             # 3. Yo mismo lo creé (opcional, pero útil)
             and_(
                 TeamMember.id.isnot(None),               # 4. Pertenezco al equipo del lead
                 or_(

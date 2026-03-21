@@ -76,15 +76,18 @@ class BaseService:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
     @classmethod
-    def get_all(cls, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, only_active: bool = True, detailed: bool = False, **kwargs):
+    def get_all(cls, consulted_by: int = None, is_super_admin: bool = False, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, only_active: bool = True, detailed: bool = False, search: str = None, **kwargs):
         return cls._execute(
             action=f"Obteniendo listado de {cls.repository.model.__name__}",
             func=lambda uow: cls.repository.get_all(
                 session=uow.session,
+                consulted_by=consulted_by,
+                is_super_admin=is_super_admin,
                 page=page,
                 page_size=page_size,
                 only_active=only_active,
                 detailed=detailed,
+                search=search,
                 **kwargs
             )
         )

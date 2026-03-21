@@ -838,10 +838,10 @@ class LeadService(BaseService):
         return cls.get_by_id(obj_id, detailed=True)
 
     @classmethod
-    def search(cls, user_id: int,page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, is_super_admin: bool = False, detailed: bool = False, search_req=None):
+    def search(cls, consulted_by: int,page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, is_super_admin: bool = False, detailed: bool = False, search_req=None):
         def do_search(uow):
             total, items = cls.repository.search(
-                session=uow.session, user_id=user_id,
+                session=uow.session, consulted_by=consulted_by,
                 page=page,
                 page_size=page_size,
                 is_super_admin=is_super_admin,
@@ -860,11 +860,11 @@ class LeadService(BaseService):
         )
     
     @classmethod
-    def get_all(cls, user_id: int, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, is_super_admin: bool = False, only_active: bool = True, detailed: bool = False, query=None, **kwargs):
+    def get_all(cls, consulted_by: int, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, is_super_admin: bool = False, only_active: bool = True, detailed: bool = False, query=None, **kwargs):
         total, items = cls._execute(
             action=f"Obteniendo listado de leads",
             func=lambda uow: cls.repository.get_all(
-                session=uow.session, user_id=user_id,
+                session=uow.session, consulted_by=consulted_by,
                 page=page,
                 page_size=page_size,
                 is_super_admin=is_super_admin,

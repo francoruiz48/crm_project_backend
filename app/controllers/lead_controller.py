@@ -104,7 +104,7 @@ class LeadController(BaseController):
             super_admin_flag = getattr(current_user, 'is_superuser', False)
 
             total, items_pydantic = cls.service.search(
-                user_id=current_user.id,
+                consulted_by=current_user.id,
                 page=page,
                 page_size=page_size,
                 is_super_admin=super_admin_flag,
@@ -135,7 +135,7 @@ class LeadController(BaseController):
             super_admin_flag = getattr(current_user, 'is_superuser', False)
 
             total, items_pydantic = cls.service.get_all(
-                    user_id=current_user.id,
+                    consulted_by=current_user.id,
                     page=page, 
                     page_size=page_size, 
                     is_super_admin=super_admin_flag,
