@@ -14,7 +14,7 @@ class LeadView(BaseModelDB):
     team_id = Column(Integer, ForeignKey("team.id"), nullable=True)
     
     # --- CONFIGURACIÓN DEL FRONTEND ---
-    view_type = Column(String, nullable=False, default="LIST") # 'LIST', 'KANBAN', 'CALENDAR', etc.
+    view_type = Column(String, nullable=True) # 'LIST', 'KANBAN', 'CALENDAR', etc.
     filters = Column(JSONB, nullable=True, default={})
     ui_config = Column(JSONB, nullable=True, default={}) # Todo lo visual: order de columnas, anchos
     sort_config = Column(JSONB, nullable=True, default={"sort_by": "created_at", "ascending": False})

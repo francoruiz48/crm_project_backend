@@ -8,7 +8,7 @@ class LeadViewBase(BaseModel):
     campaign_id: int
     visibility: str = Field(default="PRIVATE", pattern="^(PRIVATE|TEAM|PUBLIC)$")
     team_id: Optional[int] = None
-    view_type: str = Field(default="LIST", pattern="^(LIST|KANBAN|CARD)$")
+    view_type: Optional[str] = None
     filters: Dict[str, Any] = Field(default_factory=dict)
     ui_config: Dict[str, Any] = Field(default_factory=dict)
     sort_config: Dict[str, Any] = Field(default_factory=dict)
@@ -20,7 +20,7 @@ class LeadViewUpdate(BaseModel):
     name: Optional[str] = None
     visibility: Optional[str] = Field(default=None, pattern="^(PRIVATE|TEAM|PUBLIC)$")
     team_id: Optional[int] = None
-    view_type: Optional[str] = Field(default=None, pattern="^(LIST|KANBAN|CARD)$")
+    view_type: Optional[str] = None
     filters: Optional[Dict[str, Any]] = None
     ui_config: Optional[Dict[str, Any]] = None
     sort_config: Optional[Dict[str, Any]] = None
