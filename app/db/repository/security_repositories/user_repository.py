@@ -13,3 +13,5 @@ class UserRepository(BaseRepository):
         .selectinload(UserOrganization.roles)
         .selectinload(Role.permissions)
     ]
+
+    

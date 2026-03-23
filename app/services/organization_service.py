@@ -1,20 +1,20 @@
+from typing import Optional
 from app.core.constans import INITIAL_ROUTES_STATES, INITIAL_STATES
 from app.services.base_service import BaseService
 from app.db.repository.organization_repository import OrganizationRepository
-from app.db.unit_of_work import UnitOfWork
-
-# Importamos los modelos del flujo
 from app.models.lead_flow import LeadFlow
 from app.models.lead_state import LeadState
 from app.models.lead_state_transition import LeadStateTransition
+from app.core.security import UserContext
+from app.models.security_models import UserOrganization
 
 class OrganizationService(BaseService):
     repository = OrganizationRepository
 
     @classmethod
-    def _create_default_lead_flow(cls, session, org_id: int, created_by: int):
+    def _create_default_lead_flow(cls, session, org_id: int, user_context: Optional[UserContext] = None):
         """Genera un embudo de ventas genérico para la nueva organización"""
-        
+        created_by = user_context.user.id if user_context and user_context.user else None
         # 1. Crear el Flujo Base
         flow = LeadFlow(name="Flujo de Ventas Predeterminado", organization_id=org_id, created_by=created_by)
         session.add(flow)
@@ -45,19 +45,31 @@ class OrganizationService(BaseService):
             session.add(transition)
 
     @classmethod
-    def create(cls, obj_in, created_by=None, **kwargs):
+    def create(cls, obj_in, user_context: Optional[UserContext] = None, **kwargs):
         def do_create(uow):
-            # Creamos la organización normalmente
+            user_id = user_context.user.id if user_context and user_context.user else None
+
+            # 1. Creamos la organización normalmente
             org_data = obj_in.model_dump(exclude_unset=True)
             org_data.update(kwargs)
-            org = cls.repository.create(uow.session, org_data, created_by)
+            org = cls.repository.create(uow.session, org_data, user_context=user_context)
             uow.session.flush() # Obligatorio para tener org.id
             
-            # --- Inyectar el flujo por defecto ---
-            cls._create_default_lead_flow(uow.session, org.id, created_by)
+            # 2. Inyectar el flujo por defecto
+            cls._create_default_lead_flow(uow.session, org.id, user_context=user_context)
             
+            # --- 3. CORONAR AL CREADOR COMO OWNER ---
+            if user_id:
+                user_org = UserOrganization(
+                    user_id=user_id,
+                    organization_id=org.id,
+                    is_owner=True
+                )
+                uow.session.add(user_org)
+            # ----------------------------------------
+
             # LOG DE AUDITORÍA
-            cls._log_audit(uow.session, org, action="CREATE", changes=org_data, user_id=created_by)
+            cls._log_audit(uow.session, org, action="CREATE", changes=org_data, user_id=user_id)
             
             return org
 

@@ -1,5 +1,5 @@
 import re
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from math import ceil
 from sqlalchemy.orm import selectinload
 from app.core.exceptions.exceptions import AppException, NotFoundException
@@ -7,6 +7,7 @@ from app.core.error_messages import ERROR_DATABASE, ERROR_NOT_FOUND
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func, inspect, or_
 from app.core.context import TENANT_ORG_ID
+from app.core.security import UserContext
 
 class BaseRepository:
     model = None
@@ -44,6 +45,16 @@ class BaseRepository:
         return query
 
     # ----------------- Helpers internos -----------------
+    @classmethod
+    def apply_security_filter(cls, session, query, user_context: UserContext):
+        """
+        MÉTODO HOOK (Template Method).
+        Los repositorios hijos deben sobrescribir este método para inyectar 
+        su lógica de seguridad específica (La Bóveda).
+        Por defecto, devuelve la query intacta.
+        """
+        return query
+    
     @classmethod
     def _paginate(cls, query, page: int = 0, page_size: int = 0):
         """
@@ -179,7 +190,7 @@ class BaseRepository:
 
     # ----------------- CRUD Genérico -----------------
     @classmethod
-    def get_all(cls, session, consulted_by: int = None, is_super_admin: bool = False, only_active: bool = True, detailed: bool = False, base_query=None, **kwargs):
+    def get_all(cls, session, user_context: Optional[UserContext] = None, only_active: bool = True, detailed: bool = False, base_query=None, **kwargs):
         """
         Trae todos los objetos con filtros dinámicos.
         Cualquier argumento extra (ej: campaign_id=1) se aplica como filtro "=" 
@@ -187,6 +198,8 @@ class BaseRepository:
         """
 
         query = base_query if base_query is not None else session.query(cls.model)
+
+        query = cls.apply_security_filter(session, query, user_context)
 
         query = cls._apply_tenant_filter(query)
             
@@ -253,13 +266,16 @@ class BaseRepository:
         return items
 
     @classmethod
-    def get_by_id(cls, session, obj_id: int, only_active: bool = False, detailed: bool = False):
+    def get_by_id(cls, session, obj_id: int, user_context: Optional[UserContext] = None, only_active: bool = False, detailed: bool = False):
         """
         Trae un objeto por id. 
         Si detailed=True, carga relaciones y usa schema_out_detail.
         """
         try:
+
             query = session.query(cls.model)
+
+            query = cls.apply_security_filter(session, query, user_context)
 
             query = cls._apply_tenant_filter(query)
 
@@ -280,9 +296,18 @@ class BaseRepository:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
     @classmethod
-    def create(cls, session, obj_data=None, created_by=None):
+    def create(cls, session, obj_data=None, user_context: Optional[UserContext] = None,):
         """Crea un objeto"""
         try:
+            created_by = None
+            is_super_admin = False
+            is_owner = False
+            
+            if user_context is not None:
+                created_by = user_context.user.id
+                is_super_admin = user_context.is_superuser
+                is_owner = user_context.is_owner
+
             data = cls._normalize_data(obj_data)
             
             if hasattr(cls.model, "organization_id"):
@@ -308,9 +333,18 @@ class BaseRepository:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
     @classmethod
-    def update(cls, session, obj_id: int, obj_data, updated_by=None):
+    def update(cls, session, obj_id: int, obj_data, user_context: Optional[UserContext] = None,):
         """Actualiza un objeto por id"""
         try:
+            updated_by = None
+            is_super_admin = False
+            is_owner = False
+            
+            if user_context is not None:
+                updated_by = user_context.user.id
+                is_super_admin = user_context.is_superuser
+                is_owner = user_context.is_owner
+
             data = cls._normalize_data(obj_data)
             query = session.query(cls.model).filter(cls.model.id == obj_id)
             # PASAMOS FALSE: Para asegurar que no pueda editar un registro global (NULL)
@@ -342,7 +376,7 @@ class BaseRepository:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
     @classmethod
-    def delete(cls, session, obj_id: int, updated_by= None) -> Dict[str, str]:
+    def delete(cls, session, obj_id: int, user_context: Optional[UserContext] = None,) -> Dict[str, str]:
         """
         Intenta eliminar un objeto físicamente.
         
@@ -354,6 +388,16 @@ class BaseRepository:
         Returns:
             Dict con claves 'action' ('deleted' | 'disabled') y 'message'.
         """
+
+        updated_by = None
+        is_super_admin = False
+        is_owner = False
+        
+        if user_context is not None:
+            updated_by = user_context.user.id
+            is_super_admin = user_context.is_superuser
+            is_owner = user_context.is_owner
+
         query = session.query(cls.model).filter(cls.model.id == obj_id)
         # PASAMOS FALSE: Para asegurar que no pueda editar un registro global (NULL)
         query = cls._apply_tenant_filter(query, is_read_operation=False)

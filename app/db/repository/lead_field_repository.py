@@ -3,7 +3,6 @@ from app.db.repository.base_repository import BaseRepository
 from app.models.lead_field import LeadField
 from app.schemas.lead_field_schema import LeadFieldDetailedResponse, LeadFieldResponse
 from sqlalchemy.orm import joinedload
-from app.core.constans import DEFAULT_PAGE_SIZE
 
 class LeadFieldRepository(BaseRepository):
     model = LeadField

@@ -1,11 +1,11 @@
 from app.controllers.base_controller import BaseController
-from app.core.constans import DEFAULT_PAGE_SIZE, PAGE_SIZE_LIMIT
+from app.core.constans import DEFAULT_PAGE_SIZE
 from app.schemas.pagination_schema import PaginatedResponse
 from app.services.nomenclator_service import NomenclatorService
 from app.schemas.nomenclator_schema import NomenclatorCreate, NomenclatorResponse, NomenclatorDetailedResponse, NomenclatorUpdate
-from typing import List, Optional, Union
+from typing import Optional, Union
 from fastapi import Depends, Query
-from app.core.security import get_current_user
+from app.core.security import get_current_user_roles
 
 class NomenclatorController(BaseController):
     router_prefix = "/nomenclators"
@@ -38,15 +38,14 @@ class NomenclatorController(BaseController):
             detailed: bool = Query(False, description="Incluir relaciones"),
             search: str = Query(None, description="Búsqueda global"),
             search_fields: str = Query(None, description="Campos para búsqueda global, separados por comas"),
-            current_user = Depends(get_current_user),
+            user_context = Depends(get_current_user_roles),
             campaign_id: Optional[int] = Query(None, description="Filtrar por ID de Campaña"),
             global_nomenclator: Optional[bool] = Query(None, description="Traer los nomencladores con campaña en null")
         ):
             search_fields = [f.strip() for f in search_fields.split(",")] if search_fields else None
 
             total, items_pydantic = cls.service.get_all(
-                consulted_by=current_user.id,
-                is_super_admin=getattr(current_user, 'is_superuser', False),
+                user_context=user_context,
                 search=search,
                 search_fields=search_fields,
                 page=page,

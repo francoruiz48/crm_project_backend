@@ -28,6 +28,7 @@ from app.controllers.team_campaign_access_controller import router as team_campa
 from app.controllers.team_workspace_access_controller import router as team_workspace_access_router 
 from app.controllers.lead_routing_rule_controller import router as lead_routing_rule_router
 from app.controllers.meta_data_controller import router as meta_data_router
+from app.controllers.lead_view_controller import router as lead_view_router
 
 router = APIRouter()
 
@@ -60,3 +61,4 @@ router.include_router(team_campaign_access_router)
 router.include_router(team_workspace_access_router)
 router.include_router(lead_routing_rule_router)
 router.include_router(meta_data_router)
+router.include_router(lead_view_router)
