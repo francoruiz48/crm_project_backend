@@ -6,10 +6,12 @@ from app.schemas.security_schemas.role_schema import RoleDetailedResponse, RoleR
 
 class UserOrganizationResponse(BaseModel, BaseDetailResponse):
     organization_id: int
-    roles: List[RoleResponse] = [] 
+    roles: List[RoleResponse] = []
+    is_owner: bool
 
 class UserOrganizationDetailedResponse(UserOrganizationResponse):
     permission_objects: List[PermissionResponse] = []
+    is_owner: bool
 
 class UserBase(BaseModel):
     email: str

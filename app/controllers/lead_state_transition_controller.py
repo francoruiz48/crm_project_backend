@@ -1,5 +1,5 @@
 from app.controllers.base_controller import BaseController
-from app.core.security import get_current_user
+from app.core.security import get_current_user_roles
 from app.services.lead_state_transition_service import LeadStateTransitionService
 from app.schemas.lead_state_transition_schema import (
     LeadStateTransitionBulkCreate,
@@ -8,10 +8,9 @@ from app.schemas.lead_state_transition_schema import (
     LeadStateTransitionDetailedResponse,
     LeadStateTransitionUpdate
 )
-from typing import List, Optional, Union
+from typing import List, Union
 from app.schemas.pagination_schema import PaginatedResponse
-from app.core.constans import DEFAULT_PAGE_SIZE
-from fastapi import Body, Depends, Query
+from fastapi import Body, Depends
 
 class LeadStateTransitionController(BaseController):
     router_prefix = "/lead_state_transitions"
@@ -39,9 +38,9 @@ class LeadStateTransitionController(BaseController):
         @router.post("/bulk", response_model=List[cls.schema_out_detail], dependencies=cls._get_deps("create"))
         def create_transitions_bulk(
             obj_in: LeadStateTransitionBulkCreate = Body(...),
-            current_user = Depends(get_current_user)
+            user_context = Depends(get_current_user_roles)
         ):
-            return cls.service.create_bulk(obj_in, created_by=current_user.id)
+            return cls.service.create_bulk(obj_in, user_context=user_context)
 
         return router
 

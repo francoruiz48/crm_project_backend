@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.services.lead_import_export_service import LeadImportExportService
 from app.schemas.import_export_schema import ImportHeadersResponse, ImportResultResponse
-from app.core.security import get_current_user # Asumo que tienes auth
+from app.core.security import get_current_user_roles
 
 router = APIRouter()
 
@@ -25,7 +25,7 @@ def process_import(
     mapping: str = Form(..., description='JSON String: {"ColumnaExcel": "NombreCampoDB"}'),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    user_context = Depends(get_current_user_roles)
 ):
     """
     Importa leads a una campaña.
@@ -39,19 +39,19 @@ def process_import(
         file=file, 
         mapping_json=mapping, 
         campaign_id=campaign_id,
-        user_id=current_user.id
+        user_context=user_context
     )
 
 @router.get("/export/{campaign_id}")
 def export_leads(
     campaign_id: int,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_user)
+    user_context = Depends(get_current_user_roles)
 ):
     """
     Descarga un Excel con todos los leads de la campaña.
     """
-    excel_file = LeadImportExportService.export_leads(db, campaign_id, user_id=current_user.id)
+    excel_file = LeadImportExportService.export_leads(db, campaign_id, user_context=user_context)
     
     headers = {
         'Content-Disposition': f'attachment; filename="leads_campaign_{campaign_id}.xlsx"'

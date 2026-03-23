@@ -1,16 +1,53 @@
+from dataclasses import dataclass
+from typing import Any
 from fastapi import Depends, HTTPException, status, Header
 from app.db.session import SessionLocal, get_db
-from app.models.security_models import User
+from app.models.security_models import User, UserOrganization
 from app.core.context import TENANT_ORG_ID
 
 # --- MOCK AUTHENTICATION ---
-def get_current_user(db = Depends(get_db)) -> User:
+def _get_current_user(db = Depends(get_db)) -> User:
     user_id_to_simulate = 1
     
     user = db.get(User, user_id_to_simulate)
     if not user:
         raise HTTPException(status_code=404, detail="Usuario simulado no encontrado (corre los seeders)")
     return user
+
+@dataclass
+class UserContext:
+    user: Any = None  # Aquí puedes importar tu modelo User si quieres tipado estricto
+    is_superuser: bool = False
+    is_owner: bool = False
+
+# En app/core/security.py (o donde tengas tus dependencias)
+
+def get_current_user_roles(
+    current_user = Depends(_get_current_user), 
+    db_session = Depends(get_db)
+) -> UserContext:
+    
+    from app.core.context import TENANT_ORG_ID
+    current_org_id = TENANT_ORG_ID.get()
+
+    is_superuser = getattr(current_user, 'is_superuser', False)
+    is_owner_here = False
+    
+    if current_org_id:
+        user_org_link = db_session.query(UserOrganization).filter_by(
+            user_id=current_user.id,
+            organization_id=current_org_id
+        ).first()
+        
+        if user_org_link and user_org_link.is_owner:
+            is_owner_here = True
+
+    # DEVOLVEMOS EL DATACLASS EN LUGAR DEL DICCIONARIO
+    return UserContext(
+        user=current_user,
+        is_superuser=is_superuser,
+        is_owner=is_owner_here
+    )
 
 
 class PermissionChecker:
@@ -19,7 +56,7 @@ class PermissionChecker:
 
     async def __call__(
         self, 
-        user: User = Depends(get_current_user), 
+        user: User = Depends(_get_current_user), 
         # Exigimos el ID de la organización desde el Header
         x_organization_id: int = Header(default=None, alias="X-Organization-Id")
     ):

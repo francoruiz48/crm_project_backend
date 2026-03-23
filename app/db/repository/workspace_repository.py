@@ -6,6 +6,7 @@ from app.models.team_access import TeamCampaignAccess, TeamWorkspaceAccess
 from app.models.team_member import TeamMember
 from app.models.workspace import Workspace
 from app.schemas.workspace_schema import WorkspaceCreate, WorkspaceDetailedResponse, WorkspaceResponse
+from app.core.security import UserContext
 
 class WorkspaceRepository(BaseRepository):
     model = Workspace
@@ -15,8 +16,14 @@ class WorkspaceRepository(BaseRepository):
 
 
     @classmethod
-    def apply_security_filter(cls, session, query, consulted_by: int, is_super_admin: bool = False):
-        if is_super_admin:
+    def apply_security_filter(cls, session, query, user_context: UserContext = None):
+
+        if user_context is None or user_context.user is None:
+            return query
+        
+        consulted_by = user_context.user.id
+
+        if user_context.is_superuser or user_context.is_owner:
             return query
         
         # 1. Obtenemos los IDs de los equipos a los que pertenece el usuario
@@ -46,26 +53,3 @@ class WorkspaceRepository(BaseRepository):
             )
         )
     
-
-    @classmethod
-    def get_all(cls, session, only_active: bool = True, detailed: bool = False, base_query=None, **kwargs):
-        # 1. Armamos el query base
-        query = base_query if base_query is not None else session.query(cls.model)
-
-        is_super_admin = kwargs.pop('is_super_admin', False)
-        
-        # 2. Extraemos el consulted_by de los kwargs (si no viene, será None)
-        consulted_by = kwargs.pop('consulted_by', None)
-        
-        # 3. Le inyectamos la Bóveda de seguridad SOLO si viene un consulted_by
-        if consulted_by is not None:
-            query = cls.apply_security_filter(session, query, consulted_by, is_super_admin)
-
-        # 4. Llamamos al padre pasándole el query blindado y el resto de los kwargs intactos
-        return super().get_all(
-            session=session, 
-            only_active=only_active, 
-            detailed=detailed, 
-            base_query=query, 
-            **kwargs
-        )

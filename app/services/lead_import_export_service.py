@@ -1,3 +1,4 @@
+from typing import Optional
 import pandas as pd
 import io
 import json
@@ -10,6 +11,7 @@ from app.services.lead_service import LeadService
 from app.schemas.lead_schema import LeadCreate, LeadFieldValueCreate
 from app.models.lead import Lead
 from app.models.lead_field_value import LeadFieldValue
+from app.core.security import UserContext
 
 class LeadImportExportService:
 
@@ -151,7 +153,7 @@ class LeadImportExportService:
     # MÉTODO PRINCIPAL
     # -------------------------------------------------------------------------
     @classmethod
-    def import_leads(cls, db: Session, file: UploadFile, mapping_json: str, campaign_id: int, user_id: int):
+    def import_leads(cls, db: Session, file: UploadFile, mapping_json: str, campaign_id: int, user_context: Optional[UserContext] = None):
         try:
             mapping = json.loads(mapping_json) # {"Header": "Field"} o {"Header": "Field.TargetAttr"}
         except json.JSONDecodeError:
@@ -275,7 +277,7 @@ class LeadImportExportService:
 
                 # CREACIÓN (LeadService se encarga de validaciones de tipo, required, masks)
                 payload = LeadCreate(campaign_id=campaign_id, values=lead_values)
-                LeadService.create(payload, created_by=user_id)
+                LeadService.create(payload, user_context=user_context)
                 success_count += 1
 
             except Exception as e:
@@ -290,7 +292,7 @@ class LeadImportExportService:
         }
 
     @classmethod
-    def export_leads(cls, db: Session, campaign_id: int, user_id: int) -> io.BytesIO:
+    def export_leads(cls, db: Session, campaign_id: int, user_context: Optional[UserContext] = None) -> io.BytesIO:
         """
         Genera un Excel con todos los leads de la campaña.
         Columnas = Nombres de los campos.
@@ -306,7 +308,7 @@ class LeadImportExportService:
 
         # 2. Obtener Leads (Filas)
         # Usamos get_all sin paginación (cuidado con volumen masivo)
-        leads = LeadRepository.get_all(db, user_id=user_id, campaign_id=campaign_id, only_active=True, page=0, page_size=0)
+        leads = LeadRepository.get_all(db, user_context=user_context, campaign_id=campaign_id, only_active=True, page=0, page_size=0)
 
         # 3. Construir Dataset
         data = []

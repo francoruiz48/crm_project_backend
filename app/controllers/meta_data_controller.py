@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Query, Depends
-from app.core.security import get_current_user
+from app.core.security import get_current_user_roles
 from app.core.dictionaries import SYSTEM_DICTIONARIES
 
 router = APIRouter(prefix="/metadata", tags=["Metadata & Dictionaries"])
@@ -10,7 +10,7 @@ def get_dictionaries(
     # Permite al frontend pedir solo lo que necesita separando por comas
     # Ejemplo: ?keys=team_roles,routing_condition_types
     keys: Optional[str] = Query(None, description="Claves separadas por coma. Si se omite, trae todos."),
-    current_user = Depends(get_current_user)
+    user_context = Depends(get_current_user_roles)
 ):
     """
     Devuelve los listados estáticos necesarios para poblar selects y dropdowns en el Frontend.

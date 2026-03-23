@@ -1,10 +1,11 @@
+from typing import Optional
 from fastapi import HTTPException, status
 from sqlalchemy import func
-
 from app.services.base_service import BaseService
 from app.db.unit_of_work import UnitOfWork
 from app.db.repository.lead_state_repository import LeadStateRepository
 from app.schemas.lead_state_schema import LeadStateCreate
+from app.core.security import UserContext
 
 class LeadStateService(BaseService):
     repository = LeadStateRepository()
@@ -47,9 +48,10 @@ class LeadStateService(BaseService):
 
 
     @classmethod
-    def create(cls, obj_in: LeadStateCreate, created_by=None, **kwargs):
+    def create(cls, obj_in: LeadStateCreate, user_context: Optional[UserContext] = None, **kwargs):
         errors = []
-        
+        created_by = user_context.user.id if user_context and user_context.user else None
+
         with UnitOfWork() as uow:
             # Regla 1: Un solo estado inicial
             if obj_in.is_initial:
@@ -84,7 +86,7 @@ class LeadStateService(BaseService):
             # Forzamos el order calculado
             state_data["order"] = calculated_order 
             
-            created_obj = cls.repository.create(uow.session, state_data, created_by=created_by)
+            created_obj = cls.repository.create(uow.session, state_data, user_context=user_context)
             uow.session.flush()
 
             # LOG DE AUDITORÍA
@@ -93,11 +95,12 @@ class LeadStateService(BaseService):
             return created_obj
 
     @classmethod
-    def update(cls, obj_id: int, obj_in, updated_by=None):
+    def update(cls, obj_id: int, obj_in, user_context: Optional[UserContext] = None):
         errors = []
-        
+        updated_by = user_context.user.id if user_context and user_context.user else None
+
         with UnitOfWork() as uow:
-            current_state = cls.repository.get_by_id(uow.session, obj_id)
+            current_state = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
             if not current_state:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Estado no encontrado")
 
@@ -161,9 +164,9 @@ class LeadStateService(BaseService):
                     if old_val != new_val:
                         changes[key] = {"old": old_val, "new": new_val}
 
-            cls.repository.update(uow.session, obj_id, update_data, updated_by=updated_by)
+            cls.repository.update(uow.session, obj_id, update_data, user_context=user_context)
             uow.session.flush()
-            updated_state = cls.repository.get_by_id(uow.session, obj_id)
+            updated_state = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
 
             if changes:
                 cls._log_audit(uow.session, updated_state, action="UPDATE", changes=changes, user_id=updated_by)
