@@ -1,7 +1,7 @@
 
 from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
-from pydantic import BaseModel, computed_field, Field
-from typing import List, Dict, Any, Optional
+from pydantic import BaseModel, Field
+from typing import Optional
 from app.schemas.lead_state_schema import LeadStateDetailedResponse
 
 class LeadStateHistoryBase(BaseModel):

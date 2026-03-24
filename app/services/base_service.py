@@ -34,7 +34,7 @@ class BaseService:
         if model_name in ignored_models:
             return
 
-        from app.models.system_audit_log import SystemAuditLog # Importación tardía para evitar ciclos
+        from app.models.audit.system_audit_log import SystemAuditLog # Importación tardía para evitar ciclos
 
         audit = SystemAuditLog(
             organization_id=getattr(obj, "organization_id", None),

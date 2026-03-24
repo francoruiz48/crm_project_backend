@@ -205,7 +205,10 @@ def seed_rbac(db):
     READ_ONLY_ENTITIES = [
         "lead_field_type", 
         "lead_field_subtype",
-        "permission", "lead_state_history", "system_audit_log", "lead_activity_history"
+        "permission", 
+        "lead_state_history", 
+        "system_audit_log", 
+        "lead_activity_history"
     ]
 
     ACTIONS = {
