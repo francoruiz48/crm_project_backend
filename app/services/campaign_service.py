@@ -32,8 +32,8 @@ class CampaignService(BaseService):
                 errors.append({"field": "workspace_id", "message": "El espacio de trabajo especificado no existe."})
             else:
                 existing = cls.repository.get_all(
-                    session=uow.session, 
-                    name=obj_in.name, 
+                    session=uow.session,
+                    name=obj_in.name,
                     workspace_id=obj_in.workspace_id,
                     only_active=True,
                     user_context=user_context

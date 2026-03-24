@@ -276,7 +276,7 @@ def seed_rbac(db):
     def _get_or_create_superadmin(email):
         user = db.query(User).filter_by(email=email).first()
         if not user:
-            user = User(email=email, is_superuser=True) 
+            user = User(name="Super Admin", email=email, is_superuser=True)
             db.add(user)
             db.flush()
         return user
@@ -310,14 +310,14 @@ def seed_test_tenants(db):
         return
 
     # 3. Helper interno para crear al usuario y sus membresías
-    def _create_test_user(email, memberships_info):
+    def _create_test_user(name, email, memberships_info):
         """
         memberships_info es una lista de tuplas: [(org_obj, role_obj), ...]
         """
         user = db.query(User).filter_by(email=email).first()
         if not user:
             # IMPORTANTE: is_superuser=False para que la seguridad actúe sobre ellos
-            user = User(email=email, is_superuser=False)
+            user = User(name=name, email=email, is_superuser=False)
             db.add(user)
             db.flush()
 
@@ -345,13 +345,13 @@ def seed_test_tenants(db):
     # 4. Crear los Usuarios de Prueba
     
     # A. Usuario de una sola empresa (Alpha)
-    _create_test_user("user_alpha@test.com", [(org_alpha, role_base)])
+    _create_test_user("User Alpha", "user_alpha@test.com", [(org_alpha, role_base)])
     
     # B. Usuario de una sola empresa (Beta)
-    _create_test_user("user_beta@test.com", [(org_beta, role_base)])
+    _create_test_user("User Beta", "user_beta@test.com", [(org_beta, role_base)])
     
     # C. Usuario Multi-Empresa (Alpha y Beta)
-    user_multi = _create_test_user("user_multi@test.com", [
+    user_multi = _create_test_user("User Multi", "user_multi@test.com", [
         (org_alpha, role_base), 
         (org_beta, role_base)
     ])
