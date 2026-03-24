@@ -5,7 +5,7 @@ from fastapi import HTTPException, UploadFile, status
 from app.core.constans import ALLOWED_DOCUMENT_TYPES, ALLOWED_IMAGE_TYPES, DATE_FORMAT, DATE_TIME_FORMAT, DEFAULT_PAGE_SIZE, NOMENCLATOR_FIELD_TYPES
 from app.core.exceptions.exceptions import ValidationError 
 from app.models.lead import Lead
-from app.models.lead_activity_history import LeadActivityHistory
+from app.models.audit.lead_activity_history import LeadActivityHistory
 from app.services.base_service import BaseService
 from app.db.repository.lead_repository import LeadRepository
 from app.db.repository.lead_field_repository import LeadFieldRepository
@@ -16,7 +16,7 @@ from app.services.storage_service import StorageService
 from app.db.repository.campaign_repository import CampaignRepository
 from app.db.repository.lead_state_repository import LeadStateRepository
 from app.db.repository.lead_state_transition_repository import LeadStateTransitionRepository
-from app.db.repository.lead_state_history_repository import LeadStateHistoryRepository
+from app.db.repository.audit.lead_state_history_repository import LeadStateHistoryRepository
 from app.models.lead_routing_rule import LeadRoutingRule
 from app.core.security import UserContext
 from typing import Optional

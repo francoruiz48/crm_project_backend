@@ -1,6 +1,6 @@
 from app.controllers.base_controller import BaseController
-from app.services.lead_state_history_service import LeadStateHistoryService
-from app.schemas.lead_state_history_schema import (
+from app.services.audit.lead_state_history_service import LeadStateHistoryService
+from app.schemas.audit.lead_state_history_schema import (
     LeadStateHistoryResponse, 
     LeadStateHistoryDetailedResponse
 )
