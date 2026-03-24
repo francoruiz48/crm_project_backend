@@ -242,9 +242,9 @@ def test_create_lead_with_multiple_nomenclator(api, db_session, initial_structur
     db_session.add(nom)
     db_session.flush()
     
-    item1 = NomenclatorItem(nomenclator_id=nom.id, value="Urgente", code="URG", organization_id=org_id)
-    item2 = NomenclatorItem(nomenclator_id=nom.id, value="VIP", code="VIP", organization_id=org_id)
-    item3 = NomenclatorItem(nomenclator_id=nom.id, value="Descartado", code="DESC", organization_id=org_id)
+    item1 = NomenclatorItem(nomenclator_id=nom.id, value="Urgente", organization_id=org_id)
+    item2 = NomenclatorItem(nomenclator_id=nom.id, value="VIP", organization_id=org_id)
+    item3 = NomenclatorItem(nomenclator_id=nom.id, value="Descartado", organization_id=org_id)
     db_session.add_all([item1, item2, item3])
     db_session.commit() # Commit para tener IDs disponibles
 
@@ -294,8 +294,8 @@ def test_search_lead_by_nomenclator(api, db_session, initial_structure):
     nom = Nomenclator(name="Depto", organization_id=org_id)
     db_session.add(nom)
     db_session.flush()
-    item_ventas = NomenclatorItem(nomenclator_id=nom.id, value="Ventas", code="VTS", organization_id=org_id)
-    item_it = NomenclatorItem(nomenclator_id=nom.id, value="IT", code="IT", organization_id=org_id)
+    item_ventas = NomenclatorItem(nomenclator_id=nom.id, value="Ventas", organization_id=org_id)
+    item_it = NomenclatorItem(nomenclator_id=nom.id, value="IT", organization_id=org_id)
     db_session.add_all([item_ventas, item_it])
     db_session.commit()
 

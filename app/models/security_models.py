@@ -70,6 +70,7 @@ class UserOrganization(BaseModelDB):
 class User(BaseModelDB):
     __tablename__ = "user"
     
+    name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     is_superuser = Column(Boolean, default=False)
     

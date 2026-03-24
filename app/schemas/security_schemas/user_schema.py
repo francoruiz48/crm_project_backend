@@ -14,6 +14,7 @@ class UserOrganizationDetailedResponse(UserOrganizationResponse):
     is_owner: bool
 
 class UserBase(BaseModel):
+    name: str
     email: str
 
 class UserResponse(UserBase, BaseDetailResponse):
@@ -28,6 +29,7 @@ class UserCreate(UserBase, BaseCreate):
     pass
 
 class UserUpdate(BaseModel):
+    name: Optional[str] = None
     email: Optional[str] = None
 
 
