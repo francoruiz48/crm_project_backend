@@ -367,11 +367,10 @@ def get_or_create_nomenclator(db, name):
             db.flush()
         return nom
 
-def get_or_create_nomenclator_item(db, nomenclator_id, code, value, parent_id):
-    item = db.query(NomenclatorItem).filter_by(code=code, nomenclator_id=nomenclator_id).first()
+def get_or_create_nomenclator_item(db, nomenclator_id, value, parent_id):
+    item = db.query(NomenclatorItem).filter_by(value=value, nomenclator_id=nomenclator_id).first()
     if not item:
         item = NomenclatorItem(
-            code=code,
             value=value,
             nomenclator_id=nomenclator_id,
             parent_item_id=parent_id
@@ -415,7 +414,6 @@ def seed_geography_separated(db):
             country_item = get_or_create_nomenclator_item(
                 db=db,
                 nomenclator_id=nom_pais.id, 
-                code=c_iso, 
                 value=c_name, 
                 parent_id=None 
             )
@@ -423,14 +421,10 @@ def seed_geography_separated(db):
             # Provincias / Estados
             for state in c_states:
                 s_name = state['name']
-                # Generación de código seguro
-                s_code_suffix = state.get('state_code') or re.sub(r'[^a-zA-Z0-9]', '', s_name)[:3].upper()
-                s_full_code = f"{c_iso}-{s_code_suffix}"
 
                 get_or_create_nomenclator_item(
                     db=db,
                     nomenclator_id=nom_prov.id,
-                    code=s_full_code,
                     value=s_name,
                     parent_id=country_item.id 
                 )
@@ -443,9 +437,9 @@ def seed_geography_separated(db):
 def seed_nomenclator_sex(db):
     print("Procesando Nomenclador 'Sexo'...")
     datos = [
-        {"code": "MALE", "value": "Masculino"},
-        {"code": "FEMALE", "value": "Femenino"},
-        {"code": "OTHER", "value": "Otro"},
+        {"value": "Masculino"},
+        {"value": "Femenino"},
+        {"value": "Otro"},
     ]
 
     nom_gen = get_or_create_nomenclator(db, "Genero")
@@ -454,7 +448,6 @@ def seed_nomenclator_sex(db):
         get_or_create_nomenclator_item(
             db=db,
             nomenclator_id=nom_gen.id, 
-            code=item["code"],
             value=item["value"],
             parent_id=None
         )
