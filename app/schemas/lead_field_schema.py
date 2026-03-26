@@ -65,4 +65,10 @@ class LeadFieldDetailedResponse(LeadFieldBase, BaseDetailResponse):
     related_campaign: Optional[CampaignResponse]
     organization_id : int
     
+class LeadFieldOrderUpdate(BaseModel):
+    field_id: int = Field(gt=0)
+    order: int = Field(gt=0)
 
+class LeadFieldOrderList(BaseModel):
+    campaign_id: int = Field(gt=0)
+    orders: List[LeadFieldOrderUpdate]

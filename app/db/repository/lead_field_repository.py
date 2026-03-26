@@ -1,8 +1,13 @@
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from app.db.repository.base_repository import BaseRepository
 from app.models.lead_field import LeadField
 from app.schemas.lead_field_schema import LeadFieldDetailedResponse, LeadFieldResponse
 from sqlalchemy.orm import joinedload
+from app.core.security import UserContext
+from app.models.campaign import Campaign
+from app.models.team_access import TeamCampaignAccess, TeamWorkspaceAccess
+from app.models.team_member import TeamMember
+from app.models.workspace import Workspace
 
 class LeadFieldRepository(BaseRepository):
     model = LeadField
@@ -13,6 +18,51 @@ class LeadFieldRepository(BaseRepository):
         (LeadField.field_type,),
         (LeadField.validation_rules,),
     ]
+
+    @classmethod
+    def apply_security_filter(cls, session, query, user_context: UserContext = None):
+        """
+        Filtra los LeadFields basándose en los permisos que el usuario tiene 
+        sobre la Campaña a la que pertenecen.
+        """
+        if user_context is None or user_context.user is None:
+            return query
+        
+        # Superusuarios y Owners saltan la validación (Bóveda abierta)
+        if user_context.is_superuser or user_context.is_owner:
+            return query
+
+        consulted_by = user_context.user.id
+
+        # 1. Obtener los IDs de los equipos a los que pertenece el usuario
+        user_team_ids = session.query(TeamMember.team_id).filter(
+            TeamMember.user_id == consulted_by
+        ).subquery()
+
+        # 2. Query de Campañas con acceso directo por equipo
+        direct_camp_ids = session.query(TeamCampaignAccess.campaign_id).filter(
+            TeamCampaignAccess.team_id.in_(user_team_ids)
+        )
+
+        # 3. Query de Campañas con acceso heredado vía Workspace
+        inherited_camp_ids = session.query(Campaign.id).join(
+            Workspace, Campaign.workspace_id == Workspace.id
+        ).join(
+            TeamWorkspaceAccess, Workspace.id == TeamWorkspaceAccess.workspace_id
+        ).filter(
+            TeamWorkspaceAccess.team_id.in_(user_team_ids)
+        )
+
+        # 4. Aplicar el filtro al query de LeadField
+        # Filtramos LeadField basándonos en los atributos de su Campaign relacionada
+        return query.join(Campaign, cls.model.campaign_id == Campaign.id).filter(
+            or_(
+                Campaign.is_public == True,            # Campaña es pública
+                Campaign.created_by == consulted_by,   # Soy el creador de la campaña
+                Campaign.id.in_(direct_camp_ids),      # Mi equipo tiene acceso directo
+                Campaign.id.in_(inherited_camp_ids)    # Mi equipo tiene acceso al workspace
+            )
+        )
 
     @classmethod
     def get_all_active_with_rules(cls, session, campaign_id: int=None):

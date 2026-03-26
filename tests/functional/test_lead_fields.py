@@ -439,3 +439,151 @@ def test_update_field_fail_required_with_existing_nulls(api, initial_structure):
     }, headers=api.headers)
     
     assert res_update.status_code in [400, 422]
+
+
+def test_reorder_success_simple(api, db_session, initial_fields):
+    """
+    Caso: Reordenamiento exitoso de dos campos existentes.
+    """
+    camp_id = initial_fields["campaign_id"]
+    f1_id = initial_fields["nombre_id"] # Actual order: 1
+    f2_id = initial_fields["edad_id"]   # Actual order: 2
+
+    # Invertimos el orden
+    api.reorder_lead_fields(camp_id, [
+        {"field_id": f1_id, "order": 10},
+        {"field_id": f2_id, "order": 20}
+    ])
+
+    db_session.expire_all()
+    f1_db = db_session.get(LeadField, f1_id)
+    f2_db = db_session.get(LeadField, f2_id)
+
+    assert f1_db.order == 10
+    assert f2_db.order == 20
+
+
+def test_reorder_fail_collision_with_unsent_field(api, initial_fields):
+    """
+    Caso: Intento de mover un campo a un 'order' que ya ocupa otro campo 
+    de la misma campaña que NO fue incluido en la petición.
+    """
+    camp_id = initial_fields["campaign_id"]
+    f1_id = initial_fields["nombre_id"] # Order: 1
+    f2_id = initial_fields["edad_id"]   # Order: 2 (No lo enviamos en el patch)
+
+    # Intentamos ponerle al campo 1 el orden que tiene el campo 2
+    api.reorder_lead_fields(
+        camp_id, 
+        [{"field_id": f1_id, "order": 2}], 
+        expected_status=400
+    )
+
+
+def test_reorder_fail_duplicate_orders_in_request(api, initial_fields):
+    """
+    Caso: Enviar dos campos distintos con el mismo número de orden en el JSON.
+    """
+    camp_id = initial_fields["campaign_id"]
+    f1_id = initial_fields["nombre_id"]
+    f2_id = initial_fields["edad_id"]
+
+    api.reorder_lead_fields(
+        camp_id, 
+        [
+            {"field_id": f1_id, "order": 5},
+            {"field_id": f2_id, "order": 5}
+        ], 
+        expected_status=400
+    )
+
+
+def test_reorder_fail_cross_campaign_field(api, initial_structure):
+    """
+    Caso: Intentar reordenar un campo que pertenece a la Campaña B 
+    usando el campaign_id de la Campaña A.
+    """
+    org_id = initial_structure["org_id"]
+    camp_a_id = initial_structure["campaign_id"]
+    
+    # Creamos Campaña B
+    ws_id = initial_structure["workspace_id"]
+    flow_id = initial_structure["lead_flow_id"]
+    camp_b = api.create_campaign(ws_id, name="Camp B", lead_flow_id=flow_id)
+    
+    # Creamos campo en Campaña B
+    field_b = api.create_lead_field(camp_b["id"], "Campo B", "STRING")
+
+    # Intentamos reordenar campo_b usando el contexto de camp_a
+    api.reorder_lead_fields(
+        camp_a_id, 
+        [{"field_id": field_b["id"], "order": 1}], 
+        expected_status=400
+    )
+
+
+def test_reorder_security_access_denied(api, initial_fields):
+    """
+    Caso: Un usuario sin acceso a la campaña intenta reordenar sus campos.
+    """
+    camp_id = initial_fields["campaign_id"]
+    f1_id = initial_fields["nombre_id"]
+
+    # Simulamos cambio de organización/tenant en el header
+    api.org_id = 999 
+    
+    # Debe fallar porque el apply_security_filter/tenant_filter no encontrará la campaña o el campo
+    api.reorder_lead_fields(
+        camp_id, 
+        [{"field_id": f1_id, "order": 1}], 
+        expected_status=404
+    )
+
+
+def test_reorder_atomic_rollback_on_failure(api, db_session, initial_fields):
+    """
+    Caso: Si uno de los campos en la lista falla (ej: ID inexistente), 
+    ninguno de los otros campos debe actualizarse (Atomicidad).
+    """
+    camp_id = initial_fields["campaign_id"]
+    f1_id = initial_fields["nombre_id"] # Original order: 1
+
+    # Enviamos una lista donde el primero es válido pero el segundo NO existe
+    api.reorder_lead_fields(
+        camp_id, 
+        [
+            {"field_id": f1_id, "order": 99},
+            {"field_id": 0, "order": 100} # ID inválido
+        ], 
+        expected_status=400
+    )
+
+    # Verificamos que el campo 1 SIGA teniendo su orden original (1)
+    db_session.expire_all()
+    f1_db = db_session.get(LeadField, f1_id)
+    assert f1_db.order == 1 
+
+
+def test_reorder_ignores_soft_deleted_fields_collision(api, db_session, initial_fields):
+    """
+    Caso: El sistema debe permitir usar un número de orden que pertenece 
+    a un campo que está desactivado (active=False).
+    """
+    camp_id = initial_fields["campaign_id"]
+    f_nombre_id = initial_fields["nombre_id"] # Order: 1
+    f_edad_id = initial_fields["edad_id"]     # Order: 2
+
+    # 1. Creamos un lead para que el borrado sea Soft Delete
+    api.create_lead(camp_id, [{"field_id": f_nombre_id, "value": "Juan"}, {"field_id": f_edad_id, "value": "25"}])
+    
+    # 2. Desactivamos el campo 'Edad' (order 2)
+    api.client.delete(f"/lead_fields/{f_edad_id}", headers=api.headers)
+
+    # 3. Ahora el orden '2' debería estar libre. Intentamos mover 'Nombre' al orden 2.
+    api.reorder_lead_fields(
+        camp_id, 
+        [{"field_id": f_nombre_id, "order": 2}]
+    )
+
+    db_session.expire_all()
+    assert db_session.get(LeadField, f_nombre_id).order == 2
