@@ -21,6 +21,7 @@ from app.services.excel_formula_evaluator_service import ExcelFormulaEvaluatorSe
 from datetime import date, datetime
 from app.core.constans import DATE_TIME_FORMAT
 from app.core.security import UserContext
+from app.schemas.lead_field_schema import LeadFieldOrderList
 
 class LeadFieldService(BaseService):
     repository = LeadFieldRepository
@@ -505,3 +506,78 @@ class LeadFieldService(BaseService):
                     value=str(new_calc_val) if new_calc_val is not None else None
                 )
                 uow.session.add(new_fv)
+
+
+    @classmethod
+    def reorder(cls, obj_in: LeadFieldOrderList, user_context: Optional[UserContext] = None):
+        def do_reorder(uow):
+            campaign_id = obj_in.campaign_id
+            
+            # 1. Validar campaña y acceso
+            campaign = cls.campaign_repository.get_by_id(uow.session, campaign_id, user_context=user_context)
+            if not campaign:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"field": "campaign_id", "message": "Campaña no encontrada o sin acceso."})
+
+            # 2. Obtener TODOS los campos activos de esta campaña
+            # Traemos los objetos SQLAlchemy para poder modificarlos
+            db_fields = uow.session.query(LeadField).filter(
+                LeadField.campaign_id == campaign_id,
+                LeadField.active == True
+            )
+            # Aplicamos el filtro de seguridad del repositorio manualmente si es necesario
+            db_fields = cls.repository.apply_security_filter(uow.session, db_fields, user_context).all()
+            
+            db_fields_map = {f.id: f for f in db_fields}
+            
+            # 3. Mapeo de lo que viene del request
+            incoming_orders = {item.field_id: item.order for item in obj_in.orders}
+
+            # 4. VALIDACIÓN DE INTEGRIDAD: Universo completo
+            # Verificamos colisiones entre los que cambian y los que se quedan quietos
+            check_duplicate_orders = {}
+            for f_id, field_obj in db_fields_map.items():
+                # Si viene en el request, usamos el nuevo order, sino el que ya tenía en DB
+                target_order = incoming_orders.get(f_id, field_obj.order)
+                
+                if target_order in check_duplicate_orders:
+                    other_name = check_duplicate_orders[target_order]
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST, 
+                        detail={"field": "order", "message": f"El orden {target_order} se repite entre '{field_obj.name}' y '{other_name}'."}
+                    )
+                
+                check_duplicate_orders[target_order] = field_obj.name
+
+            # 5. ACTUALIZACIÓN FÍSICA
+            updated_count = 0
+            for f_id, new_order in incoming_orders.items():
+                if f_id not in db_fields_map:
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST, 
+                        detail={"field": "field_id", "message": f"El campo {f_id} no pertenece a esta campaña o no está activo."}
+                    )
+                
+                field_instance = db_fields_map[f_id]
+                
+                if field_instance.order != new_order:
+                    old_val = field_instance.order
+                    # Actualización del atributo en la instancia de SQLAlchemy
+                    field_instance.order = new_order
+                    
+                    # Auditoría (Usando el ID del usuario directamente en el log, no en el objeto)
+                    cls._log_audit(
+                        uow.session, 
+                        field_instance, 
+                        action="UPDATE", 
+                        changes={"order": {"old": old_val, "new": new_order}},
+                        user_id=user_context.user.id if user_context and user_context.user else None
+                    )
+                    updated_count += 1
+            
+            uow.session.flush()
+            return {"message": f"Se actualizó el orden de {updated_count} campos.", "campaign_id": campaign_id}
+
+        return cls._execute(
+            action="Reordenando campos de Lead",
+            func=do_reorder
+        )
