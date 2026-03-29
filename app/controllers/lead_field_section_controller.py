@@ -1,7 +1,4 @@
-from typing import Optional, Union
-from fastapi import Query
 from app.controllers.base_controller import BaseController
-from app.schemas.pagination_schema import PaginatedResponse
 from app.services.lead_field_section_service import LeadFieldSectionService
 from app.schemas.lead_field_section_schema import LeadFieldSectionDetailedResponse, LeadFieldSectionResponse, LeadFieldSectionCreate, LeadFieldSectionUpdate
 from app.core.constans import READ_WRITE

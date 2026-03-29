@@ -27,12 +27,18 @@ LEAD_STATE_CATEGORIES = [
     {"code": "LOST", "label": "Perdido"}
 ]
 
+LEAD_VIEW_VISIBILITIES = [
+    {"code": "PRIVATE", "label": "Privada"},
+    {"code": "TEAM", "label": "Equipo"},
+    {"code": "PUBLIC", "label": "Pública"}
+]
 
 SYSTEM_DICTIONARIES = {
     "lead_search_operators": LEAD_SEARCH_OPERATORS,
     "routing_condition_types": LEAD_ROUTING_RULE_CONDITION_TYPES,
     "team_roles": TEAM_ROLES,
-    "lead_states_categories": LEAD_STATE_CATEGORIES
+    "lead_states_categories": LEAD_STATE_CATEGORIES,
+    "lead_view_visibilities": LEAD_VIEW_VISIBILITIES
 }
     
 

@@ -198,14 +198,17 @@ def seed_rbac(db):
         "role", "workspace", "lead_field_section",
         "lead_comment", "organization", "lead_flow", "lead_state", 
         "lead_state_transition", "team", "team_member", 
-        "team_workspace_access", "team_campaign_access", "lead_routing_rule"
+        "team_workspace_access", "team_campaign_access", "lead_routing_rule", "lead_view"
     ]
 
     # 2. Entidades de Solo Lectura (Catálogos del sistema)
     READ_ONLY_ENTITIES = [
         "lead_field_type", 
         "lead_field_subtype",
-        "permission", "lead_state_history", "system_audit_log", "lead_activity_history"
+        "permission", 
+        "lead_state_history", 
+        "system_audit_log", 
+        "lead_activity_history"
     ]
 
     ACTIONS = {
@@ -273,7 +276,7 @@ def seed_rbac(db):
     def _get_or_create_superadmin(email):
         user = db.query(User).filter_by(email=email).first()
         if not user:
-            user = User(email=email, is_superuser=True) 
+            user = User(name="Super Admin", email=email, is_superuser=True)
             db.add(user)
             db.flush()
         return user
@@ -307,14 +310,14 @@ def seed_test_tenants(db):
         return
 
     # 3. Helper interno para crear al usuario y sus membresías
-    def _create_test_user(email, memberships_info):
+    def _create_test_user(name, email, memberships_info):
         """
         memberships_info es una lista de tuplas: [(org_obj, role_obj), ...]
         """
         user = db.query(User).filter_by(email=email).first()
         if not user:
             # IMPORTANTE: is_superuser=False para que la seguridad actúe sobre ellos
-            user = User(email=email, is_superuser=False)
+            user = User(name=name, email=email, is_superuser=False)
             db.add(user)
             db.flush()
 
@@ -342,13 +345,13 @@ def seed_test_tenants(db):
     # 4. Crear los Usuarios de Prueba
     
     # A. Usuario de una sola empresa (Alpha)
-    _create_test_user("user_alpha@test.com", [(org_alpha, role_base)])
+    _create_test_user("User Alpha", "user_alpha@test.com", [(org_alpha, role_base)])
     
     # B. Usuario de una sola empresa (Beta)
-    _create_test_user("user_beta@test.com", [(org_beta, role_base)])
+    _create_test_user("User Beta", "user_beta@test.com", [(org_beta, role_base)])
     
     # C. Usuario Multi-Empresa (Alpha y Beta)
-    user_multi = _create_test_user("user_multi@test.com", [
+    user_multi = _create_test_user("User Multi", "user_multi@test.com", [
         (org_alpha, role_base), 
         (org_beta, role_base)
     ])
@@ -364,11 +367,10 @@ def get_or_create_nomenclator(db, name):
             db.flush()
         return nom
 
-def get_or_create_nomenclator_item(db, nomenclator_id, code, value, parent_id):
-    item = db.query(NomenclatorItem).filter_by(code=code, nomenclator_id=nomenclator_id).first()
+def get_or_create_nomenclator_item(db, nomenclator_id, value, parent_id):
+    item = db.query(NomenclatorItem).filter_by(value=value, nomenclator_id=nomenclator_id).first()
     if not item:
         item = NomenclatorItem(
-            code=code,
             value=value,
             nomenclator_id=nomenclator_id,
             parent_item_id=parent_id
@@ -412,7 +414,6 @@ def seed_geography_separated(db):
             country_item = get_or_create_nomenclator_item(
                 db=db,
                 nomenclator_id=nom_pais.id, 
-                code=c_iso, 
                 value=c_name, 
                 parent_id=None 
             )
@@ -420,14 +421,10 @@ def seed_geography_separated(db):
             # Provincias / Estados
             for state in c_states:
                 s_name = state['name']
-                # Generación de código seguro
-                s_code_suffix = state.get('state_code') or re.sub(r'[^a-zA-Z0-9]', '', s_name)[:3].upper()
-                s_full_code = f"{c_iso}-{s_code_suffix}"
 
                 get_or_create_nomenclator_item(
                     db=db,
                     nomenclator_id=nom_prov.id,
-                    code=s_full_code,
                     value=s_name,
                     parent_id=country_item.id 
                 )
@@ -440,9 +437,9 @@ def seed_geography_separated(db):
 def seed_nomenclator_sex(db):
     print("Procesando Nomenclador 'Sexo'...")
     datos = [
-        {"code": "MALE", "value": "Masculino"},
-        {"code": "FEMALE", "value": "Femenino"},
-        {"code": "OTHER", "value": "Otro"},
+        {"value": "Masculino"},
+        {"value": "Femenino"},
+        {"value": "Otro"},
     ]
 
     nom_gen = get_or_create_nomenclator(db, "Genero")
@@ -451,7 +448,6 @@ def seed_nomenclator_sex(db):
         get_or_create_nomenclator_item(
             db=db,
             nomenclator_id=nom_gen.id, 
-            code=item["code"],
             value=item["value"],
             parent_id=None
         )

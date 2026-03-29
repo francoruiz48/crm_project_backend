@@ -1,3 +1,4 @@
+from typing import Optional
 from sqlalchemy.orm import aliased
 from sqlalchemy import cast, Float, or_, and_, func, insert, delete
 from app.db.repository.base_repository import BaseRepository
@@ -8,6 +9,7 @@ from app.models.team_member import TeamMember
 from app.schemas.lead_schema import LeadDetailedResponse, LeadResponse
 from app.models.lead_field_value import LeadFieldValue, lead_field_value_leads_assoc
 from app.models.lead_field import LeadField
+from app.core.security import UserContext
 
 class LeadRepository(BaseRepository):
     model = Lead
@@ -20,89 +22,84 @@ class LeadRepository(BaseRepository):
         (Lead.field_values, LeadFieldValue.nomenclator_items) 
     ]
 
-    
-
     @classmethod
-    def get_all(cls, session, consulted_by: int = None, only_active: bool = True, detailed: bool = False, search: str = None, search_fields: list = None, **kwargs):
+    def apply_security_filter(cls, session, query, user_context: UserContext = None):
+        if user_context is None or user_context.user is None:
+            return query
+
+        if user_context.is_superuser or user_context.is_owner:
+            return query
+
+        consulted_by = user_context.user.id
+
+        query = query.outerjoin(Team, cls.model.team_id == Team.id) \
+                     .outerjoin(TeamMember, and_(Team.id == TeamMember.team_id, TeamMember.user_id == consulted_by))
+
+        security_condition = or_(
+            cls.model.team_id.is_(None),                 # 1. Huérfano general
+            cls.model.assigned_to_user_id == consulted_by,    # 2. Es mi lead directo
+            cls.model.created_by == consulted_by,             # 3. Yo mismo lo creé
+            and_(
+                TeamMember.id.isnot(None),               # 4. Pertenezco al equipo del lead
+                or_(
+                    TeamMember.role == "MANAGER",        # -> Y soy el jefe
+                    Team.is_visibility_shared == True,   # -> O somos un equipo colaborativo
+                    cls.model.assigned_to_user_id.is_(None) # -> O está en mi equipo pero nadie lo tomó
+                )
+            )
+        )
+
+        return query.filter(security_condition)
+
+    
+    @classmethod
+    def get_all(cls, session, user_context: Optional[UserContext] = None, only_active: bool = True, detailed: bool = False, search: str = None, search_fields: list = None, **kwargs):
         """
-        Sobrescribe get_all para manejar la búsqueda compleja en tablas relacionadas.
+        Prepara los JOINs complejos para la búsqueda de Leads y delega 
+        la seguridad, paginación y filtros estándar al BaseRepository.
         """
         query = session.query(cls.model)
 
-        query = cls._apply_tenant_filter(query)
-
-        is_super_admin = kwargs.pop('is_super_admin', False)
-
-        #Filtrar por equipo
-        if consulted_by is not None:
-            query = cls.apply_security_filter(session, query, consulted_by, is_super_admin) 
-
-        # 1. Filtro Active (Base)
-        if only_active:
-            query = query.filter(cls.model.active.is_(True))
-
-        # 2. Lógica de Búsqueda Global (SEARCH)
+        # Si hay búsqueda global, pre-armamos la query con sus JOINs
         if search:
-            # Hacemos JOIN con los valores
             query = query.join(LeadFieldValue, cls.model.field_values)
-            
-            # Condiciones de búsqueda
-            conditions = []
+            conditions = [LeadFieldValue.value.ilike(f"%{search}%")]
 
-            # A. Buscar en el valor de texto directo (ej: Nombre, Email, Teléfono guardados como string)
-            conditions.append(LeadFieldValue.value.ilike(f"%{search}%"))
-
-            # B. (Opcional pero recomendado) Buscar dentro de Nomencladores
-            # Si el usuario busca "Mendoza", y eso es un ítem de un select, hay que buscarlo por relación
-            # Hacemos Left Join para no perder los que no tienen nomencladores
             query = query.outerjoin(LeadFieldValue.nomenclator_items)
             conditions.append(NomenclatorItem.value.ilike(f"%{search}%"))
 
-            # C. Filtrar por columnas específicas si se pidieron (search_fields)
-            # Esto permite decir: "Busca 'Juan' pero solo en campos que se llamen 'Nombre' o 'Apellido'"
             if search_fields:
                 query = query.join(LeadField, LeadFieldValue.field)
-                # Filtramos que el CAMPO tenga uno de los nombres permitidos
-                # Y que el VALOR coincida con el texto
                 query = query.filter(
-                    LeadField.name.in_(search_fields), # El nombre del campo (ej: 'Nombre')
-                    or_(*conditions)                   # El valor contiene 'Juan'
+                    LeadField.name.in_(search_fields),
+                    or_(*conditions)
                 )
             else:
-                # Si no hay restricción de campos, buscamos en todo
                 query = query.filter(or_(*conditions))
 
-            # IMPORTANTE: Como un Lead tiene muchos valores, el JOIN puede devolver
-            # el mismo lead varias veces si matchea en varios campos. Usamos distinct.
             query = query.distinct()
 
-        # 3. Filtros Estándar (kwargs) - Ej: campaign_id=5
-        for key, value in kwargs.items():
-            if value is not None and hasattr(cls.model, key):
-                query = query.filter(getattr(cls.model, key) == value)
-
-        # 4. Ordenamiento (Default por ID descendente)
-        query = query.order_by(cls.model.id.desc())
-
-        # 5. Paginación
-        page = kwargs.get('page', 0)
-        page_size = kwargs.get('page_size', 0)
-        
-        total, query = cls._paginate(query, page, page_size)
-        items = cls._execute_read_query(query, detailed)
-
-        if page:
-            return total, items
-        return items
+        # DELEGAMOS AL PADRE
+        # Nota: Al atrapar 'search' y 'search_fields' en la firma de esta función, 
+        # evitamos que pasen en los **kwargs y que el padre intente buscar de nuevo.
+        return super().get_all(
+            session=session,
+            user_context=user_context,
+            only_active=only_active,
+            detailed=detailed,
+            base_query=query,
+            **kwargs
+        )
 
     @classmethod
-    def search(cls, session, consulted_by: int, search_params, is_super_admin: bool = False, detailed: bool = False, page: int = 0, page_size: int = 0):
+    def search(cls, session, search_params, user_context: Optional[UserContext] = None, detailed: bool = False, page: int = 0, page_size: int = 0):
         query = session.query(cls.model)
 
         query = cls._apply_tenant_filter(query)
 
-        #Inyectar seguridad de equipos
-        query = cls.apply_security_filter(session, query, consulted_by, is_super_admin)
+        # Inyectar seguridad de equipos mediante el Hook
+        if user_context is not None and user_context.user is not None:
+            query = cls.apply_security_filter(session, query, user_context)
 
         for f in search_params.filters:
             lv_alias = aliased(LeadFieldValue)
@@ -316,27 +313,3 @@ class LeadRepository(BaseRepository):
         
         return query.limit(1).first() is not None
     
-
-    @classmethod
-    def apply_security_filter(cls, session, query, consulted_by: int, is_super_admin: bool = False):
-        if is_super_admin:
-            return query
-
-        query = query.outerjoin(Team, cls.model.team_id == Team.id) \
-                     .outerjoin(TeamMember, and_(Team.id == TeamMember.team_id, TeamMember.user_id == consulted_by))
-
-        security_condition = or_(
-            cls.model.team_id.is_(None),                 # 1. Huérfano general
-            cls.model.assigned_to_user_id == consulted_by,    # 2. Es mi lead directo
-            cls.model.created_by == consulted_by,             # 3. Yo mismo lo creé (opcional, pero útil)
-            and_(
-                TeamMember.id.isnot(None),               # 4. Pertenezco al equipo del lead
-                or_(
-                    TeamMember.role == "MANAGER",        # -> Y soy el jefe
-                    Team.is_visibility_shared == True,   # -> O somos un equipo colaborativo
-                    cls.model.assigned_to_user_id.is_(None) # -> O está en mi equipo pero nadie lo tomó
-                )
-            )
-        )
-
-        return query.filter(security_condition)

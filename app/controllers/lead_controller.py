@@ -3,7 +3,7 @@ from typing import List, Union, Optional
 from fastapi import Body, Depends, HTTPException, Query, Request
 from app.controllers.base_controller import BaseController
 from app.core.constans import DEFAULT_PAGE_SIZE, PAGE_SIZE_LIMIT
-from app.core.security import PermissionChecker, get_current_user
+from app.core.security import get_current_user_roles
 from app.models.lead import Lead
 from app.models.lead_field import LeadField
 from app.models.lead_field_value import LeadFieldValue
@@ -94,20 +94,18 @@ class LeadController(BaseController):
             dependencies=cls._get_deps("read")
         )
         def search_leads(
-            current_user = Depends(get_current_user),
+            user_context = Depends(get_current_user_roles),
             page: int = Query(1, ge=1),
             page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=PAGE_SIZE_LIMIT),
             search_req: LeadSearchRequest = Body(...),
             detailed: bool = Query(False)
         ):
             
-            super_admin_flag = getattr(current_user, 'is_superuser', False)
 
             total, items_pydantic = cls.service.search(
-                consulted_by=current_user.id,
+                user_context=user_context,
                 page=page,
                 page_size=page_size,
-                is_super_admin=super_admin_flag,
                 search_req=search_req, 
                 detailed=detailed
             )
@@ -123,7 +121,7 @@ class LeadController(BaseController):
         @router.get("/", response_model=ResponseModelPaginated,
                 dependencies=cls._get_deps("read"))
         def get_all(
-            current_user = Depends(get_current_user),
+            user_context = Depends(get_current_user_roles),
             page: int = Query(1, ge=1),
             page_size: int = DEFAULT_PAGE_SIZE,
             only_active: bool = True, 
@@ -132,13 +130,11 @@ class LeadController(BaseController):
             query: Optional[str] = Query(None, description="Buscar leads")
         ):
             
-            super_admin_flag = getattr(current_user, 'is_superuser', False)
 
             total, items_pydantic = cls.service.get_all(
-                    consulted_by=current_user.id,
+                    user_context=user_context,
                     page=page, 
                     page_size=page_size, 
-                    is_super_admin=super_admin_flag,
                     only_active=only_active,
                     detailed=detailed,
                     query=query,
@@ -156,7 +152,7 @@ class LeadController(BaseController):
         @router.post("/", response_model=LeadResponse, dependencies=cls._get_deps("create"))
         async def create_lead(
             request: Request,
-            current_user = Depends(get_current_user)
+            user_context = Depends(get_current_user_roles)
         ):
             # 1. Usamos el helper para obtener datos sin importar el formato
             lead_dict, files_map = await _parse_hybrid_request(request)
@@ -169,7 +165,7 @@ class LeadController(BaseController):
                 raise HTTPException(422, detail=str(e))
 
             # 3. Llamamos al servicio
-            return cls.service.create(obj_in, created_by=current_user.id, files_map=files_map)
+            return cls.service.create(obj_in, user_context=user_context, files_map=files_map)
 
 
         # --- UPDATE HÍBRIDO ---
@@ -177,7 +173,7 @@ class LeadController(BaseController):
         async def update_lead(
             id: int,
             request: Request,
-            current_user = Depends(get_current_user)
+            user_context = Depends(get_current_user_roles)
         ):
             # 1. Usamos el helper
             lead_dict, files_map = await _parse_hybrid_request(request)
@@ -196,13 +192,13 @@ class LeadController(BaseController):
                 raise HTTPException(400, "Debe enviar datos JSON o archivos para actualizar.")
 
             # 3. Llamamos al servicio
-            return cls.service.update(id, obj_in, files_map=files_map, updated_by=current_user.id)
+            return cls.service.update(id, obj_in, files_map=files_map, user_context=user_context)
 
     
         @router.post("/simulate", response_model=LeadResponse) # O usa un schema específico si prefieres
         async def simulate_lead_creation(
             request: Request,
-            current_user = Depends(get_current_user)
+            user_context = Depends(get_current_user_roles)
         ):
             """
             Simula la creación de un lead para probar validaciones y campos calculados.
@@ -217,7 +213,7 @@ class LeadController(BaseController):
                 raise HTTPException(422, detail=str(e))
 
             # 2. Llamada a Servicio de Simulación
-            result = cls.service.simulate_create(obj_in, created_by=current_user.id, files_map=files_map)
+            result = cls.service.simulate_create(obj_in, user_context=user_context, files_map=files_map)
             return result
         
         class ChangeStateRequest(BaseModel):
@@ -228,20 +224,20 @@ class LeadController(BaseController):
         async def change_lead_state(
             id: int,
             payload: ChangeStateRequest = Body(...),
-            current_user = Depends(get_current_user)
+            user_context = Depends(get_current_user_roles)
         ):
             return cls.service.change_state(
                 obj_id=id, 
                 new_state_id=payload.new_state_id, 
                 notes=payload.notes, 
-                user_id=current_user.id
+                user_context=user_context
             )
         
 
         @router.patch("/bulk-assign", response_model=List[ResponseModelItem], dependencies=cls._get_deps("update"))
         async def bulk_assign_leads(
             payload: BulkAssignRequest = Body(...),
-            current_user = Depends(get_current_user)
+            user_context = Depends(get_current_user_roles)
         ):
             """
             Reasignación masiva de Leads a un Equipo y/o Usuario.
@@ -257,7 +253,7 @@ class LeadController(BaseController):
                 lead_ids=payload.lead_ids,
                 target_team_id=payload.target_team_id,
                 target_user_id=payload.target_user_id,
-                updated_by=current_user.id
+                user_context=user_context
             )
         
         return router

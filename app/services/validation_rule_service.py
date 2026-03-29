@@ -1,3 +1,4 @@
+from typing import Optional
 from fastapi import HTTPException, status
 from app.core.error_messages import SUCCESS_CREATE, SUCCESS_UPDATE
 from app.core.templates.rule_templates import STANDARD_RULES
@@ -7,6 +8,7 @@ from datetime import date, datetime
 from app.core.exceptions.exceptions import ValidationError
 from app.services.excel_formula_evaluator_service import ExcelFormulaEvaluatorService
 from app.db.repository.lead_field_repository import LeadFieldRepository
+from app.core.security import UserContext
 
 class ValidationRuleService(BaseService):
     repository = ValidationRuleRepository
@@ -94,7 +96,7 @@ class ValidationRuleService(BaseService):
             return None
 
     @classmethod
-    def create_within_session(cls, session, obj_data, created_by=None, field_type_code: str = None, errors: list = None):
+    def create_within_session(cls, session, obj_data, user_context: Optional[UserContext] = None, field_type_code: str = None, errors: list = None):
         """
         Método interno para crear reglas dentro de una transacción mayor.
         Soporta la inyección de una lista 'errors' para acumulación.
@@ -155,16 +157,16 @@ class ValidationRuleService(BaseService):
             return None
 
         # 4. CREAR
-        new_rule = cls.repository.create(session, obj_data, created_by)
+        new_rule = cls.repository.create(session, obj_data, user_context=user_context)
         session.flush()
 
         # 5. LOG DE AUDITORÍA (Aquí obj_data ya es el dict procesado con exclude_unset=True)
-        cls._log_audit(session, new_rule, action="CREATE", changes=obj_data, user_id=created_by)
+        cls._log_audit(session, new_rule, action="CREATE", changes=obj_data, user_id=user_context.user.id if user_context and user_context.user else None)
 
         return new_rule
 
     @classmethod
-    def create(cls, obj_data, created_by=None):
+    def create(cls, obj_data, user_context: Optional[UserContext] = None):
         """
         Método público (Endpoint).
         """
@@ -190,7 +192,7 @@ class ValidationRuleService(BaseService):
             new_rule = cls.create_within_session(
                 uow.session, 
                 data, 
-                created_by, 
+                user_context=user_context, 
                 field_type_code=lead_field.field_type_code, 
                 errors=errors
             )
@@ -208,10 +210,10 @@ class ValidationRuleService(BaseService):
         )
 
     @classmethod
-    def update(cls, obj_id: int, obj_data, updated_by=None):
+    def update(cls, obj_id: int, obj_data, user_context: Optional[UserContext] = None):
         def do_update(uow):
             errors = []
-            current_obj = cls.repository.get_by_id(uow.session, obj_id)
+            current_obj = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
             if not current_obj: cls._not_found(obj_id)
 
             # Convertimos a diccionario usando exclude_unset para saber qué envió realmente el usuario
@@ -258,7 +260,7 @@ class ValidationRuleService(BaseService):
             
             if final_expr:
                 # Obtenemos tipo del campo padre para validación precisa
-                lead_field = cls.lead_field_repository.get_by_id(uow.session, current_obj.field_id)
+                lead_field = cls.lead_field_repository.get_by_id(uow.session, current_obj.field_id, user_context=user_context)
                 ft_code = lead_field.field_type_code if lead_field else None
                 
                 cls._check_expression_syntax(final_expr, errors, field_type_code=ft_code)
@@ -275,11 +277,11 @@ class ValidationRuleService(BaseService):
                     if old_val != new_val:
                         changes[key] = {"old": old_val, "new": new_val}
 
-            updated_rule = cls.repository.update(uow.session, obj_id, data, updated_by=updated_by)
+            updated_rule = cls.repository.update(uow.session, obj_id, data, user_context=user_context)
             uow.session.flush()
 
             if changes:
-                cls._log_audit(uow.session, updated_rule, action="UPDATE", changes=changes, user_id=updated_by)
+                cls._log_audit(uow.session, updated_rule, action="UPDATE", changes=changes, user_id=user_context.user.id if user_context and user_context.user else None)
 
             return updated_rule
         

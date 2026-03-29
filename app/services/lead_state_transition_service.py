@@ -1,22 +1,25 @@
+from typing import Optional
+
 from fastapi import HTTPException, status
 from app.services.base_service import BaseService
 from app.db.unit_of_work import UnitOfWork
 from app.db.repository.lead_state_transition_repository import LeadStateTransitionRepository
 from app.db.repository.lead_state_repository import LeadStateRepository
 from app.schemas.lead_state_transition_schema import LeadStateTransitionBulkCreate, LeadStateTransitionCreate
+from app.core.security import UserContext
 
 class LeadStateTransitionService(BaseService):
     repository = LeadStateTransitionRepository()
     state_repository = LeadStateRepository() # Necesitamos leer los estados
 
     @classmethod
-    def create(cls, obj_in: LeadStateTransitionCreate, **kwargs):
+    def create(cls, obj_in: LeadStateTransitionCreate, user_context: Optional[UserContext] = None, **kwargs):
         errors = []
-        
+        created_by = user_context.user.id if user_context and user_context.user else None
         with UnitOfWork() as uow:
             # 1. Traer los estados de la base de datos
-            from_state = cls.state_repository.get_by_id(uow.session, obj_in.from_state_id)
-            to_state = cls.state_repository.get_by_id(uow.session, obj_in.to_state_id)
+            from_state = cls.state_repository.get_by_id(uow.session, obj_in.from_state_id, user_context=user_context)
+            to_state = cls.state_repository.get_by_id(uow.session, obj_in.to_state_id, user_context=user_context)
 
             # 2. Validar Existencia y Pertenencia a la campaña (Acumulando errores)
             if not from_state:
@@ -48,8 +51,7 @@ class LeadStateTransitionService(BaseService):
             transition_data = obj_in.model_dump(exclude_unset=True)
             transition_data.update(kwargs)
             
-            created_by = kwargs.get("created_by")
-            created_obj = cls.repository.create(uow.session, transition_data, created_by=created_by)
+            created_obj = cls.repository.create(uow.session, transition_data, user_context=user_context)
             uow.session.flush()
 
             cls._log_audit(uow.session, created_obj, action="CREATE", changes=transition_data, user_id=created_by)
@@ -58,7 +60,7 @@ class LeadStateTransitionService(BaseService):
         
     # Se utiliza para crear multiples transiciones a la vez, lo cual es útil para poblar un flujo de leads nuevo sin tener que hacer múltiples requests desde el front
     @classmethod
-    def create_bulk(cls, obj_in: LeadStateTransitionBulkCreate, **kwargs):
+    def create_bulk(cls, obj_in: LeadStateTransitionBulkCreate, user_context: Optional[UserContext] = None, **kwargs):
         errors = []
         created_transitions = []
         
@@ -112,7 +114,7 @@ class LeadStateTransitionService(BaseService):
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
 
             # 5. Insertar todo
-            created_by = kwargs.get("created_by")
+            created_by = user_context.user.id if user_context and user_context.user else None
             for t in obj_in.transitions:
                 transition_data = {
                     "lead_flow_id": obj_in.lead_flow_id,
@@ -120,7 +122,7 @@ class LeadStateTransitionService(BaseService):
                     "to_state_id": t.to_state_id
                 }
                 transition_data.update(kwargs)
-                new_obj = cls.repository.create(uow.session, transition_data, created_by=created_by)
+                new_obj = cls.repository.create(uow.session, transition_data, user_context=user_context)
                 uow.session.flush()
                 
                 cls._log_audit(uow.session, new_obj, action="CREATE", changes=transition_data, user_id=created_by)

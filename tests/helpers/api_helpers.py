@@ -171,6 +171,15 @@ class ApiClient:
         }
         resp = self.client.post("/lead_fields/", json=payload, headers=headers)
         return validate(resp, expected_status, f"crear Campo Template '{template_code}'")
+    
+    def reorder_lead_fields(self, campaign_id: int, orders: list, expected_status=None) -> Dict:
+        headers = self._inject_context()
+        payload = {
+            "campaign_id": campaign_id,
+            "orders": orders # Lista de {"field_id": int, "order": int}
+        }
+        resp = self.client.patch("/lead_fields/reorder/bulk", json=payload, headers=headers)
+        return validate(resp, expected_status, "reordenar campos")
 
     # ==========================
     # LEADS

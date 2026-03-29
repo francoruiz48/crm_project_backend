@@ -1,7 +1,7 @@
-from typing import Dict, List, Union
+from typing import Dict, Union
 from fastapi import APIRouter, Body, HTTPException, Query, Depends, Request
-from app.core.constans import DEFAULT_PAGE_SIZE, PAGE_SIZE_LIMIT
-from app.core.security import PermissionChecker, get_current_user
+from app.core.constans import DEFAULT_PAGE_SIZE
+from app.core.security import PermissionChecker, get_current_user_roles
 from app.schemas.pagination_schema import PaginatedResponse
 
 class BaseController:
@@ -59,7 +59,7 @@ class BaseController:
                 detailed: bool = Query(False),
                 search: str = Query(None, description="Búsqueda global"),
                 search_fields: str = Query(None, description="Campos para búsqueda global, separados por comas"),
-                current_user = Depends(get_current_user)
+                user_context = Depends(get_current_user_roles)
             ):
                 # Definimos los parámetros reservados que no deben tratarse como filtros de columna
                 reserved_params = {"page", "page_size", "only_active", "detailed", "search", "search_fields"}
@@ -74,8 +74,7 @@ class BaseController:
                 }
 
                 total, items_pydantic = cls.service.get_all(
-                    consulted_by=current_user.id,
-                    is_super_admin=getattr(current_user, 'is_superuser', False),
+                    user_context=user_context,
                     page=page,
                     page_size=page_size,
                     only_active=only_active, 
@@ -97,34 +96,34 @@ class BaseController:
             @router.post("/", response_model=ResponseModelItem, 
                 dependencies=cls._get_deps("create"))
             def create(obj_in: cls.schema_in = Body(...),
-                       current_user = Depends(get_current_user)):
-                return cls.service.create(obj_in, created_by=current_user.id)
+                       user_context = Depends(get_current_user_roles)):
+                return cls.service.create(obj_in, user_context=user_context)
 
         if "PUT" in cls.enabled_methods:
             @router.put("/{obj_id}", response_model=ResponseModelItem, 
                 dependencies=cls._get_deps("update"))
             def update(obj_id: int, obj_in: cls.schema_update = Body(...),
-                       current_user = Depends(get_current_user)):
-                return cls.service.update(obj_id, obj_in, updated_by=current_user.id)
+                       user_context = Depends(get_current_user_roles)):
+                return cls.service.update(obj_id, obj_in, user_context=user_context)
 
         if "DELETE" in cls.enabled_methods:
             @router.delete("/{obj_id}", dependencies=cls._get_deps("delete"))
-            def delete(obj_id: int, current_user = Depends(get_current_user)):
-                return cls.service.delete(obj_id, updated_by=current_user.id)
-            
+            def delete(obj_id: int, user_context = Depends(get_current_user_roles)):
+                return cls.service.delete(obj_id, user_context=user_context)
+
         if "ACTIVE" in cls.enabled_methods:
             @router.put("/active/{obj_id}", dependencies=cls._get_deps("active"))
-            def set_active(obj_id: int, current_user = Depends(get_current_user)):
-                cls.service.set_active(obj_id, updated_by=current_user.id)
+            def set_active(obj_id: int, user_context = Depends(get_current_user_roles)):
+                cls.service.set_active(obj_id, user_context=user_context)
                 return {"actived": True}
             
         if "GET_ONE" in cls.enabled_methods:
             @router.get("/{obj_id}", 
                 response_model=ResponseModelItem, 
                 dependencies=cls._get_deps("read"))
-            def get_one(obj_id: int, detailed: bool = Query(False)):
+            def get_one(obj_id: int, detailed: bool = Query(False), user_context = Depends(get_current_user_roles)):
                 # El repositorio ya devuelve un objeto Pydantic (Detail o Simple)
-                obj = cls.service.get_by_id(obj_id, detailed=detailed)
+                obj = cls.service.get_by_id(obj_id, detailed=detailed, user_context=user_context)
                 
                 if not obj:
                     raise HTTPException(status_code=404, detail="No encontrado")

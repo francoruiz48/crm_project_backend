@@ -5,7 +5,7 @@ from fastapi import HTTPException, UploadFile, status
 from app.core.constans import ALLOWED_DOCUMENT_TYPES, ALLOWED_IMAGE_TYPES, DATE_FORMAT, DATE_TIME_FORMAT, DEFAULT_PAGE_SIZE, NOMENCLATOR_FIELD_TYPES
 from app.core.exceptions.exceptions import ValidationError 
 from app.models.lead import Lead
-from app.models.lead_activity_history import LeadActivityHistory
+from app.models.audit.lead_activity_history import LeadActivityHistory
 from app.services.base_service import BaseService
 from app.db.repository.lead_repository import LeadRepository
 from app.db.repository.lead_field_repository import LeadFieldRepository
@@ -16,14 +16,15 @@ from app.services.storage_service import StorageService
 from app.db.repository.campaign_repository import CampaignRepository
 from app.db.repository.lead_state_repository import LeadStateRepository
 from app.db.repository.lead_state_transition_repository import LeadStateTransitionRepository
-from app.db.repository.lead_state_history_repository import LeadStateHistoryRepository
+from app.db.repository.audit.lead_state_history_repository import LeadStateHistoryRepository
 from app.models.lead_routing_rule import LeadRoutingRule
+from app.core.security import UserContext
+from typing import Optional
 
 class LeadService(BaseService):
     repository = LeadRepository
     field_repository = LeadFieldRepository
     campaign_repository = CampaignRepository
-
     state_repository = LeadStateRepository
     state_transition_repository = LeadStateTransitionRepository
     state_history_repository = LeadStateHistoryRepository
@@ -38,7 +39,6 @@ class LeadService(BaseService):
         def model_dump(self, **kwargs): return self._data
         def __getitem__(self, item): return self._data.get(item)
 
-    
 
     # ---------------------------------------------------------
     # Helpers de Lógica de Negocio
@@ -515,19 +515,21 @@ class LeadService(BaseService):
     # ---------------------------------------------------------
 
     @classmethod
-    def create(cls, obj_in, created_by=None, files_map: dict = None):
+    def create(cls, obj_in, user_context: Optional[UserContext] = None, files_map: dict = None):
         # NOTA: Ya no necesitamos try/except ValidationError globales envolventes, 
         # porque _prepare_creation_data gestiona la lista y lanza HTTPException.
         with UnitOfWork() as uow:
             # Usamos la lógica compartida
-            clean_values, context_data, current_campaign_defs = cls._prepare_creation_data(uow, obj_in, files_map, created_by, is_simulation=False)
+            created_by = user_context.user.id if user_context else None
+
+            clean_values, context_data, current_campaign_defs = cls._prepare_creation_data(uow, obj_in, files_map, created_by=created_by, is_simulation=False)
             
-            campaign = cls.campaign_repository.get_by_id(uow.session, obj_in.campaign_id)
+            campaign = cls.campaign_repository.get_by_id(uow.session, obj_in.campaign_id, user_context=user_context)
             if not campaign:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "campaign_id", "message": "La campaña no existe."}])
 
             #Validamos y obtenemos el estado inicial para asignarlo al lead. Si no hay estado inicial, la campaña no tiene un flujo válido.
-            initial_state = cls.state_repository.get_all(uow.session, lead_flow_id=campaign.lead_flow_id, is_initial=True)
+            initial_state = cls.state_repository.get_all(uow.session, user_context=user_context, lead_flow_id=campaign.lead_flow_id, is_initial=True)
             initial_state = initial_state[0] if initial_state else None
             if not initial_state:
                 raise HTTPException(
@@ -550,7 +552,7 @@ class LeadService(BaseService):
                 'team_id': assigned_team_id
             }
 
-            lead = cls.repository.create(uow.session, lead_data, created_by=created_by)
+            lead = cls.repository.create(uow.session, lead_data, user_context=user_context)
             cls.repository.upsert_values(uow.session, lead.id, clean_values)
             lead_id = lead.id
 
@@ -560,7 +562,7 @@ class LeadService(BaseService):
                 "to_state_id": initial_state.id,
                 "notes": "Ingreso al sistema"
             }
-            cls.state_history_repository.create(uow.session, state_history_data, created_by=created_by)
+            cls.state_history_repository.create(uow.session, state_history_data, user_context=user_context)
 
             cls._log_activity(
                 session=uow.session,
@@ -575,12 +577,14 @@ class LeadService(BaseService):
         return cls.get_by_id(lead_id, detailed=True)
 
     @classmethod
-    def bulk_assign(cls, lead_ids: list[int], target_team_id: int = None, target_user_id: int = None, updated_by=None):
+    def bulk_assign(cls, lead_ids: list[int], target_team_id: int = None, target_user_id: int = None, user_context: Optional[UserContext] = None):
         """
         Reasigna un lote de leads a un equipo o usuario específico.
         """
+
         def do_bulk(uow):
             leads = uow.session.query(Lead).filter(Lead.id.in_(lead_ids)).all()
+            updated_by = user_context.user.id if user_context and user_context.user else None
             if not leads:
                 return []
             
@@ -620,13 +624,13 @@ class LeadService(BaseService):
         return cls._execute(action="Reasignación Masiva", func=do_bulk, success_msg="Leads reasignados con éxito.")
 
     @classmethod
-    def change_state(cls, obj_id: int, new_state_id: int, notes: str = None, user_id: int = None):
+    def change_state(cls, obj_id: int, new_state_id: int, notes: str = None, user_context: Optional[UserContext] = None):
         """
         Cambia el estado de un lead verificando que la transición sea permitida en el flujo.
         Registra el evento en el historial.
         """
         with UnitOfWork() as uow:
-            lead = cls.repository.get_by_id(uow.session, obj_id)
+            lead = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
             if not lead:
                 cls._not_found(obj_id)
 
@@ -639,7 +643,7 @@ class LeadService(BaseService):
                     detail=[{"field": "new_state_id", "message": "El lead ya se encuentra en este estado."}]
                 )
             
-            campaign = cls.campaign_repository.get_by_id(uow.session, lead.campaign_id)
+            campaign = cls.campaign_repository.get_by_id(uow.session, lead.campaign_id, user_context=user_context)
 
             # 2. Validar que el salto esté permitido en la campaña
             if current_state_id is not None:
@@ -647,7 +651,8 @@ class LeadService(BaseService):
                     uow.session, 
                     lead_flow_id=campaign.lead_flow_id, 
                     from_state_id=current_state_id, 
-                    to_state_id=new_state_id
+                    to_state_id=new_state_id,
+                    user_context=user_context
                 )
 
                 if not transition:
@@ -657,7 +662,7 @@ class LeadService(BaseService):
                     )
 
             # 3. Actualizar el estado actual del Lead
-            cls.repository.update(uow.session, obj_id, {"current_state_id": new_state_id})
+            cls.repository.update(uow.session, obj_id, {"current_state_id": new_state_id}, user_context=user_context)
 
             # 4. Inyectar el historial
             history_data = {
@@ -666,18 +671,19 @@ class LeadService(BaseService):
                 "to_state_id": new_state_id,
                 "notes": notes
             }
-            cls.state_history_repository.create(uow.session, history_data, created_by=user_id)
+            cls.state_history_repository.create(uow.session, history_data, user_context=user_context)
 
             # Pasamos 'lead' y formateamos el old vs new
             diff_state = {"current_state_id": {"old": current_state_id, "new": new_state_id}}
-            cls._log_audit(uow.session, lead, action="UPDATE", changes=diff_state, user_id=user_id)
+            cls._log_audit(uow.session, lead, action="UPDATE", changes=diff_state, user_id=user_context.user.id if user_context else None)
 
         # Devolvemos el Lead actualizado para el Frontend
         return cls.get_by_id(obj_id, detailed=True)
 
     @classmethod
-    def simulate_create(cls, obj_in, created_by=None, files_map: dict = None):
+    def simulate_create(cls, obj_in, user_context: Optional[UserContext] = None, files_map: dict = None):
         with UnitOfWork() as uow:
+            created_by = user_context.user.id if user_context else None
             clean_values, context_data, field_defs = cls._prepare_creation_data(uow, obj_in, files_map, created_by, is_simulation=True)
             
             # Para la simulación (que no guarda en DB), podemos usar el ContextVar directamente 
@@ -729,17 +735,17 @@ class LeadService(BaseService):
             }
 
     @classmethod
-    def update(cls, obj_id: int, obj_in, files_map: dict = None, updated_by=None):
+    def update(cls, obj_id: int, obj_in, files_map: dict = None, user_context: Optional[UserContext] = None):
         errors = [] 
         
         with UnitOfWork() as uow:
-            current_lead = cls.repository.get_by_id(uow.session, obj_id)
+            current_lead = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
             if not current_lead: cls._not_found(obj_id)
             
             # Update base
             lead_data = obj_in.model_dump(exclude_unset=True, exclude={"values"})
             if lead_data:
-                cls.repository.update(uow.session, obj_id, lead_data, updated_by=updated_by)
+                cls.repository.update(uow.session, obj_id, lead_data, user_context=user_context)
 
             if obj_in.values is not None:
                 all_field_defs = cls.field_repository.get_all_active_with_rules(uow.session, campaign_id=current_lead.campaign_id)
@@ -823,7 +829,9 @@ class LeadService(BaseService):
                 clean_values = cls._reconstruct_items_for_repo(incoming_data, current_campaign_defs)
                 cls.repository.upsert_values(uow.session, obj_id, clean_values)
 
-                cls._log_audit(uow.session, current_lead, action="UPDATE", changes=changes, user_id=updated_by)
+                user_id=user_context.user.id if user_context else None
+
+                cls._log_audit(uow.session, current_lead, action="UPDATE", changes=changes, user_id=user_id)
 
                 # --- GUARDAR LOG SI HUBO CAMBIOS --
                 if changes:
@@ -832,19 +840,18 @@ class LeadService(BaseService):
                         lead_id=obj_id,
                         activity_type="FIELDS_UPDATED",
                         details={"changes": changes},
-                        user_id=updated_by
+                        user_id=user_id
                     )
 
         return cls.get_by_id(obj_id, detailed=True)
 
     @classmethod
-    def search(cls, consulted_by: int,page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, is_super_admin: bool = False, detailed: bool = False, search_req=None):
+    def search(cls, user_context: Optional[UserContext] = None, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, detailed: bool = False, search_req=None):
         def do_search(uow):
             total, items = cls.repository.search(
-                session=uow.session, consulted_by=consulted_by,
+                session=uow.session, user_context=user_context,
                 page=page,
                 page_size=page_size,
-                is_super_admin=is_super_admin,
                 search_params=search_req,
                 detailed=detailed
             )
@@ -860,14 +867,13 @@ class LeadService(BaseService):
         )
     
     @classmethod
-    def get_all(cls, consulted_by: int, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, is_super_admin: bool = False, only_active: bool = True, detailed: bool = False, query=None, **kwargs):
+    def get_all(cls, user_context: Optional[UserContext] = None, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, only_active: bool = True, detailed: bool = False, query=None, **kwargs):
         total, items = cls._execute(
             action=f"Obteniendo listado de leads",
             func=lambda uow: cls.repository.get_all(
-                session=uow.session, consulted_by=consulted_by,
+                session=uow.session, user_context=user_context,
                 page=page,
                 page_size=page_size,
-                is_super_admin=is_super_admin,
                 only_active=only_active,
                 detailed=detailed,
                 search=query,
@@ -880,11 +886,11 @@ class LeadService(BaseService):
         return total, items
 
     @classmethod
-    def get_by_id(cls, obj_id: int, detailed: bool = True):
+    def get_by_id(cls, obj_id: int, user_context: Optional[UserContext] = None, detailed: bool = True):
         lead = cls._execute(
             action="Obteniendo",
             obj_id=obj_id,
-            func=lambda uow: cls.repository.get_by_id(uow.session, obj_id, detailed=detailed)
+            func=lambda uow: cls.repository.get_by_id(uow.session, obj_id, user_context=user_context, detailed=detailed)
         )
         
         return cls._enrich_lead_with_urls(lead)

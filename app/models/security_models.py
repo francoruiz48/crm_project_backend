@@ -43,6 +43,7 @@ class UserOrganization(BaseModelDB):
     
     user_id = Column(Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
     organization_id = Column(Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False)
+    is_owner = Column(Boolean, default=False, nullable=False)
 
     user = relationship("User", foreign_keys=[user_id], back_populates="organizations_access")
     organization = relationship("Organization", foreign_keys=[organization_id], back_populates="users_access")
@@ -69,6 +70,7 @@ class UserOrganization(BaseModelDB):
 class User(BaseModelDB):
     __tablename__ = "user"
     
+    name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     is_superuser = Column(Boolean, default=False)
     

@@ -6,12 +6,15 @@ from app.schemas.security_schemas.role_schema import RoleDetailedResponse, RoleR
 
 class UserOrganizationResponse(BaseModel, BaseDetailResponse):
     organization_id: int
-    roles: List[RoleResponse] = [] 
+    roles: List[RoleResponse] = []
+    is_owner: bool
 
 class UserOrganizationDetailedResponse(UserOrganizationResponse):
     permission_objects: List[PermissionResponse] = []
+    is_owner: bool
 
 class UserBase(BaseModel):
+    name: str
     email: str
 
 class UserResponse(UserBase, BaseDetailResponse):
@@ -26,6 +29,7 @@ class UserCreate(UserBase, BaseCreate):
     pass
 
 class UserUpdate(BaseModel):
+    name: Optional[str] = None
     email: Optional[str] = None
 
 
