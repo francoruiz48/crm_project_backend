@@ -18,6 +18,19 @@ from app.controllers.search_controller import router as search_router
 from app.controllers.import_export_controller import router as import_export_router
 from app.controllers.lead_comment_controller import router as lead_comment_router
 from app.controllers.organization_controller import router as organization_router
+from app.controllers.lead_state_controller import router as lead_state_router
+from app.controllers.lead_state_transition_controller import router as lead_state_transition_router
+from app.controllers.audit.lead_state_history_controller import router as lead_state_history_router
+from app.controllers.lead_flow_controller import router as lead_flow_router
+from app.controllers.team_controller import router as team_router
+from app.controllers.team_member_controller import router as team_member_router
+from app.controllers.team_campaign_access_controller import router as team_campaign_access_router
+from app.controllers.team_workspace_access_controller import router as team_workspace_access_router 
+from app.controllers.lead_routing_rule_controller import router as lead_routing_rule_router
+from app.controllers.meta_data_controller import router as meta_data_router
+from app.controllers.lead_view_controller import router as lead_view_router
+from app.controllers.audit.system_audit_log_controller import router as system_audit_log_router
+from app.controllers.audit.lead_activity_history_controller import router as lead_activity_history_router
 
 router = APIRouter()
 
@@ -40,3 +53,16 @@ router.include_router(search_router)
 router.include_router(import_export_router)
 router.include_router(lead_comment_router)
 router.include_router(organization_router)
+router.include_router(lead_state_router)
+router.include_router(lead_state_transition_router)
+router.include_router(lead_state_history_router)
+router.include_router(lead_flow_router)
+router.include_router(team_router)
+router.include_router(team_member_router)
+router.include_router(team_campaign_access_router)
+router.include_router(team_workspace_access_router)
+router.include_router(lead_routing_rule_router)
+router.include_router(meta_data_router)
+router.include_router(lead_view_router)
+router.include_router(system_audit_log_router)
+router.include_router(lead_activity_history_router)

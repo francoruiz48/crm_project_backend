@@ -1,6 +1,6 @@
 # Constantes para controladores
 READ_ONLY = {"GET_ALL", "GET_ONE"}
-READ_WRITE = {"GET_ALL", "GET_ONE", "POST", "PUT", "DELETE", "ACTIVE"}
+READ_WRITE = {"GET_ALL", "GET_ONE", "POST", "PUT", "DELETE", "ACTIVE", "PATCH"}
 
 DEFAULT_PAGE_SIZE = 50
 PAGE_SIZE_LIMIT = 999
@@ -28,4 +28,20 @@ ALLOWED_DOCUMENT_TYPES = [
 ]
 
 
+INITIAL_STATES = [
+    {"name": "Ingresado", "category": "OPEN", "is_initial": True, "order": 1},
+    {"name": "Contactado", "category": "OPEN", "is_initial": False, "order": 2},
+    {"name": "Reunión Agendada", "category": "OPEN", "is_initial": False, "order": 3},
+    {"name": "Propuesta enviada", "category": "OPEN", "is_initial": False, "order": 4},
+    {"name": "Venta concretada", "category": "WON", "is_initial": False, "order": None},
+    {"name": "No interesado", "category": "LOST", "is_initial": False, "order": None},
+]
 
+INITIAL_ROUTES_STATES = [
+    # Happy Path lineal
+    (0, 1), (1, 2), (2, 3), (3, 4),
+    # Vías directas a "No interesado" desde cualquier punto activo
+    (0, 5), (1, 5), (2, 5), (3, 5),
+    # Y si nos equivocamos y lo dimos por perdido, que pueda volver a "Contactado"
+    (5, 1)
+]

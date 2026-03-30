@@ -11,13 +11,16 @@ class NomenclatorBase(BaseModel):
     parent_nomenclator_id: Optional[int] = Field(default=None, gt=0)
 
 class NomenclatorCreate(NomenclatorBase, BaseCreate):
-    organization_id: int = Field(gt=0)
+    pass
 
+class NomenclatorUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=2, max_length=100)
+    campaign_id: Optional[int] = Field(default=None, gt=0)
+    parent_nomenclator_id: Optional[int] = Field(default=None, gt=0)
 
 class NomenclatorResponse(NomenclatorBase, BaseResponse):
     organization_id: Optional[int] = Field(default=None, gt=0)
 
-class NomenclatorDetailResponse(NomenclatorBase, BaseDetailResponse):
-    items: List[NomenclatorItemResponse] = Field(default_factory=list)
+class NomenclatorDetailedResponse(NomenclatorBase, BaseDetailResponse):
     sub_nomenclators: List["NomenclatorResponse"] = Field(default_factory=list)
     organization_id: Optional[int] = Field(default=None, gt=0)

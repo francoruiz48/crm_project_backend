@@ -5,18 +5,20 @@ from typing import List, Dict, Any, Optional
 
 
 class NomenclatorItemBase(BaseModel):
-    code: str = Field(..., min_length=2, max_length=50)
-    value: str = Field(..., min_length=2, max_length=100)
+    value: str = Field(..., min_length=1, max_length=100)
     nomenclator_id: int = Field(gt=0)
     parent_item_id: Optional[int] = Field(default=None, gt=0)
 
 class NomenclatorItemCreate(NomenclatorItemBase, BaseCreate):
-    organization_id: int = Field(gt=0)
+    pass
 
+class NomenclatorItemUpdate(BaseModel):
+    value: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    parent_item_id: Optional[int] = Field(default=None, gt=0)
 
 class NomenclatorItemResponse(NomenclatorItemBase, BaseResponse):
     organization_id: Optional[int] = Field(default=None, gt=0)
 
-class NomenclatorItemDetailResponse(NomenclatorItemBase, BaseDetailResponse):
+class NomenclatorItemDetailedResponse(NomenclatorItemBase, BaseDetailResponse):
     parent_item: Optional["NomenclatorItemResponse"] = None
     organization_id: Optional[int] = Field(default=None, gt=0)

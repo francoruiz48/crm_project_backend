@@ -10,9 +10,13 @@ class RoleBase(BaseModel):
 class RoleResponse(RoleBase, BaseDetailResponse):
     organization_id: Optional[int] = Field(default=None, gt=0)
 
-class RoleDetailResponse(RoleBase, BaseDetailResponse):
+class RoleDetailedResponse(RoleBase, BaseDetailResponse):
     organization_id: Optional[int] = Field(default=None, gt=0)
     permissions: List[PermissionResponse] = []
 
 class RoleCreate(RoleBase, BaseCreate):
     organization_id: Optional[int] = Field(gt=0)
+
+class RoleUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=2, max_length=100)
+    code: Optional[str] = Field(default=None, min_length=2, max_length=50)

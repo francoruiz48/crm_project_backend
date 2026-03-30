@@ -92,3 +92,28 @@ DEFAULT_SUBTYPE_RULES = {
         { "template_code": "MIN_LENGTH", "template_params": {"limit": 8} }
     ]
 }
+
+# =========================================================================
+# MÁSCARAS DE ENTRADA (INPUT MASKS)
+# =========================================================================
+
+# 1. Catálogo de máscaras para que el Frontend muestre en un Dropdown
+STANDARD_INPUT_MASKS = {
+    "DNI_ARG": {"name": "DNI (Argentina)", "mask": "##.###.###"},
+    "CUIT_CUIL": {"name": "CUIT / CUIL", "mask": "##-########-#"},
+    "PHONE_AR": {"name": "Teléfono Fijo (AR)", "mask": "####-####"},
+    "MOBILE_AR": {"name": "Celular (AR)", "mask": "+54 9 ### #######"},
+    "CREDIT_CARD": {"name": "Tarjeta de Crédito", "mask": "####-####-####-####"},
+    "DATE_DMY": {"name": "Fecha (DD/MM/YYYY)", "mask": "##/##/####"},
+    "POSTAL_CODE_AR": {"name": "Código Postal (AR)", "mask": "A####AAA"} # <--- Este estaba bien porque usa 'A' para letras
+}
+
+# 2. Máscaras por defecto si se elige un TIPO genérico
+DEFAULT_TYPE_MASKS = {
+
+}
+
+# 3. Máscaras por defecto que sobrescriben al tipo si se elige un SUBTIPO
+DEFAULT_SUBTYPE_MASKS = {
+
+}

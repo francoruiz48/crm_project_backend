@@ -1,5 +1,5 @@
+from typing import Optional
 from fastapi import HTTPException, status
-from app.core.exceptions.exceptions import ValidationError
 from app.models.nomenclator import Nomenclator
 from app.services.base_service import BaseService
 from app.core.templates.field_templates import STANDARD_FIELD_TEMPLATES
@@ -9,17 +9,19 @@ from app.db.repository.lead_field_repository import LeadFieldRepository
 from app.db.repository.lead_repository import LeadRepository
 from app.db.repository.lead_field_value_repository import LeadFieldValueRepository
 from app.models.lead_field_type import LeadFieldType
-from app.core.constans import DEFAULT_PAGE_SIZE, NOMENCLATOR_FIELD_TYPES
+from app.core.constans import NOMENCLATOR_FIELD_TYPES
 from app.models.lead_field_value import LeadFieldValue
 from app.core.error_messages import SUCCESS_UPDATE
 from app.models.lead_field import LeadField
 from app.db.repository.campaign_repository import CampaignRepository
-from app.core.templates.field_rules_map import DEFAULT_SUBTYPE_RULES, DEFAULT_TYPE_RULES
+from app.core.templates.field_rules_map import DEFAULT_SUBTYPE_RULES, DEFAULT_TYPE_RULES,STANDARD_INPUT_MASKS, DEFAULT_TYPE_MASKS, DEFAULT_SUBTYPE_MASKS
 from sqlalchemy.orm import selectinload
 from app.models.lead import Lead
 from app.services.excel_formula_evaluator_service import ExcelFormulaEvaluatorService
 from datetime import date, datetime
-from app.core.constans import DATE_FORMAT, DATE_TIME_FORMAT
+from app.core.constans import DATE_TIME_FORMAT
+from app.core.security import UserContext
+from app.schemas.lead_field_schema import LeadFieldOrderList
 
 class LeadFieldService(BaseService):
     repository = LeadFieldRepository
@@ -80,7 +82,7 @@ class LeadFieldService(BaseService):
     # =========================================================================
 
     @classmethod
-    def create(cls, obj_in, created_by=None):
+    def create(cls, obj_in, user_context: Optional[UserContext] = None):
         def do_create(uow):
             errors = []
             
@@ -91,19 +93,20 @@ class LeadFieldService(BaseService):
             if not campaign_id:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "campaign_id", "message": "El ID de campaña es obligatorio."}])
 
-            campaign = cls.campaign_repository.get_by_id(uow.session, campaign_id)
+            campaign = cls.campaign_repository.get_by_id(uow.session, campaign_id, user_context=user_context)
             if not campaign:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "campaign_id", "message": f"La campaña {campaign_id} no existe."}])
-            
-            data['organization_id'] = campaign.organization_id
+        
 
             # --- 2. EXTRACCIÓN DE DATOS ---
             template_code = data.get("field_template_code")
+            mask_template_code = data.pop("mask_template_code", None)
             field_type_code = data.get("field_type_code")
             subtype_code = data.get("field_subtype_code")
             nomenclator_id = data.get("nomenclator_id")
             calc_expr = data.get("calculation_expression")
             name = data.get("name")
+            current_mask = data.get("input_mask")
 
             # --- 3. LÓGICA DE TEMPLATE (Pre-llenado) ---
             rules_to_create = []
@@ -122,6 +125,11 @@ class LeadFieldService(BaseService):
                     field_type_code = template.field_type_code
                     rules_to_create = template.rules
 
+                    # 3.1 INYECTAR MÁSCARA DEL TEMPLATE (Si no se envió una manual)
+                    if template.input_mask and not current_mask:
+                        data["input_mask"] = template.input_mask
+                        current_mask = template.input_mask
+
             elif nomenclator_id:
                 # Si viene de nomenclador y no tiene nombre, usamos el del nomenclador
                 nomenclator = uow.session.query(Nomenclator).get(nomenclator_id)
@@ -130,6 +138,21 @@ class LeadFieldService(BaseService):
                 elif not name:
                     data["name"] = nomenclator.name
                     name = nomenclator.name
+
+            # --- 3.5. ASIGNACIÓN INTELIGENTE DE INPUT MASK ---
+            if not current_mask: # Si todavía no tenemos máscara
+                if mask_template_code:
+                    # El usuario eligió una máscara del listado del frontend
+                    if mask_template_code in STANDARD_INPUT_MASKS:
+                        data["input_mask"] = STANDARD_INPUT_MASKS[mask_template_code]["mask"]
+                    else:
+                        errors.append({"field": "mask_template_code", "message": f"Plantilla de máscara '{mask_template_code}' no válida."})
+                else:
+                    # Aplicar default implícito por Subtipo o Tipo
+                    if subtype_code and subtype_code in DEFAULT_SUBTYPE_MASKS:
+                        data["input_mask"] = DEFAULT_SUBTYPE_MASKS[subtype_code]
+                    elif field_type_code in DEFAULT_TYPE_MASKS:
+                        data["input_mask"] = DEFAULT_TYPE_MASKS[field_type_code]
 
             # --- 4. VALIDACIONES DE TIPO (Acumulativas) ---
             
@@ -184,7 +207,7 @@ class LeadFieldService(BaseService):
             if not name:
                 errors.append({"field": "name", "message": "El nombre del campo es obligatorio."})
             else:
-                cls._check_name_uniqueness(uow.session, campaign_id, name, errors)
+                cls._check_name_uniqueness(uow.session, campaign_id, name, errors=errors)
 
             # Validar constraints con leads existentes
             has_existing_leads = LeadRepository.has_leads_in_campaign(uow.session, campaign_id)
@@ -208,7 +231,7 @@ class LeadFieldService(BaseService):
 
             # --- 7. PERSISTENCIA ---
             try:
-                new_field = cls.repository.create(uow.session, data, created_by)
+                new_field = cls.repository.create(uow.session, data)
                 uow.session.flush()
 
                 # Backfill
@@ -226,11 +249,10 @@ class LeadFieldService(BaseService):
                 for rule_cfg in rules_to_create:
                     rule_payload = rule_cfg.copy()
                     rule_payload["field_id"] = new_field.id
-                    rule_payload["organization_id"] = data['organization_id']
                     ValidationRuleService.create_within_session(
                         session=uow.session, 
                         obj_data=rule_payload,
-                        created_by=created_by,
+                        user_context=user_context,
                         field_type_code=new_field.field_type_code
                     )
 
@@ -243,16 +265,17 @@ class LeadFieldService(BaseService):
                     for rule_cfg in implicit_rules:
                         rule_payload = rule_cfg.copy()
                         rule_payload["field_id"] = new_field.id
-                        rule_payload["organization_id"] = data['organization_id']
                         origin = subtype_code if rule_cfg in DEFAULT_SUBTYPE_RULES.get(subtype_code, []) else field_type_code
                         rule_payload["name"] = f"Auto-Rule ({origin})" 
                         
                         ValidationRuleService.create_within_session(
                             session=uow.session,
                             obj_data=rule_payload,
-                            created_by=created_by,
+                            user_context=user_context,
                             field_type_code=new_field.field_type_code
                         )
+
+                cls._log_audit(uow.session, new_field, action="CREATE", changes=data, user_id=user_context.user.id if user_context and user_context.user else None)
 
                 return new_field
 
@@ -271,30 +294,25 @@ class LeadFieldService(BaseService):
     # =========================================================================
 
     @classmethod
-    def update(cls, obj_id: int, obj_in):
+    def update(cls, obj_id: int, obj_in, user_context: Optional[UserContext] = None):
         def do_update(uow):
             errors = []
-            current_field = cls.repository.get_by_id(uow.session, obj_id, detailed=False)
+            current_field = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context, detailed=False)
             if not current_field: cls._not_found(obj_id)
 
             data = obj_in.model_dump(exclude_unset=True)
 
-            # 1. Inmutabilidad de Tipo
-            new_type = data.get("field_type_code")
-            if new_type and new_type != current_field.field_type_code:
-                errors.append({"field": "field_type_code", "message": "No se puede cambiar el tipo de dato de un campo existente."})
-
-            # 2. Validar Unicidad de Nombre
+            # 1. Validar Unicidad de Nombre
             new_name = data.get("name")
             if new_name and new_name != current_field.name:
                 cls._check_name_uniqueness(uow.session, current_field.campaign_id, new_name, errors, exclude_id=obj_id)
 
-            # 3. Validar Unicidad de Orden
+            # 2. Validar Unicidad de Orden
             new_order = data.get("order")
             if new_order is not None and new_order != current_field.order:
                 cls._check_order_uniqueness(uow.session, current_field.campaign_id, new_order, errors, exclude_id=obj_id)
 
-            # 4. Validar Restricciones Históricas
+            # 3. Validar Restricciones Históricas
             new_required = data.get("required")
             new_primary = data.get("is_primary")
             
@@ -343,11 +361,21 @@ class LeadFieldService(BaseService):
                 if new_expr and new_expr != current_field.calculation_expression:
                     expression_changed = True
 
-            updated_field = cls.repository.update(uow.session, obj_id, data)
+            changes = {}
+            for key, new_val in data.items():
+                if hasattr(current_field, key):
+                    old_val = getattr(current_field, key)
+                    if old_val != new_val:
+                        changes[key] = {"old": old_val, "new": new_val}
+
+            updated_field = cls.repository.update(uow.session, obj_id, data, user_context=user_context)
+            uow.session.flush() 
 
             if expression_changed:
                 cls._recalculate_leads_formula(uow, updated_field)
-            # ===============================================================
+            
+            if changes:
+                cls._log_audit(uow.session, updated_field, action="UPDATE", changes=changes, user_id=user_context.user.id if user_context else None)
 
             return updated_field
 
@@ -362,7 +390,7 @@ class LeadFieldService(BaseService):
     # =========================================================================
 
     @classmethod
-    def set_active(cls, field_id: int):
+    def set_active(cls, field_id: int, user_context: Optional[UserContext] = None):
         def do_reactivate(uow):
             errors = []
             field = uow.session.get(LeadField, field_id)
@@ -386,8 +414,16 @@ class LeadFieldService(BaseService):
                 max_order = cls.repository.get_max_order(uow.session, field.campaign_id)
                 field.order = max_order + 1
 
+            was_active = field.active
+
+            field.updated_by = user_context.user.id if user_context else None
             field.active = True
             uow.session.add(field)
+            uow.session.flush()
+
+            if not was_active:
+                cls._log_audit(uow.session, field, action="ACTIVATE", changes={"active": {"old": False, "new": True}}, user_id=user_context.user.id if user_context else None)
+
             return field
 
         return cls._execute(
@@ -470,3 +506,78 @@ class LeadFieldService(BaseService):
                     value=str(new_calc_val) if new_calc_val is not None else None
                 )
                 uow.session.add(new_fv)
+
+
+    @classmethod
+    def reorder(cls, obj_in: LeadFieldOrderList, user_context: Optional[UserContext] = None):
+        def do_reorder(uow):
+            campaign_id = obj_in.campaign_id
+            
+            # 1. Validar campaña y acceso
+            campaign = cls.campaign_repository.get_by_id(uow.session, campaign_id, user_context=user_context)
+            if not campaign:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"field": "campaign_id", "message": "Campaña no encontrada o sin acceso."})
+
+            # 2. Obtener TODOS los campos activos de esta campaña
+            # Traemos los objetos SQLAlchemy para poder modificarlos
+            db_fields = uow.session.query(LeadField).filter(
+                LeadField.campaign_id == campaign_id,
+                LeadField.active == True
+            )
+            # Aplicamos el filtro de seguridad del repositorio manualmente si es necesario
+            db_fields = cls.repository.apply_security_filter(uow.session, db_fields, user_context).all()
+            
+            db_fields_map = {f.id: f for f in db_fields}
+            
+            # 3. Mapeo de lo que viene del request
+            incoming_orders = {item.field_id: item.order for item in obj_in.orders}
+
+            # 4. VALIDACIÓN DE INTEGRIDAD: Universo completo
+            # Verificamos colisiones entre los que cambian y los que se quedan quietos
+            check_duplicate_orders = {}
+            for f_id, field_obj in db_fields_map.items():
+                # Si viene en el request, usamos el nuevo order, sino el que ya tenía en DB
+                target_order = incoming_orders.get(f_id, field_obj.order)
+                
+                if target_order in check_duplicate_orders:
+                    other_name = check_duplicate_orders[target_order]
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST, 
+                        detail={"field": "order", "message": f"El orden {target_order} se repite entre '{field_obj.name}' y '{other_name}'."}
+                    )
+                
+                check_duplicate_orders[target_order] = field_obj.name
+
+            # 5. ACTUALIZACIÓN FÍSICA
+            updated_count = 0
+            for f_id, new_order in incoming_orders.items():
+                if f_id not in db_fields_map:
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST, 
+                        detail={"field": "field_id", "message": f"El campo {f_id} no pertenece a esta campaña o no está activo."}
+                    )
+                
+                field_instance = db_fields_map[f_id]
+                
+                if field_instance.order != new_order:
+                    old_val = field_instance.order
+                    # Actualización del atributo en la instancia de SQLAlchemy
+                    field_instance.order = new_order
+                    
+                    # Auditoría (Usando el ID del usuario directamente en el log, no en el objeto)
+                    cls._log_audit(
+                        uow.session, 
+                        field_instance, 
+                        action="UPDATE", 
+                        changes={"order": {"old": old_val, "new": new_order}},
+                        user_id=user_context.user.id if user_context and user_context.user else None
+                    )
+                    updated_count += 1
+            
+            uow.session.flush()
+            return {"message": f"Se actualizó el orden de {updated_count} campos.", "campaign_id": campaign_id}
+
+        return cls._execute(
+            action="Reordenando campos de Lead",
+            func=do_reorder
+        )

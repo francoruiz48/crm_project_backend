@@ -23,6 +23,8 @@ class LeadFieldValueBase(BaseModel):
 class LeadFieldValueCreate(LeadFieldValueBase, BaseCreate):
     pass
 
+class LeadFieldValueUpdate(BaseModel):
+    value: Optional[Union[List[int], float, int, str]] = None
 
 class LeadFieldValueResponse(LeadFieldValueBase, BaseResponse):
     lead_id: int

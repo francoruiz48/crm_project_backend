@@ -13,6 +13,7 @@ class BaseDetailResponse(BaseResponse):
     updated_at: datetime
     active: bool
     created_by: Optional[int]
+    updated_by: Optional[int]
 
 class BaseCreate():
     pass

@@ -1,16 +1,17 @@
-from typing import Dict, List, Union
-from fastapi import APIRouter, Body, HTTPException, Query, Depends
-from app.core.constans import DEFAULT_PAGE_SIZE, PAGE_SIZE_LIMIT
-from app.core.security import PermissionChecker, get_current_user
+from typing import Dict, Union
+from fastapi import APIRouter, Body, HTTPException, Query, Depends, Request
+from app.core.constans import DEFAULT_PAGE_SIZE
+from app.core.security import PermissionChecker, get_current_user_roles
 from app.schemas.pagination_schema import PaginatedResponse
 
 class BaseController:
     router_prefix = ""
     service = None
     schema_in = None
+    schema_update = None
     schema_out = None
     schema_out_detail = None
-    enabled_methods = {"GET_ALL", "GET_ONE", "POST", "PUT", "DELETE", "ACTIVE"}
+    enabled_methods = {"GET_ALL", "GET_ONE", "POST", "PUT", "DELETE", "ACTIVE", "PATCH"}
 
     required_permissions: Dict[str, str] = {}
 
@@ -51,16 +52,36 @@ class BaseController:
             @router.get("/", response_model=ResponseModelPaginated,
                         dependencies=cls._get_deps("read"))
             def get_all(
+                request: Request,
                 page: int = Query(1, ge=1),
                 page_size: int = DEFAULT_PAGE_SIZE,
                 only_active: bool = True, 
-                detailed: bool = Query(False)
+                detailed: bool = Query(False),
+                search: str = Query(None, description="Búsqueda global"),
+                search_fields: str = Query(None, description="Campos para búsqueda global, separados por comas"),
+                user_context = Depends(get_current_user_roles)
             ):
+                # Definimos los parámetros reservados que no deben tratarse como filtros de columna
+                reserved_params = {"page", "page_size", "only_active", "detailed", "search", "search_fields"}
+
+                # Convertimos el string "field1,field2" en una lista ["field1", "field2"]
+                search_fields = [f.strip() for f in search_fields.split(",")] if search_fields else None
+
+                # Atrapamos cualquier otro parámetro de la URL (ej: ?campaign_id=5&name=Test)
+                dynamic_filters = {
+                    key: value for key, value in request.query_params.items()
+                    if key not in reserved_params
+                }
+
                 total, items_pydantic = cls.service.get_all(
+                    user_context=user_context,
                     page=page,
                     page_size=page_size,
                     only_active=only_active, 
-                    detailed=detailed
+                    detailed=detailed,
+                    search=search,
+                    search_fields=search_fields, 
+                    **dynamic_filters
                 )
 
                 return PaginatedResponse.create(
@@ -75,39 +96,34 @@ class BaseController:
             @router.post("/", response_model=ResponseModelItem, 
                 dependencies=cls._get_deps("create"))
             def create(obj_in: cls.schema_in = Body(...),
-                       current_user = Depends(get_current_user)):
-                return cls.service.create(obj_in, created_by=current_user.id)
+                       user_context = Depends(get_current_user_roles)):
+                return cls.service.create(obj_in, user_context=user_context)
 
         if "PUT" in cls.enabled_methods:
             @router.put("/{obj_id}", response_model=ResponseModelItem, 
                 dependencies=cls._get_deps("update"))
-            def update(obj_id: int, obj_in: cls.schema_in = Body(...)):
-                return cls.service.update(obj_id, obj_in)
+            def update(obj_id: int, obj_in: cls.schema_update = Body(...),
+                       user_context = Depends(get_current_user_roles)):
+                return cls.service.update(obj_id, obj_in, user_context=user_context)
 
         if "DELETE" in cls.enabled_methods:
             @router.delete("/{obj_id}", dependencies=cls._get_deps("delete"))
-            def delete(obj_id: int):
-                return cls.service.delete(obj_id)
-            
-        #if "SOFT_DELETE" in cls.enabled_methods:
-        #    @router.put("/disable/{obj_id}", dependencies=cls._get_deps("disable"))
-        #    def set_disable(obj_id: int):
-        #        cls.service.set_disable(obj_id)
-        #        return {"disabled": True}
-            
+            def delete(obj_id: int, user_context = Depends(get_current_user_roles)):
+                return cls.service.delete(obj_id, user_context=user_context)
+
         if "ACTIVE" in cls.enabled_methods:
             @router.put("/active/{obj_id}", dependencies=cls._get_deps("active"))
-            def set_active(obj_id: int):
-                cls.service.set_active(obj_id)
+            def set_active(obj_id: int, user_context = Depends(get_current_user_roles)):
+                cls.service.set_active(obj_id, user_context=user_context)
                 return {"actived": True}
             
         if "GET_ONE" in cls.enabled_methods:
             @router.get("/{obj_id}", 
                 response_model=ResponseModelItem, 
                 dependencies=cls._get_deps("read"))
-            def get_one(obj_id: int, detailed: bool = Query(False)):
+            def get_one(obj_id: int, detailed: bool = Query(False), user_context = Depends(get_current_user_roles)):
                 # El repositorio ya devuelve un objeto Pydantic (Detail o Simple)
-                obj = cls.service.get_by_id(obj_id, detailed=detailed)
+                obj = cls.service.get_by_id(obj_id, detailed=detailed, user_context=user_context)
                 
                 if not obj:
                     raise HTTPException(status_code=404, detail="No encontrado")

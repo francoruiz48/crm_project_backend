@@ -1,9 +1,5 @@
-from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
-from app.controllers.base_controller import BaseController
+from fastapi import APIRouter, UploadFile, File
 from app.services.storage_service import StorageService
-from app.db.repository.lead_field_repository import LeadFieldRepository
-from app.db.unit_of_work import UnitOfWork
-from app.core.security import get_current_user
 
 router = APIRouter(prefix="/storage")
 

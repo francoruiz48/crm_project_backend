@@ -1,12 +1,13 @@
 import re
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from math import ceil
 from sqlalchemy.orm import selectinload
 from app.core.exceptions.exceptions import AppException, NotFoundException
 from app.core.error_messages import ERROR_DATABASE, ERROR_NOT_FOUND
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import inspect, or_
-from sqlalchemy.orm.interfaces import ONETOMANY
+from sqlalchemy import func, inspect, or_
+from app.core.context import TENANT_ORG_ID
+from app.core.security import UserContext
 
 class BaseRepository:
     model = None
@@ -14,7 +15,46 @@ class BaseRepository:
     schema_out_detail = None
     relationships: list = []
 
+    # ===============================================================
+    # Inyección automática de Tenant (Multi-empresa)
+    # ===============================================================
+    @classmethod
+    def _apply_tenant_filter(cls, query, is_read_operation: bool = True):
+        """
+        is_read_operation:
+          - True (Lectura): Trae registros del tenant actual O globales (NULL).
+          - False (Escritura): Trae SOLO registros del tenant actual (protege los globales).
+        """
+        if hasattr(cls.model, "organization_id"):
+            org_id = TENANT_ORG_ID.get()
+            
+            # Si hay un tenant activo en el contexto
+            if org_id is not None:
+                if is_read_operation:
+                    # LECTURA: Ve los suyos O los del sistema (NULL)
+                    query = query.filter(
+                        or_(
+                            cls.model.organization_id == org_id,
+                            cls.model.organization_id.is_(None)
+                        )
+                    )
+                else:
+                    # ESCRITURA: Solo puede tocar los suyos. (Excluye los NULL)
+                    query = query.filter(cls.model.organization_id == org_id)
+                    
+        return query
+
     # ----------------- Helpers internos -----------------
+    @classmethod
+    def apply_security_filter(cls, session, query, user_context: UserContext):
+        """
+        MÉTODO HOOK (Template Method).
+        Los repositorios hijos deben sobrescribir este método para inyectar 
+        su lógica de seguridad específica (La Bóveda).
+        Por defecto, devuelve la query intacta.
+        """
+        return query
+    
     @classmethod
     def _paginate(cls, query, page: int = 0, page_size: int = 0):
         """
@@ -150,13 +190,18 @@ class BaseRepository:
 
     # ----------------- CRUD Genérico -----------------
     @classmethod
-    def get_all(cls, session, only_active: bool = True, detailed: bool = False, **kwargs):
+    def get_all(cls, session, user_context: Optional[UserContext] = None, only_active: bool = True, detailed: bool = False, base_query=None, **kwargs):
         """
         Trae todos los objetos con filtros dinámicos.
         Cualquier argumento extra (ej: campaign_id=1) se aplica como filtro "=" 
         si el modelo tiene ese atributo.
         """
-        query = session.query(cls.model)
+
+        query = base_query if base_query is not None else session.query(cls.model)
+
+        query = cls.apply_security_filter(session, query, user_context)
+
+        query = cls._apply_tenant_filter(query)
             
         # 1. Filtro 'active' (Soft Delete)
         if only_active and hasattr(cls.model, "active"):
@@ -221,13 +266,18 @@ class BaseRepository:
         return items
 
     @classmethod
-    def get_by_id(cls, session, obj_id: int, only_active: bool = False, detailed: bool = False):
+    def get_by_id(cls, session, obj_id: int, user_context: Optional[UserContext] = None, only_active: bool = False, detailed: bool = False):
         """
         Trae un objeto por id. 
         Si detailed=True, carga relaciones y usa schema_out_detail.
         """
         try:
+
             query = session.query(cls.model)
+
+            query = cls.apply_security_filter(session, query, user_context)
+
+            query = cls._apply_tenant_filter(query)
 
             if detailed and cls.relationships:
                 query = cls._apply_relationships(query)
@@ -246,10 +296,24 @@ class BaseRepository:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
     @classmethod
-    def create(cls, session, obj_data=None, created_by=None):
+    def create(cls, session, obj_data=None, user_context: Optional[UserContext] = None,):
         """Crea un objeto"""
         try:
+            created_by = None
+            is_super_admin = False
+            is_owner = False
+            
+            if user_context is not None:
+                created_by = user_context.user.id
+                is_super_admin = user_context.is_superuser
+                is_owner = user_context.is_owner
+
             data = cls._normalize_data(obj_data)
+            
+            if hasattr(cls.model, "organization_id"):
+                org_id = TENANT_ORG_ID.get()
+                if org_id is not None:
+                    data["organization_id"] = org_id
             
             if created_by is not None and hasattr(cls.model, "created_by"):
                 data["created_by"] = created_by
@@ -258,8 +322,7 @@ class BaseRepository:
             session.add(obj)
             session.flush()  # flush para obtener ID antes de commit
             session.refresh(obj)
-            schema_to_use = cls.schema_out_detail or cls.schema_out
-            return schema_to_use.model_validate(obj) if schema_to_use else obj
+            return cls.schema_out_detail.model_validate(obj)
 
         except IntegrityError as e:
             session.rollback()
@@ -270,21 +333,39 @@ class BaseRepository:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
     @classmethod
-    def update(cls, session, obj_id: int, obj_data):
+    def update(cls, session, obj_id: int, obj_data, user_context: Optional[UserContext] = None,):
         """Actualiza un objeto por id"""
         try:
+            updated_by = None
+            is_super_admin = False
+            is_owner = False
+            
+            if user_context is not None:
+                updated_by = user_context.user.id
+                is_super_admin = user_context.is_superuser
+                is_owner = user_context.is_owner
+
             data = cls._normalize_data(obj_data)
-            obj = session.get(cls.model, obj_id)
+            query = session.query(cls.model).filter(cls.model.id == obj_id)
+            # PASAMOS FALSE: Para asegurar que no pueda editar un registro global (NULL)
+            query = cls._apply_tenant_filter(query, is_read_operation=False)
+            obj = query.first()
             if not obj:
                 return None
+            
+            if updated_by is not None and hasattr(cls.model, "updated_by"):
+                data["updated_by"] = updated_by
+
+            # IMPORTANTE: Prevenir que el usuario transfiera objetos a otra organización
+            if "organization_id" in data:
+                del data["organization_id"]
 
             for key, value in data.items():
                 setattr(obj, key, value)
 
             session.flush()
             session.refresh(obj)
-            schema_to_use = cls.schema_out_detail or cls.schema_out
-            return schema_to_use.model_validate(obj) if schema_to_use else obj
+            return cls.schema_out_detail.model_validate(obj)
 
         except IntegrityError as e:
             session.rollback()
@@ -295,7 +376,7 @@ class BaseRepository:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
     @classmethod
-    def delete(cls, session, obj_id: int) -> Dict[str, str]:
+    def delete(cls, session, obj_id: int, user_context: Optional[UserContext] = None,) -> Dict[str, str]:
         """
         Intenta eliminar un objeto físicamente.
         
@@ -307,9 +388,24 @@ class BaseRepository:
         Returns:
             Dict con claves 'action' ('deleted' | 'disabled') y 'message'.
         """
-        obj = session.get(cls.model, obj_id)
+
+        updated_by = None
+        is_super_admin = False
+        is_owner = False
+        
+        if user_context is not None:
+            updated_by = user_context.user.id
+            is_super_admin = user_context.is_superuser
+            is_owner = user_context.is_owner
+
+        query = session.query(cls.model).filter(cls.model.id == obj_id)
+        # PASAMOS FALSE: Para asegurar que no pueda editar un registro global (NULL)
+        query = cls._apply_tenant_filter(query, is_read_operation=False)
+        obj = query.first()
+
         if not obj:
             raise NotFoundException(detail=f"{cls.model.__name__} no encontrado.")
+        
 
         try:
             with session.begin_nested():
@@ -325,6 +421,9 @@ class BaseRepository:
             # Verificamos si el modelo soporta 'active' (Soft Delete)
             if obj_fresh and hasattr(obj_fresh, 'active'):
                 obj_fresh.active = False
+                if updated_by is not None and hasattr(cls.model, "updated_by"):
+                    obj_fresh.updated_by = updated_by
+
                 session.add(obj_fresh)
                 session.flush()
                 session.refresh(obj_fresh)
@@ -354,12 +453,16 @@ class BaseRepository:
         key_attr: str,
         create_fn,
     ):
-        """
-        Upsert genérico sobre relaciones one-to-many.
-        create_fn: lambda item -> instancia ORM
-        """
         try:
-            parent = session.get(parent_model, parent_id)
+            # 1. Buscar al padre aplicando Tenant Filter
+            parent_query = session.query(parent_model).filter(parent_model.id == parent_id)
+            if hasattr(parent_model, "organization_id"):
+                org_id = TENANT_ORG_ID.get()
+                if org_id is not None:
+                    parent_query = parent_query.filter(parent_model.organization_id == org_id)
+            
+            parent = parent_query.first()
+            
             if not parent:
                 raise NotFoundException(
                     detail=ERROR_NOT_FOUND.format(
@@ -369,33 +472,33 @@ class BaseRepository:
 
             children = getattr(parent, relation_name)
             
-            # Mapa de existentes: { 2: ObjetoORM, 5: ObjetoORM }
-            # Convertimos la clave a string para evitar problemas de tipos (2 vs "2")
             existing = {str(getattr(c, key_attr)): c for c in children}
 
             for item in items:
-                # Obtenemos la clave del item entrante y la convertimos a string
                 raw_key = getattr(item, key_attr)
                 key = str(raw_key)
                 
+                # OJO: Aquí NO inyectamos el tenant al crear el hijo de forma automática, 
+                # porque create_fn (lambda) o la relación de SQLAlchemy se encargará 
+                # de propagar el organization_id / parent_id según cómo esté mapeado.
+                
                 if key in existing:
-                    # UPDATE: El hijo ya existe
                     child_obj = existing[key]
-                    for attr, value in item.dict().items():
+                    
+                    item_dict = item.dict()
+                    if "organization_id" in item_dict:
+                        del item_dict["organization_id"]
+
+                    for attr, value in item_dict.items():
                         setattr(child_obj, attr, value)
                     
-                    # [FIX CRITICO]: Forzamos a la sesión a ver el cambio
                     session.add(child_obj)
                 else:
-                    # CREATE: Es nuevo
                     child = create_fn(item)
                     children.append(child)
-                    session.add(child) # Aseguramos agregar
+                    session.add(child) 
             
-            # Flush para enviar cambios a la DB
             session.flush()
-            
-            # Refrescamos el padre para ver los cambios reflejados
             session.refresh(parent)
         
         except IntegrityError as e:

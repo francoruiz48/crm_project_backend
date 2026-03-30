@@ -7,6 +7,7 @@ class FieldTemplate:
     name: str
     field_type_code: str
     rules: List[Dict[str, Any]] = field(default_factory=list)
+    input_mask: str = None
 
 # Definición de los campos estándar
 STANDARD_FIELD_TEMPLATES = {
@@ -99,17 +100,8 @@ STANDARD_FIELD_TEMPLATES = {
         code="CUIT_CUIL",
         name="CUIT / CUIL",
         field_type_code="STRING",
+        input_mask="##-########-#", 
         rules=[
-            {
-                "template_code": "ONLY_DIGITS",
-                "template_params": {},
-                "error_message": "Ingresa el CUIT sin guiones."
-            },
-            {
-                "template_code": "EXACT_LENGTH",
-                "template_params": {"limit": 11},
-                "error_message": "El CUIT debe tener exactamente 11 dígitos."
-            }
         ]
     ),
     
@@ -207,18 +199,8 @@ STANDARD_FIELD_TEMPLATES = {
         code="CREDIT_CARD_SIMPLE",
         name="Tarjeta de Crédito (Simple)",
         field_type_code="STRING",
+        input_mask="####-####-####-####",
         rules=[
-            {
-                "template_code": "ONLY_DIGITS",
-                "template_params": {},
-                "error_message": "Ingrese solo los números de la tarjeta."
-            },
-            {
-                # Validación de longitud manual
-                "expression": "AND(LEN(value) >= 13, LEN(value) <= 19)",
-                "name": "Longitud Tarjeta",
-                "error_message": "La tarjeta debe tener entre 13 y 19 dígitos."
-            }
         ]
     ),
 
