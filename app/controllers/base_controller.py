@@ -114,6 +114,21 @@ class BaseController:
             @router.delete("/{obj_id}", dependencies=cls._get_deps("delete"))
             def delete(obj_id: int, user_context = Depends(get_current_user_roles)):
                 return cls.service.delete(obj_id, user_context=user_context)
+            
+        if "DELETE" in cls.enabled_methods:
+            from pydantic import BaseModel
+            
+            # Esquema para recibir el arreglo
+            class BulkIdsRequest(BaseModel):
+                ids: list[int]
+                
+            @router.post("/bulk-delete", dependencies=cls._get_deps("delete"))
+            def bulk_delete(payload: BulkIdsRequest, user_context = Depends(get_current_user_roles)):
+                if not payload.ids:
+                    raise HTTPException(status_code=400, detail="Debe proporcionar al menos un ID para eliminar.")
+                
+                # Le pasamos la lista de IDs al servicio
+                return cls.service.bulk_delete(payload.ids, user_context=user_context)
 
         if "ACTIVE" in cls.enabled_methods:
             @router.put("/active/{obj_id}", dependencies=cls._get_deps("active"))
