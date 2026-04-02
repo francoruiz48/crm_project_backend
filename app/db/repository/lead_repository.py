@@ -22,6 +22,41 @@ class LeadRepository(BaseRepository):
         (Lead.field_values, LeadFieldValue.nomenclator_items) 
     ]
 
+    #Helper para aplicar ordenamiento dinámico en get_all y search
+    @classmethod
+    def _apply_dynamic_ordering(cls, query, order_by: str, ascending: bool):
+        """
+        Maneja el ordenamiento nativo (ej: created_at) y el ordenamiento 
+        por campos dinámicos (ej: order_by='15' donde 15 es un field_id).
+        """
+        if not order_by:
+            return query.order_by(cls.model.id.desc())
+
+        # CASO 1: Es un campo nativo de la tabla Lead (ej: id, created_at, active)
+        if hasattr(cls.model, order_by):
+            column = getattr(cls.model, order_by)
+            return query.order_by(column.asc() if ascending else column.desc())
+
+        # CASO 2: Es un campo dinámico (Asumimos que el string es el field_id)
+        if order_by.isdigit():
+            field_id = int(order_by)
+            
+            # Hacemos un OUTER JOIN específico solo para traer el valor de este campo
+            # Usamos un alias para no chocar con otros JOINs de LeadFieldValue en la búsqueda
+            sort_lv = aliased(LeadFieldValue)
+            query = query.outerjoin(
+                sort_lv, 
+                and_(sort_lv.lead_id == cls.model.id, sort_lv.field_id == field_id)
+            )
+            
+            # Ordenamos por el valor string (Postgres hará un orden alfabético por defecto)
+            # Para números perfectos, idealmente el field_type debería definir el cast, 
+            # pero el orden alfabético de strings suele bastar para la grilla
+            return query.order_by(sort_lv.value.asc() if ascending else sort_lv.value.desc())
+
+        # Fallback si no machea nada
+        return query.order_by(cls.model.id.desc())
+
     @classmethod
     def apply_security_filter(cls, session, query, user_context: UserContext = None):
         if user_context is None or user_context.user is None:
@@ -79,6 +114,12 @@ class LeadRepository(BaseRepository):
 
             query = query.distinct()
 
+        order_by = kwargs.pop('order_by', None)
+        ascending = kwargs.pop('ascending', True)
+
+        # Aplicamos nuestro ordenamiento especial EAV
+        query = cls._apply_dynamic_ordering(query, order_by, ascending)
+
         # DELEGAMOS AL PADRE
         # Nota: Al atrapar 'search' y 'search_fields' en la firma de esta función, 
         # evitamos que pasen en los **kwargs y que el padre intente buscar de nuevo.
@@ -92,7 +133,7 @@ class LeadRepository(BaseRepository):
         )
 
     @classmethod
-    def search(cls, session, search_params, user_context: Optional[UserContext] = None, detailed: bool = False, page: int = 0, page_size: int = 0):
+    def search(cls, session, search_params, user_context: Optional[UserContext] = None, detailed: bool = False, page: int = 0, page_size: int = 0, order_by: str = None, ascending: bool = True):
         query = session.query(cls.model)
 
         query = cls._apply_tenant_filter(query)
@@ -210,6 +251,8 @@ class LeadRepository(BaseRepository):
 
             # Aplicamos los filtros de esta iteración (AND con los joins anteriores)
             query = query.filter(and_(*conditions))
+        
+        query = cls._apply_dynamic_ordering(query, order_by, ascending)
 
         # Paginación y Ejecución
         total, query = cls._paginate(query, page, page_size)

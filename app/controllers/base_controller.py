@@ -59,10 +59,12 @@ class BaseController:
                 detailed: bool = Query(False),
                 search: str = Query(None, description="Búsqueda global"),
                 search_fields: str = Query(None, description="Campos para búsqueda global, separados por comas"),
+                order_by: str = Query(None, description="Campo por el cual ordenar"), 
+                ascending: bool = Query(True, description="Orden ascendente (true) o descendente (false)"),
                 user_context = Depends(get_current_user_roles)
             ):
                 # Definimos los parámetros reservados que no deben tratarse como filtros de columna
-                reserved_params = {"page", "page_size", "only_active", "detailed", "search", "search_fields"}
+                reserved_params = {"page", "page_size", "only_active", "detailed", "search", "search_fields", "order_by", "ascending"}
 
                 # Convertimos el string "field1,field2" en una lista ["field1", "field2"]
                 search_fields = [f.strip() for f in search_fields.split(",")] if search_fields else None
@@ -81,6 +83,8 @@ class BaseController:
                     detailed=detailed,
                     search=search,
                     search_fields=search_fields, 
+                    order_by=order_by,
+                    ascending=ascending,
                     **dynamic_filters
                 )
 
