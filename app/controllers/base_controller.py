@@ -45,6 +45,12 @@ class BaseController:
 
         ResponseModelPaginated = PaginatedResponse[ResponseModelItem]
 
+        from pydantic import BaseModel
+            
+        # Esquema para recibir el arreglo
+        class BulkIdsRequest(BaseModel):
+            ids: list[int]
+
         # ---------------------------------------------------------
         # GET ALL
         # ---------------------------------------------------------
@@ -115,13 +121,7 @@ class BaseController:
             def delete(obj_id: int, user_context = Depends(get_current_user_roles)):
                 return cls.service.delete(obj_id, user_context=user_context)
             
-        if "DELETE" in cls.enabled_methods:
-            from pydantic import BaseModel
-            
-            # Esquema para recibir el arreglo
-            class BulkIdsRequest(BaseModel):
-                ids: list[int]
-                
+        if "DELETE" in cls.enabled_methods:                
             @router.post("/bulk-delete", dependencies=cls._get_deps("delete"))
             def bulk_delete(payload: BulkIdsRequest, user_context = Depends(get_current_user_roles)):
                 if not payload.ids:
@@ -135,6 +135,13 @@ class BaseController:
             def set_active(obj_id: int, user_context = Depends(get_current_user_roles)):
                 cls.service.set_active(obj_id, user_context=user_context)
                 return {"actived": True}
+            
+        if "ACTIVE" in cls.enabled_methods:
+            @router.post("/bulk-active", dependencies=cls._get_deps("active"))
+            def bulk_set_active(payload: BulkIdsRequest, user_context = Depends(get_current_user_roles)):
+                if not payload.ids:
+                    raise HTTPException(status_code=400, detail="Debe proporcionar al menos un ID para activar.")
+                return cls.service.bulk_set_active(payload.ids, user_context=user_context)
             
         if "GET_ONE" in cls.enabled_methods:
             @router.get("/{obj_id}", 

@@ -563,3 +563,57 @@ class BaseRepository:
                     results["failed"].append(obj_id)
 
         return results
+    
+
+    @classmethod
+    def bulk_set_active(cls, session, obj_ids: list[int], user_context: Optional[UserContext] = None) -> Dict[str, list]:
+        """
+        Activa masivamente un listado de IDs.
+        """
+        updated_by = None
+        if user_context is not None and user_context.user is not None:
+            updated_by = user_context.user.id
+
+        results = {"activated": [], "already_active": [], "failed": []}
+
+        # Verificamos tempranamente si el modelo soporta la columna 'active'
+        if not hasattr(cls.model, 'active'):
+            results["failed"] = obj_ids
+            return results
+
+        # Buscamos los objetos aplicando el filtro de la empresa
+        query = session.query(cls.model).filter(cls.model.id.in_(obj_ids))
+        query = cls._apply_tenant_filter(query, is_read_operation=False)
+        objs = query.all()
+
+        # Separar los que no se encontraron
+        valid_ids = [obj.id for obj in objs]
+        for requested_id in obj_ids:
+            if requested_id not in valid_ids:
+                results["failed"].append(requested_id)
+
+        if not objs:
+            return results
+
+        # Iteramos con transacciones anidadas
+        for obj in objs:
+            obj_id = obj.id
+            try:
+                with session.begin_nested():
+                    # Si ya está activo, no hacemos nada y lo informamos
+                    if getattr(obj, 'active') is True:
+                        results["already_active"].append(obj_id)
+                    else:
+                        obj.active = True
+                        if updated_by is not None and hasattr(cls.model, "updated_by"):
+                            obj.updated_by = updated_by
+                        
+                        session.add(obj)
+                        session.flush()
+                        results["activated"].append(obj_id)
+
+            except Exception as e:
+                # Si por algún motivo de base de datos falla la actualización
+                results["failed"].append(obj_id)
+
+        return results

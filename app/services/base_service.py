@@ -226,3 +226,41 @@ class BaseService:
             func=do_activate,
             success_msg=SUCCESS_UPDATE
         )
+    
+    @classmethod
+    def bulk_set_active(cls, obj_ids: list[int], user_context: Optional[UserContext] = None):
+        def do_bulk_activate(uow):
+            if not hasattr(cls.repository.model, 'active'):
+                raise AppException(detail=f"El modelo {cls._model_name()} no soporta activación.")
+
+            # 1. Buscamos los objetos
+            objs_to_activate = uow.session.query(cls.repository.model).filter(
+                cls.repository.model.id.in_(obj_ids)
+            ).all()
+
+            if not objs_to_activate:
+                return {"activated": [], "already_active": [], "failed": obj_ids}
+
+            # 2. Ejecutamos la acción masiva
+            result = cls.repository.bulk_set_active(uow.session, obj_ids, user_context=user_context)
+
+            # 3. LOG DE AUDITORÍA (Solo para los que realmente se activaron)
+            user_id = user_context.user.id if user_context and user_context.user else None
+            
+            for obj in objs_to_activate:
+                if obj.id in result["activated"]:
+                    cls._log_audit(
+                        session=uow.session, 
+                        obj=obj, 
+                        action="ACTIVATE", 
+                        changes={"active": {"old": False, "new": True}}, 
+                        user_id=user_id
+                    )
+
+            return result
+
+        return cls._execute(
+            action="Activando masivamente", 
+            func=do_bulk_activate, 
+            success_msg="Operación masiva de activación finalizada."
+        )
