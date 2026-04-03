@@ -40,7 +40,9 @@ class NomenclatorController(BaseController):
             search_fields: str = Query(None, description="Campos para búsqueda global, separados por comas"),
             user_context = Depends(get_current_user_roles),
             campaign_id: Optional[int] = Query(None, description="Filtrar por ID de Campaña"),
-            global_nomenclator: Optional[bool] = Query(None, description="Traer los nomencladores con campaña en null")
+            global_nomenclator: Optional[bool] = Query(None, description="Traer los nomencladores con campaña en null"),
+            order_by: Optional[str] = Query(None, description="Campo por el cual ordenar"),
+            ascending: bool = Query(True, description="Orden ascendente (true) o descendente (false)")
         ):
             search_fields = [f.strip() for f in search_fields.split(",")] if search_fields else None
 
@@ -53,7 +55,9 @@ class NomenclatorController(BaseController):
                 only_active=only_active,
                 detailed=detailed,
                 campaign_id=campaign_id,
-                global_nomenclator = global_nomenclator
+                global_nomenclator = global_nomenclator,
+                order_by=order_by,
+                ascending=ascending
             )
             
             return PaginatedResponse.create(

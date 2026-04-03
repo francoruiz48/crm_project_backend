@@ -45,6 +45,12 @@ class BaseController:
 
         ResponseModelPaginated = PaginatedResponse[ResponseModelItem]
 
+        from pydantic import BaseModel
+            
+        # Esquema para recibir el arreglo
+        class BulkIdsRequest(BaseModel):
+            ids: list[int]
+
         # ---------------------------------------------------------
         # GET ALL
         # ---------------------------------------------------------
@@ -59,10 +65,12 @@ class BaseController:
                 detailed: bool = Query(False),
                 search: str = Query(None, description="Búsqueda global"),
                 search_fields: str = Query(None, description="Campos para búsqueda global, separados por comas"),
+                order_by: str = Query(None, description="Campo por el cual ordenar"), 
+                ascending: bool = Query(True, description="Orden ascendente (true) o descendente (false)"),
                 user_context = Depends(get_current_user_roles)
             ):
                 # Definimos los parámetros reservados que no deben tratarse como filtros de columna
-                reserved_params = {"page", "page_size", "only_active", "detailed", "search", "search_fields"}
+                reserved_params = {"page", "page_size", "only_active", "detailed", "search", "search_fields", "order_by", "ascending"}
 
                 # Convertimos el string "field1,field2" en una lista ["field1", "field2"]
                 search_fields = [f.strip() for f in search_fields.split(",")] if search_fields else None
@@ -81,6 +89,8 @@ class BaseController:
                     detailed=detailed,
                     search=search,
                     search_fields=search_fields, 
+                    order_by=order_by,
+                    ascending=ascending,
                     **dynamic_filters
                 )
 
@@ -110,12 +120,28 @@ class BaseController:
             @router.delete("/{obj_id}", dependencies=cls._get_deps("delete"))
             def delete(obj_id: int, user_context = Depends(get_current_user_roles)):
                 return cls.service.delete(obj_id, user_context=user_context)
+            
+        if "DELETE" in cls.enabled_methods:                
+            @router.post("/bulk-delete", dependencies=cls._get_deps("delete"))
+            def bulk_delete(payload: BulkIdsRequest, user_context = Depends(get_current_user_roles)):
+                if not payload.ids:
+                    raise HTTPException(status_code=400, detail="Debe proporcionar al menos un ID para eliminar.")
+                
+                # Le pasamos la lista de IDs al servicio
+                return cls.service.bulk_delete(payload.ids, user_context=user_context)
 
         if "ACTIVE" in cls.enabled_methods:
             @router.put("/active/{obj_id}", dependencies=cls._get_deps("active"))
             def set_active(obj_id: int, user_context = Depends(get_current_user_roles)):
                 cls.service.set_active(obj_id, user_context=user_context)
                 return {"actived": True}
+            
+        if "ACTIVE" in cls.enabled_methods:
+            @router.post("/bulk-active", dependencies=cls._get_deps("active"))
+            def bulk_set_active(payload: BulkIdsRequest, user_context = Depends(get_current_user_roles)):
+                if not payload.ids:
+                    raise HTTPException(status_code=400, detail="Debe proporcionar al menos un ID para activar.")
+                return cls.service.bulk_set_active(payload.ids, user_context=user_context)
             
         if "GET_ONE" in cls.enabled_methods:
             @router.get("/{obj_id}", 

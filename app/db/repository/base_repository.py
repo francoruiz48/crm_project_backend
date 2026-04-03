@@ -510,3 +510,110 @@ class BaseRepository:
             if isinstance(e, AppException):
                 raise e
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
+        
+    @classmethod
+    def bulk_delete(cls, session, obj_ids: list[int], user_context: Optional[UserContext] = None) -> Dict[str, list]:
+        """
+        Elimina masivamente un listado de IDs.
+        Aplica la misma lógica de Soft Delete que la eliminación individual en caso de fallo.
+        """
+        updated_by = None
+        if user_context is not None and user_context.user is not None:
+            updated_by = user_context.user.id
+
+        # 1. Buscamos los objetos que realmente existen y le pertenecen a la empresa
+        query = session.query(cls.model).filter(cls.model.id.in_(obj_ids))
+        query = cls._apply_tenant_filter(query, is_read_operation=False)
+        objs = query.all()
+
+        results = {"deleted": [], "disabled": [], "failed": []}
+
+        # 2. Separar los que no se encontraron (o no tienen permisos)
+        valid_ids = [obj.id for obj in objs]
+        for requested_id in obj_ids:
+            if requested_id not in valid_ids:
+                results["failed"].append(requested_id)
+
+        if not objs:
+            return results
+
+        # 3. Iteramos aplicando transacciones anidadas (Savepoints)
+        for obj in objs:
+            obj_id = obj.id
+            try:
+                # begin_nested() crea un SAVEPOINT. Si falla, hace rollback SOLO de este objeto.
+                with session.begin_nested():
+                    session.delete(obj)
+                    session.flush()
+                results["deleted"].append(obj_id)
+
+            except (IntegrityError, AppException) as e:
+                # Ocurrió un error (ej: FK restrict). Intentamos Soft Delete.
+                obj_fresh = session.get(cls.model, obj_id)
+                if obj_fresh and hasattr(obj_fresh, 'active'):
+                    obj_fresh.active = False
+                    if updated_by is not None and hasattr(cls.model, "updated_by"):
+                        obj_fresh.updated_by = updated_by
+
+                    session.add(obj_fresh)
+                    session.flush()
+                    session.refresh(obj_fresh)
+                    results["disabled"].append(obj_id)
+                else:
+                    results["failed"].append(obj_id)
+
+        return results
+    
+
+    @classmethod
+    def bulk_set_active(cls, session, obj_ids: list[int], user_context: Optional[UserContext] = None) -> Dict[str, list]:
+        """
+        Activa masivamente un listado de IDs.
+        """
+        updated_by = None
+        if user_context is not None and user_context.user is not None:
+            updated_by = user_context.user.id
+
+        results = {"activated": [], "already_active": [], "failed": []}
+
+        # Verificamos tempranamente si el modelo soporta la columna 'active'
+        if not hasattr(cls.model, 'active'):
+            results["failed"] = obj_ids
+            return results
+
+        # Buscamos los objetos aplicando el filtro de la empresa
+        query = session.query(cls.model).filter(cls.model.id.in_(obj_ids))
+        query = cls._apply_tenant_filter(query, is_read_operation=False)
+        objs = query.all()
+
+        # Separar los que no se encontraron
+        valid_ids = [obj.id for obj in objs]
+        for requested_id in obj_ids:
+            if requested_id not in valid_ids:
+                results["failed"].append(requested_id)
+
+        if not objs:
+            return results
+
+        # Iteramos con transacciones anidadas
+        for obj in objs:
+            obj_id = obj.id
+            try:
+                with session.begin_nested():
+                    # Si ya está activo, no hacemos nada y lo informamos
+                    if getattr(obj, 'active') is True:
+                        results["already_active"].append(obj_id)
+                    else:
+                        obj.active = True
+                        if updated_by is not None and hasattr(cls.model, "updated_by"):
+                            obj.updated_by = updated_by
+                        
+                        session.add(obj)
+                        session.flush()
+                        results["activated"].append(obj_id)
+
+            except Exception as e:
+                # Si por algún motivo de base de datos falla la actualización
+                results["failed"].append(obj_id)
+
+        return results
