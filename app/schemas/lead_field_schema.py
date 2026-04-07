@@ -22,6 +22,7 @@ class LeadFieldBase(BaseModel):
     field_type_code: Optional[str] = Field(default=None, min_length=2, max_length=100)
     field_subtype_code: Optional[str] = Field(default=None, min_length=2, max_length=100)
     field_template_code: Optional[str] = None
+    title_order: Optional[int] = Field(default=None, gt=0)
 
 class LeadFieldCreate(LeadFieldBase, BaseCreate):
     field_template_code: Optional[str] = Field(default=None, min_length=2, max_length=100)
@@ -44,6 +45,7 @@ class LeadFieldUpdate(BaseModel):
     calculation_expression: Optional[str] = Field(default=None, min_length=2, max_length=1000)
     configuration: Optional[Dict[str, Any]] = None
     lead_field_section_id: Optional[int] = Field(default=None, gt=0)
+    title_order: Optional[int] = Field(default=None, gt=0)
 
 class LeadFieldResponse(LeadFieldBase, BaseResponse):
     field_template_name: Optional[str] = None
