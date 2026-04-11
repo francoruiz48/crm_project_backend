@@ -1,5 +1,5 @@
 from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
-from app.schemas.lead_field_schema import LeadFieldDetailedResponse, LeadFieldResponse
+from app.schemas.lead_field_schema import LeadFieldDetailedResponse, LeadFieldLiteResponse, LeadFieldResponse
 from pydantic import BaseModel, ConfigDict
 from typing import List, Optional, Union
 from app.schemas.nomenclator_item_schema import NomenclatorItemResponse
@@ -28,7 +28,7 @@ class LeadFieldValueUpdate(BaseModel):
 
 class LeadFieldValueResponse(LeadFieldValueBase, BaseResponse):
     lead_id: int
-    field: Optional[LeadFieldResponse] = None
+    field: Optional[LeadFieldLiteResponse] = None
     nomenclator_items: List[NomenclatorItemResponse] = []
     related_leads: List[RelatedLeadResponse] = []
 
