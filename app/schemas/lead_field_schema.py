@@ -11,7 +11,7 @@ from app.schemas.lead_field_type_schema import LeadFieldTypeResponse
 class LeadFieldBase(BaseModel):
     name: Optional[str] = Field(default=None, min_length=3, max_length=150)
     required: bool = False
-    default_value: Optional[str] = Field(default=None, min_length=2, max_length=500)
+    default_value: Optional[str] = Field(default=None, max_length=500)
     is_primary: bool = False
     input_mask: Optional[str] = Field(default=None, min_length=2, max_length=150)
     is_visible: bool = True
@@ -22,6 +22,8 @@ class LeadFieldBase(BaseModel):
     field_type_code: Optional[str] = Field(default=None, min_length=2, max_length=100)
     field_subtype_code: Optional[str] = Field(default=None, min_length=2, max_length=100)
     field_template_code: Optional[str] = None
+    title_order: Optional[int] = Field(default=None, gt=0)
+
 
 class LeadFieldCreate(LeadFieldBase, BaseCreate):
     field_template_code: Optional[str] = Field(default=None, min_length=2, max_length=100)
@@ -36,7 +38,7 @@ class LeadFieldCreate(LeadFieldBase, BaseCreate):
 class LeadFieldUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=3, max_length=150)
     required: Optional[bool] = None
-    default_value: Optional[str] = Field(default=None, min_length=2, max_length=500)
+    default_value: Optional[str] = Field(default=None, max_length=500)
     is_primary: Optional[bool] = None
     input_mask: Optional[str] = Field(default=None, min_length=2, max_length=150)
     is_visible: Optional[bool] = None
@@ -44,6 +46,7 @@ class LeadFieldUpdate(BaseModel):
     calculation_expression: Optional[str] = Field(default=None, min_length=2, max_length=1000)
     configuration: Optional[Dict[str, Any]] = None
     lead_field_section_id: Optional[int] = Field(default=None, gt=0)
+    title_order: Optional[int] = Field(default=None, gt=0)
 
 class LeadFieldResponse(LeadFieldBase, BaseResponse):
     field_template_name: Optional[str] = None
@@ -54,6 +57,12 @@ class LeadFieldResponse(LeadFieldBase, BaseResponse):
     related_campaign_id: Optional[int] = None
     organization_id : int
     
+class LeadFieldLiteResponse(BaseModel, BaseResponse):
+    name: str
+    order: int
+    field_type_code: Optional[str] = None
+    field_subtype_code: Optional[str] = None
+
 
 class LeadFieldDetailedResponse(LeadFieldBase, BaseDetailResponse):
     field_template_name: Optional[str] = None

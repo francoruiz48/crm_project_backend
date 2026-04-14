@@ -8,9 +8,20 @@ class ExcelFormulaEvaluatorService:
     def __init__(self, context=None):
         self.context = context or {}
         
+        def _safe_math(op_func, a, b):
+            try:
+                if a is None: a = 0
+                if b is None: b = 0
+                return op_func(float(a), float(b))
+            except (ValueError, TypeError):
+                raise ValueError("Se esperaba un valor numérico para la operación matemática.")
+
         # Operadores soportados
         self.operators = {
-            '+': operator.add, '-': operator.sub, '*': operator.mul, '/': operator.truediv,
+            '+': lambda a, b: _safe_math(operator.add, a, b),
+            '-': lambda a, b: _safe_math(operator.sub, a, b),
+            '*': lambda a, b: _safe_math(operator.mul, a, b),
+            '/': lambda a, b: _safe_math(operator.truediv, a, b),
             
             # Comparadores que usan _safe_compare
             '>': lambda a, b: self._safe_compare(operator.gt, a, b),
@@ -100,10 +111,28 @@ class ExcelFormulaEvaluatorService:
 
     def evaluate(self, expression):
         if not expression: return None
-        # Quitamos el '=' inicial si existe (típico de Excel)
+        
+        # 1. Quitamos el '=' inicial si existe (típico de Excel)
         expression = expression.strip()
         if expression.startswith('='): expression = expression[1:]
-        
+
+        # 2. PRE-PROCESAMIENTO: Manejo de variables entre {}
+        # Reemplaza {variable} por su valor formateado. Si es texto, lo entrecomilla.
+        if self.context:
+            for var_name, var_value in self.context.items():
+                pattern = r"\{" + re.escape(str(var_name)) + r"\}"
+                
+                if var_value is None:
+                    replacement = '""' # Tratamos los nulos como string vacío en formulas
+                elif isinstance(var_value, (int, float)):
+                    replacement = str(var_value)
+                else:
+                    # Todo lo demás (fechas, texto) lo envolvemos en comillas para el parser
+                    replacement = f'"{str(var_value)}"'
+                
+                # Usamos regex ignorando mayúsculas/minúsculas por conveniencia
+                expression = re.sub(pattern, replacement, expression, flags=re.IGNORECASE)
+
         try:
             return self._parse_expression(expression)
         except Exception as e:
@@ -147,8 +176,25 @@ class ExcelFormulaEvaluatorService:
         # 3. Es una variable del contexto? (ej: ciudad)
         if expr in self.context:
             val = self.context[expr]
+            
+            if val is None:
+                return None
+                
             # Normalizamos fechas para poder compararlas
-            if isinstance(val, (date, datetime)): return val
+            if isinstance(val, (date, datetime)): 
+                return val
+                
+            # SI ES STRING NUMÉRICO, LO CONVERTIMOS A FLOAT
+            if isinstance(val, str):
+                val_trimmed = val.strip()
+                # Verificar si es un número positivo o negativo (con o sin decimal)
+                if val_trimmed.replace('.', '', 1).replace('-', '', 1).isdigit():
+                    # Si termina en .0, lo podemos tratar como int, sino como float
+                    try:
+                        return float(val_trimmed) if '.' in val_trimmed else int(val_trimmed)
+                    except ValueError:
+                        return val # Fallback seguro
+            
             return val
 
         # 4. Es una función? IF(...), CONCAT(...)

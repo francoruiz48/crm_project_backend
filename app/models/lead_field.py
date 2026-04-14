@@ -16,6 +16,7 @@ class LeadField(BaseModelDB):
     is_visible = Column(Boolean, default=True)
     calculation_expression = Column(String, nullable=True)
     configuration = Column(JSON, nullable=True)
+    title_order = Column(Integer, nullable=True)
 
     #relations
     campaign_id = Column(Integer, ForeignKey("campaign.id"), nullable=False)
