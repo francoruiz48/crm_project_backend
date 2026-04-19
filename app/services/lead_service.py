@@ -1,6 +1,5 @@
 from datetime import date, datetime
 import re
-from sqlalchemy import or_
 from fastapi import HTTPException, UploadFile, status
 from app.core.constans import ALLOWED_DOCUMENT_TYPES, ALLOWED_IMAGE_TYPES, DATE_FORMAT, DATE_TIME_FORMAT, DEFAULT_PAGE_SIZE, NOMENCLATOR_FIELD_TYPES
 from app.core.exceptions.exceptions import ValidationError 
@@ -17,8 +16,8 @@ from app.db.repository.campaign_repository import CampaignRepository
 from app.db.repository.lead_state_repository import LeadStateRepository
 from app.db.repository.lead_state_transition_repository import LeadStateTransitionRepository
 from app.db.repository.audit.lead_state_history_repository import LeadStateHistoryRepository
-from app.models.lead_routing_rule import LeadRoutingRule
 from app.core.security import UserContext
+from app.services.routing_rule_evaluator_service import RoutingRuleEvaluatorService
 from typing import Optional
 
 class LeadService(BaseService):
@@ -78,65 +77,6 @@ class LeadService(BaseService):
         except (ValueError, TypeError):
             return value
 
-    @classmethod
-    def _evaluate_routing_rules(cls, session, campaign, context_data: dict, field_defs_list: list):
-        """
-        Evalúa las reglas de enrutamiento activas para asignar un equipo al Lead.
-        Retorna el team_id ganador o None si no hay coincidencias.
-        """
-
-        # 1. Obtener reglas aplicables (Globales de la Org + Específicas de la Campaña)
-        # Ordenadas estrictamente por prioridad (order ASC)
-        rules = session.query(LeadRoutingRule).filter(
-            LeadRoutingRule.organization_id == campaign.organization_id,
-            LeadRoutingRule.active == True,
-            or_(LeadRoutingRule.campaign_id.is_(None), LeadRoutingRule.campaign_id == campaign.id)
-        ).order_by(LeadRoutingRule.order.asc()).all()
-
-        if not rules:
-            return None
-
-        # 2. Mapear qué campos del Lead apuntan a qué Nomenclador
-        # (Para evaluar reglas globales sin importar de qué campaña vengan)
-        nom_to_fields = {}
-        for f in field_defs_list:
-            if getattr(f, 'nomenclator_id', None):
-                if f.nomenclator_id not in nom_to_fields:
-                    nom_to_fields[f.nomenclator_id] = []
-                nom_to_fields[f.nomenclator_id].append(f.id)
-
-        # 3. Evaluar reglas en cascada
-        for rule in rules:
-            if rule.condition_type == "NOMENCLATOR":
-                nom_id = rule.condition_target_id
-                target_val = rule.condition_value # Ej: "45" (ID del item Mendoza)
-                
-                # Buscar si alguno de los campos ligados a este nomenclador tiene el valor buscado
-                related_field_ids = nom_to_fields.get(nom_id, [])
-                for fid in related_field_ids:
-                    lead_val = context_data.get(fid)
-                    if not lead_val: continue
-                    
-                    # El valor en el dict puede ser un ID único o una lista de IDs
-                    if isinstance(lead_val, list):
-                        if any(str(x) == target_val for x in lead_val):
-                            return rule.target_team_id
-                    else:
-                        if str(lead_val) == target_val:
-                            return rule.target_team_id
-
-            elif rule.condition_type == "CUSTOM_FIELD":
-                fid = rule.condition_target_id
-                target_val = rule.condition_value
-                
-                lead_val = context_data.get(fid)
-                if lead_val is not None:
-                    # Comparamos ignorando mayúsculas y espacios para evitar errores de tipeo
-                    if str(lead_val).strip().lower() == str(target_val).strip().lower():
-                        return rule.target_team_id
-
-        # Si el lead pasó por todas las reglas y ninguna coincidió, queda huérfano
-        return None
 
     @classmethod
     def _evaluate_calculated_fields(cls, input_data: dict, field_defs_list: list):
@@ -538,11 +478,13 @@ class LeadService(BaseService):
                 )
             
             #Ejecución de Motor de enrutamiento
-            assigned_team_id = cls._evaluate_routing_rules(
-                session=uow.session, 
-                campaign=campaign, 
-                context_data=context_data, 
-                field_defs_list=current_campaign_defs
+            assigned_team_id = RoutingRuleEvaluatorService.evaluate(
+                session = uow.session,
+                campaign_id = campaign.id,
+                organization_id = campaign.organization_id,
+                context_data = context_data,
+                field_defs_list = current_campaign_defs,
+                lead_obj = None, # Aún no existe, se asigna antes de crear
             )
 
             # Persistencia Real (Ahora inyectamos el current_state_id)

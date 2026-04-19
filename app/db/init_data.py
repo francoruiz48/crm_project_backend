@@ -198,7 +198,7 @@ def seed_rbac(db):
         "role", "workspace", "lead_field_section",
         "lead_comment", "organization", "lead_flow", "lead_state", 
         "lead_state_transition", "team", "team_member", 
-        "team_workspace_access", "team_campaign_access", "lead_routing_rule", "lead_view"
+        "team_workspace_access", "team_campaign_access", "lead_routing_policy", "lead_view"
     ]
 
     # 2. Entidades de Solo Lectura (Catálogos del sistema)
