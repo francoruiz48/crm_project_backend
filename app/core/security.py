@@ -19,16 +19,20 @@ class UserContext:
     user: Any = None  # Aquí puedes importar tu modelo User si quieres tipado estricto
     is_superuser: bool = False
     is_owner: bool = False
+    organization_id: int = None
 
-# En app/core/security.py (o donde tengas tus dependencias)
 
 def get_current_user_roles(
     current_user = Depends(_get_current_user), 
-    db_session = Depends(get_db)
+    db_session = Depends(get_db),
+    x_organization_id: int = Header(default=None, alias="X-Organization-Id") 
 ) -> UserContext:
     
-    from app.core.context import TENANT_ORG_ID
-    current_org_id = TENANT_ORG_ID.get()
+    # Lo mantenemos por si alguna función async lo necesita
+    if x_organization_id is not None:
+        TENANT_ORG_ID.set(x_organization_id)
+        
+    current_org_id = x_organization_id
 
     is_superuser = getattr(current_user, 'is_superuser', False)
     is_owner_here = False
@@ -42,11 +46,11 @@ def get_current_user_roles(
         if user_org_link and user_org_link.is_owner:
             is_owner_here = True
 
-    # DEVOLVEMOS EL DATACLASS EN LUGAR DEL DICCIONARIO
     return UserContext(
         user=current_user,
         is_superuser=is_superuser,
-        is_owner=is_owner_here
+        is_owner=is_owner_here,
+        organization_id=current_org_id
     )
 
 
@@ -61,9 +65,6 @@ class PermissionChecker:
         x_organization_id: int = Header(default=None, alias="X-Organization-Id")
     ):
         
-        # GUARDAMOS EL ID EN EL CONTEXTO GLOBAL DE LA PETICIÓN
-        if x_organization_id:
-            TENANT_ORG_ID.set(x_organization_id)
             
         # 1. Si es superadmin global, tiene acceso a todo (opcional según tus reglas)
         if user.is_superuser:
