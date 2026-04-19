@@ -1,4 +1,5 @@
 from typing import Optional
+from app.core.context import TENANT_ORG_ID
 from app.core.security import UserContext
 from app.db.repository.base_repository import BaseRepository
 from app.models.nomenclator import Nomenclator
@@ -16,7 +17,19 @@ class NomenclatorRepository(BaseRepository):
 
         query = session.query(cls.model)
 
-        # 1. LÓGICA EXCLUSIVA DE NOMENCLADOR (Filtros de Campaña y Globales)
+        if user_context and user_context.organization_id is not None:
+            org_id = user_context.organization_id
+        else:
+            org_id = TENANT_ORG_ID.get()
+
+        if org_id is not None:
+            query = query.filter(or_(cls.model.organization_id == org_id, cls.model.organization_id.is_(None)))
+        else:
+            query = query.filter(cls.model.organization_id.is_(None))
+
+        # =====================================================================
+        # 2. LÓGICA EXCLUSIVA DE NOMENCLADOR (Filtros de Campaña y Globales)
+        # =====================================================================
         if campaign_id is not None:
             if global_nomenclator is True:
                 query = query.filter(or_(cls.model.campaign_id == campaign_id, cls.model.campaign_id.is_(None)))
@@ -28,6 +41,7 @@ class NomenclatorRepository(BaseRepository):
             elif global_nomenclator is False:
                 query = query.filter(cls.model.campaign_id.is_not(None))
 
+        # Delegamos al padre (la paginación, ordenamiento y busqueda de texto)
         return super().get_all(
             session=session,
             user_context=user_context,
