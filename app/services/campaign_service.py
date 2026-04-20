@@ -1,20 +1,14 @@
 from typing import Optional
-
 from fastapi import status, HTTPException
-from sqlalchemy import desc
-from app.core.constans import DEFAULT_PAGE_SIZE
 from app.db.repository.lead_flow_repository import LeadFlowRepository
 from app.models.lead_flow import LeadFlow
 from app.services.base_service import BaseService
 from app.db.repository.campaign_repository import CampaignRepository
-from app.core.exceptions.exceptions import ValidationError
 from app.services.base_service import BaseService
 from app.db.repository.workspace_repository import WorkspaceRepository
 from fastapi import status, HTTPException
-from app.models.campaign import Campaign
-from app.models.lead_state import LeadState
-from app.models.lead_state_transition import LeadStateTransition
 from app.core.security import UserContext
+from app.models.lead import Lead
 
 class CampaignService(BaseService):
     repository = CampaignRepository
@@ -88,3 +82,45 @@ class CampaignService(BaseService):
 
         return cls._execute(action="Crear Campaña", func=do_create)
     
+    @classmethod
+    def update(cls, obj_id: int, obj_in, user_context: Optional[UserContext] = None):
+        def do_update(uow):
+            campaign = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
+            if not campaign:
+                cls._not_found(obj_id)
+
+            errors = []
+
+            # Validación Crítica: No cambiar lead_flow_id si ya tiene leads
+            if obj_in.lead_flow_id and obj_in.lead_flow_id != campaign.lead_flow_id:
+                
+                leads_count = uow.session.query(Lead).filter_by(campaign_id=obj_id).count()
+                
+                if leads_count > 0:
+                    errors.append({
+                        "field": "lead_flow_id", 
+                        "message": "No se puede cambiar el flujo de leads porque esta campaña ya tiene prospectos asignados. Cree una nueva campaña."
+                    })
+                else:
+                    # Si no tiene leads, validamos que el nuevo flujo exista en la misma org
+                    lead_flow = cls.lead_flow_repository.get_by_id(uow.session, obj_in.lead_flow_id, user_context=user_context)
+                    if not lead_flow or lead_flow.organization_id != campaign.organization_id:
+                        errors.append({"field": "lead_flow_id", "message": "El flujo de leads especificado no es válido o no pertenece a esta organización."})
+
+            if errors:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
+
+            updated_campaign = cls.repository.update(uow.session, obj_id, obj_in, user_context=user_context)
+            uow.session.flush()
+            
+            cls._log_audit(
+                session=uow.session,
+                obj=updated_campaign,
+                action="UPDATE",
+                changes=obj_in.model_dump(exclude_unset=True),
+                user_id=user_context.user.id if user_context and user_context.user else None
+            )
+
+            return updated_campaign
+
+        return cls._execute(action="Actualizar Campaña", obj_id=obj_id, func=do_update)
