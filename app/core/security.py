@@ -65,7 +65,9 @@ class PermissionChecker:
         x_organization_id: int = Header(default=None, alias="X-Organization-Id")
     ):
         
-            
+        if x_organization_id is not None:
+            TENANT_ORG_ID.set(x_organization_id)
+
         # 1. Si es superadmin global, tiene acceso a todo (opcional según tus reglas)
         if user.is_superuser:
             return True
