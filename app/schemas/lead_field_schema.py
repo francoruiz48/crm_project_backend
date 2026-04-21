@@ -62,6 +62,7 @@ class LeadFieldLiteResponse(BaseModel, BaseResponse):
     order: int
     field_type_code: Optional[str] = None
     field_subtype_code: Optional[str] = None
+    title_order: Optional[int] = None
 
 
 class LeadFieldDetailedResponse(LeadFieldBase, BaseDetailResponse):
