@@ -14,7 +14,6 @@ class NomenclatorItemCreate(NomenclatorItemBase, BaseCreate):
 
 class NomenclatorItemUpdate(BaseModel):
     value: Optional[str] = Field(default=None, min_length=1, max_length=100)
-    parent_item_id: Optional[int] = Field(default=None, gt=0)
 
 class NomenclatorItemResponse(NomenclatorItemBase, BaseResponse):
     organization_id: Optional[int] = Field(default=None, gt=0)

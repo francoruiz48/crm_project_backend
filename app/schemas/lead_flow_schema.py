@@ -1,10 +1,7 @@
 
 from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
 from pydantic import BaseModel, computed_field, Field
-from typing import List, Dict, Any, Optional
-from app.schemas.campaign_schema import CampaignDetailedResponse
-from app.schemas.lead_state_schema import LeadStateDetailedResponse
-from app.schemas.lead_state_transition_schema import LeadStateTransitionDetailedResponse
+from typing import Optional
 
 class LeadFlowBase(BaseModel):
     name: str = Field(min_length=1, max_length=255)

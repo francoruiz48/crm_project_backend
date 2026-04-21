@@ -15,8 +15,6 @@ class NomenclatorCreate(NomenclatorBase, BaseCreate):
 
 class NomenclatorUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=2, max_length=100)
-    campaign_id: Optional[int] = Field(default=None, gt=0)
-    parent_nomenclator_id: Optional[int] = Field(default=None, gt=0)
 
 class NomenclatorResponse(NomenclatorBase, BaseResponse):
     organization_id: Optional[int] = Field(default=None, gt=0)
