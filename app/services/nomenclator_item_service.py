@@ -43,20 +43,26 @@ class NomenclatorItemService(BaseService):
                     )
 
             # Creación
-            new_item = cls.repository.create(uow.session, obj_in, user_context=user_context)
+            new_item_response = cls.repository.create(uow.session, obj_in, user_context=user_context)
             
             # REGLA A (HERENCIA): Forzar globalidad si el padre es global
             if parent_nom.organization_id is None:
-                new_item.organization_id = None
-                uow.session.add(new_item)
+                # Buscamos la instancia real de SQLAlchemy usando el ID
+                db_item = uow.session.query(NomenclatorItem).filter_by(id=new_item_response.id).first()
+                db_item.organization_id = None
+                uow.session.flush()
+                uow.session.refresh(db_item)
+                
+                # Reconstruimos la respuesta Pydantic con los datos actualizados
+                new_item_response = cls.repository.schema_out_detail.model_validate(db_item)
 
             uow.session.flush()
             
             # Auditoría
             user_id = user_context.user.id if user_context and user_context.user else None
-            cls._log_audit(uow.session, new_item, action="CREATE", changes=obj_in.model_dump(), user_id=user_id)
+            cls._log_audit(uow.session, new_item_response, action="CREATE", changes=obj_in.model_dump(), user_id=user_id)
             
-            return new_item
+            return new_item_response
 
         return cls._execute(action="Crear Item", func=do_create)
 
