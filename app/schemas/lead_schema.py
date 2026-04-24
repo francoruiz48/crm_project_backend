@@ -11,12 +11,14 @@ class LeadBase(BaseModel):
     campaign_id: int = Field(gt=0)
     assigned_to_user_id: Optional[int] = Field(default=None, gt=0)
     team_id: Optional[int] = Field(default=None, gt=0)
+    contact_state_id: Optional[int] = Field(default=None, gt=0)
 
 class LeadCreate(LeadBase, BaseCreate):
     values: List[LeadFieldValueCreate]
 
 class LeadUpdate(BaseModel):
     values: Optional[List[LeadFieldValueCreate]] = None
+    contact_state_id: Optional[int] = Field(default=None, gt=0)
 
 class LeadResponse(LeadBase, BaseResponse):
     field_values: List[LeadFieldValueResponse] = Field(

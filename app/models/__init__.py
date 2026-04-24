@@ -22,5 +22,6 @@ from app.models.team_member import TeamMember
 from app.models.team_access import TeamWorkspaceAccess, TeamCampaignAccess
 from app.models.lead_view import LeadView
 from app.models.lead_routing_policy import LeadRoutingPolicy, LeadRoutingCondition
+from app.models.lead_contact_state import LeadContactState
 
-__all__ = ["Lead", "LeadState", "LeadStateTransition", "LeadStateHistory", "LeadView", "Team", "TeamMember", "TeamWorkspaceAccess", "TeamCampaignAccess", "LeadRoutingPolicy", "LeadRoutingCondition", "LeadFlow","LeadFieldType", "LeadField", "LeadFieldValue", "Campaign", "Nomenclator", "NomenclatorItem", "ValidationRule", "Workspace", "LeadFieldSection", "LeadFieldSubtype", "LeadComment", "Organization", "SystemAuditLog", "LeadActivityHistory"]
+__all__ = ["Lead", "LeadContactState", "LeadState", "LeadStateTransition", "LeadStateHistory", "LeadView", "Team", "TeamMember", "TeamWorkspaceAccess", "TeamCampaignAccess", "LeadRoutingPolicy", "LeadRoutingCondition", "LeadFlow","LeadFieldType", "LeadField", "LeadFieldValue", "Campaign", "Nomenclator", "NomenclatorItem", "ValidationRule", "Workspace", "LeadFieldSection", "LeadFieldSubtype", "LeadComment", "Organization", "SystemAuditLog", "LeadActivityHistory"]
