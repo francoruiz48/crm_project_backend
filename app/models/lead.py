@@ -2,7 +2,7 @@
 from app.models.base_model import BaseModelDB
 from sqlalchemy import Column, ForeignKey, Integer
 from sqlalchemy.orm import relationship
-
+from app.models.tag import lead_tag_association
 
 class Lead(BaseModelDB):
     __tablename__ = "lead"
@@ -29,6 +29,8 @@ class Lead(BaseModelDB):
 
     team_id = Column(Integer, ForeignKey("team.id", ondelete="SET NULL"), nullable=True)
     assigned_to_user_id = Column(Integer, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
+
+    tags = relationship("Tag", secondary=lead_tag_association, back_populates="leads")
 
     
 
