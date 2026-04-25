@@ -18,7 +18,7 @@ from app.db.repository.lead_state_transition_repository import LeadStateTransiti
 from app.db.repository.audit.lead_state_history_repository import LeadStateHistoryRepository
 from app.core.security import UserContext
 from app.services.routing_rule_evaluator_service import RoutingRuleEvaluatorService
-from typing import Optional
+from typing import List, Optional
 
 class LeadService(BaseService):
     repository = LeadRepository
@@ -506,6 +506,14 @@ class LeadService(BaseService):
             cls.repository.upsert_values(uow.session, lead.id, clean_values)
             lead_id = lead.id
 
+            #Agregamos las etiquetas si vienen en el input
+            if hasattr(obj_in, 'tag_ids') and obj_in.tag_ids is not None:
+                # Buscamos el objeto REAL de SQLAlchemy para que las relaciones ORM se guarden
+                lead_db = uow.session.query(Lead).filter_by(id=lead_id).first()
+                cls._assign_tags(uow.session, lead_db, obj_in.tag_ids, campaign.organization_id)
+
+            uow.session.flush()
+
             state_history_data = {
                 "lead_id": lead_id,
                 "from_state_id": None,
@@ -692,8 +700,21 @@ class LeadService(BaseService):
             current_lead = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
             if not current_lead: cls._not_found(obj_id)
             
+            # Logica de Tags
+            # Verificamos si el campo fue enviado explícitamente en la petición
+            if "tag_ids" in obj_in.model_fields_set:
+                # Obtenemos la instancia real de SQLAlchemy para poder asignar relaciones ORM
+                lead_db = uow.session.query(Lead).filter_by(id=obj_id).first()
+                cls._assign_tags(
+                    session=uow.session, 
+                    lead_obj=lead_db, 
+                    tag_ids=obj_in.tag_ids, 
+                    # Sacamos la organización directo del Pydantic Schema, no necesitamos '.campaign'
+                    org_id=current_lead.organization_id 
+                )
+
             # Update base
-            lead_data = obj_in.model_dump(exclude_unset=True, exclude={"values"})
+            lead_data = obj_in.model_dump(exclude_unset=True, exclude={"values", "tag_ids"})
             if lead_data:
                 cls.repository.update(uow.session, obj_id, lead_data, user_context=user_context)
 
@@ -846,3 +867,33 @@ class LeadService(BaseService):
         )
         
         return cls._enrich_lead_with_urls(lead)
+    
+    @classmethod
+    def _assign_tags(cls, session, lead_obj, tag_ids: list[int], org_id: int):
+        """
+        Asigna etiquetas a un lead. Si tag_ids es una lista vacía, borra las asociaciones.
+        Verifica que todas las etiquetas pertenezcan a la organización del lead.
+        """
+        from app.models.tag import Tag
+        
+        if tag_ids is None or not tag_ids:
+            lead_obj.tags = [] # Borramos todas las etiquetas asociadas
+            return
+
+        # Buscamos solo las etiquetas que coinciden con los IDs y pertenecen a la empresa
+        tags = session.query(Tag).filter(
+            Tag.id.in_(tag_ids),
+            Tag.organization_id == org_id,
+            Tag.active == True
+        ).all()
+        
+        # Validación de seguridad: ¿Encontró la misma cantidad de etiquetas que enviaron?
+        # Usamos set() por si el front mandó IDs duplicados por error en el array
+        if len(tags) != len(set(tag_ids)):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, 
+                detail=[{"field": "tag_ids", "message": "Una o más etiquetas no existen o no pertenecen a tu organización."}]
+            )
+            
+        # Asignación directa: SQLAlchemy se encarga de hacer los INSERT/DELETE en la tabla intermedia
+        lead_obj.tags = tags

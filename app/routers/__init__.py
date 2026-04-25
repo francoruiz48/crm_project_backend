@@ -32,6 +32,7 @@ from app.controllers.lead_view_controller import router as lead_view_router
 from app.controllers.audit.system_audit_log_controller import router as system_audit_log_router
 from app.controllers.audit.lead_activity_history_controller import router as lead_activity_history_router
 from app.controllers.lead_contact_state_controller import router as lead_contact_state_router
+from app.controllers.tag_controller import router as tag_router
 
 router = APIRouter()
 
@@ -68,3 +69,4 @@ router.include_router(lead_view_router)
 router.include_router(system_audit_log_router)
 router.include_router(lead_activity_history_router)
 router.include_router(lead_contact_state_router)
+router.include_router(tag_router)
