@@ -1,5 +1,6 @@
 from typing import Optional
 from app.core.constans import INITIAL_ROUTES_STATES, INITIAL_STATES
+from app.models.lead_contact_state import LeadContactState
 from app.services.base_service import BaseService
 from app.db.repository.organization_repository import OrganizationRepository
 from app.models.lead_flow import LeadFlow
@@ -10,6 +11,28 @@ from app.models.security_models import UserOrganization
 
 class OrganizationService(BaseService):
     repository = OrganizationRepository
+
+    @classmethod
+    def _create_default_contact_states(cls, session, org_id: int):
+
+        """Crea estados de contacto predeterminados para la organización"""
+        default_contact_states = [
+            {"name": "No Contactado", "color": "#6B7280", "is_initial": True},       
+            {"name": "En Conversación", "color": "#3B82F6", "is_initial": False},     
+            {"name": "No Responde", "color": "#F59E0B", "is_initial": False},         
+            {"name": "Número Equivocado", "color": "#EF4444", "is_initial": False},
+            {"name": "Esperando Respuesta", "color": "#8B5CF6", "is_initial": False},
+            {"name": "Rechazado", "color": "#BE0D0D", "is_initial": False},
+        ]
+        
+        for state_data in default_contact_states:
+            new_state = LeadContactState(
+                name=state_data["name"],
+                color=state_data["color"],
+                is_initial=state_data["is_initial"],
+                organization_id=org_id
+            )
+            session.add(new_state)
 
     @classmethod
     def _create_default_lead_flow(cls, session, org_id: int, user_context: Optional[UserContext] = None):
@@ -57,6 +80,8 @@ class OrganizationService(BaseService):
             
             # 2. Inyectar el flujo por defecto
             cls._create_default_lead_flow(uow.session, org.id, user_context=user_context)
+
+            cls._create_default_contact_states(uow.session, org.id)
             
             # --- 3. CORONAR AL CREADOR COMO OWNER ---
             if user_id:
