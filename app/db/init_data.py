@@ -155,7 +155,6 @@ def seed_lead_field_types(db):
         {"code": "RATING", "description": "Rating"},
         {"code": "ADDRESS", "description": "Dirección"},
         {"code": "RICH_TEXT", "description": "Texto Enriquecido"},
-        {"code": "TAGS", "description": "Etiquetas"},
         {"code": "PASSWORD", "description": "Contraseña"},
     ]
     seed_generic(db, model=LeadFieldType, items=datos, unique_by=["code"])
