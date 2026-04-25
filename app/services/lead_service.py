@@ -477,6 +477,13 @@ class LeadService(BaseService):
                     detail=[{"field": "general", "message": "La campaña no tiene un flujo de estados válido (falta configurar un estado inicial)."}]
                 )
             
+            from app.models.lead_contact_state import LeadContactState
+            initial_contact_state = uow.session.query(LeadContactState).filter_by(
+                organization_id=campaign.organization_id,
+                is_initial=True,
+                active=True
+            ).first()
+            
             #Ejecución de Motor de enrutamiento
             assigned_team_id = RoutingRuleEvaluatorService.evaluate(
                 session = uow.session,
@@ -491,6 +498,7 @@ class LeadService(BaseService):
             lead_data = {
                 'campaign_id': obj_in.campaign_id,
                 'current_state_id': initial_state.id,
+                'contact_state_id': initial_contact_state.id if initial_contact_state else None,
                 'team_id': assigned_team_id
             }
 
