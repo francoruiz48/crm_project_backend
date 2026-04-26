@@ -6,8 +6,7 @@ from app.schemas.nomenclator_item_schema import NomenclatorItemResponse
 
 class LeadFieldValueBasicResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
-    field_id: int
+    field: Optional[LeadFieldLiteResponse] = None
     value: Optional[Union[str, int, float, List[int]]] = None
 
 class RelatedLeadResponse(BaseModel):
@@ -18,7 +17,6 @@ class RelatedLeadResponse(BaseModel):
 class LeadFieldValueBase(BaseModel):
     field_id: int
     value: Optional[Union[List[int], float, int, str]] = None
-
 
 class LeadFieldValueCreate(LeadFieldValueBase, BaseCreate):
     pass
