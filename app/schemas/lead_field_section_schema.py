@@ -13,9 +13,9 @@ class LeadFieldSectionUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=3, max_length=100)
 
 class LeadFieldSectionResponse(LeadFieldSectionBase, BaseResponse):
-    organization_id: Optional[int]
+    organization_id: int
 
 class LeadFieldSectionDetailedResponse(LeadFieldSectionBase, BaseDetailResponse):
-    organization_id: Optional[int]
+    organization_id: int
 
 

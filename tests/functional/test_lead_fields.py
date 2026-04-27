@@ -295,8 +295,7 @@ def test_update_field_fail_change_type(api, initial_structure):
     # 2. Intentar cambiarlo a INT (Asumimos que la API lo prohíbe)
     res_update = api.client.put(f"/lead_fields/{field['id']}", json={
         "field_type_code": "INT",
-        "campaign_id": camp_id,
-        "lead_field_section_id": 1
+        "campaign_id": camp_id
     }, headers=api.headers)
     
     if res_update.status_code == 200:
@@ -318,8 +317,7 @@ def test_update_field_fail_required_with_null_values(api, initial_structure):
     # 2. Intentar actualizar a Required=True
     res = api.client.put(f"/lead_fields/{f_opcional['id']}", json={
         "campaign_id": camp_id,
-        "lead_field_section_id": 1,
-        "required": True # <--- Conflicto
+        "required": True 
     }, headers=api.headers)
     
     assert res.status_code == 400
@@ -332,10 +330,11 @@ def test_get_fields_filtering_active(api, db_session, initial_structure):
     """
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
 
     # 1. Crear Campo A (Activo) y B (Inactivo)
-    f_active = LeadField(name="Visible", field_type_code="STRING", campaign_id=camp_id, active=True, order=1, lead_field_section_id=1, organization_id=org_id)
-    f_inactive = LeadField(name="Oculto", field_type_code="STRING", campaign_id=camp_id, active=False, order=2, lead_field_section_id=1, organization_id=org_id)
+    f_active = LeadField(name="Visible", field_type_code="STRING", campaign_id=camp_id, active=True, order=1, lead_field_section_id=section_id, organization_id=org_id)
+    f_inactive = LeadField(name="Oculto", field_type_code="STRING", campaign_id=camp_id, active=False, order=2, lead_field_section_id=section_id, organization_id=org_id)
     db_session.add_all([f_active, f_inactive])
     db_session.commit()
 
@@ -411,8 +410,7 @@ def test_reactivate_field_name_conflict(api, initial_structure):
     res_create = api.client.post("/lead_fields/", json={
         "name": "DNI_Duplicado",
         "field_type_code": "STRING",
-        "campaign_id": camp_id,
-        "lead_field_section_id": 1,
+        "campaign_id": camp_id
     }, headers=api.headers)
     
     if res_create.status_code in [200, 201]:
@@ -434,7 +432,6 @@ def test_update_field_fail_required_with_existing_nulls(api, initial_structure):
     # 2. Intentar actualizar a Required=True
     res_update = api.client.put(f"/lead_fields/{f_opcional['id']}", json={
         "campaign_id": camp_id, 
-        "lead_field_section_id": 1,
         "required": True
     }, headers=api.headers)
     
