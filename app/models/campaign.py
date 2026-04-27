@@ -10,8 +10,6 @@ class Campaign(BaseModelDB):
     description = Column(String, nullable=True)
     is_public = Column(Boolean, default=True, nullable=False)
 
-    nomenclators = relationship("Nomenclator", back_populates="campaign")
-
     leads = relationship("Lead", back_populates="campaign")
 
     workspace_id = Column(Integer, ForeignKey("workspace.id"), nullable=False)

@@ -13,7 +13,7 @@ class NomenclatorRepository(BaseRepository):
 
     @classmethod
     def get_all(cls, session, user_context: Optional[UserContext] = None, only_active: bool = True, detailed: bool = False, 
-                campaign_id: int = None, global_nomenclator: bool = None, search: str = None, search_fields: list = None, **kwargs):
+                search: str = None, search_fields: list = None, **kwargs):
 
         query = session.query(cls.model)
 
@@ -26,20 +26,6 @@ class NomenclatorRepository(BaseRepository):
             query = query.filter(or_(cls.model.organization_id == org_id, cls.model.organization_id.is_(None)))
         else:
             query = query.filter(cls.model.organization_id.is_(None))
-
-        # =====================================================================
-        # 2. LÓGICA EXCLUSIVA DE NOMENCLADOR (Filtros de Campaña y Globales)
-        # =====================================================================
-        if campaign_id is not None:
-            if global_nomenclator is True:
-                query = query.filter(or_(cls.model.campaign_id == campaign_id, cls.model.campaign_id.is_(None)))
-            else:
-                query = query.filter(cls.model.campaign_id == campaign_id)
-        else:
-            if global_nomenclator is True:
-                query = query.filter(cls.model.campaign_id.is_(None))
-            elif global_nomenclator is False:
-                query = query.filter(cls.model.campaign_id.is_not(None))
 
         # Delegamos al padre (la paginación, ordenamiento y busqueda de texto)
         return super().get_all(
