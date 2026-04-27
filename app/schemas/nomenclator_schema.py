@@ -7,7 +7,6 @@ from app.schemas.nomenclator_item_schema import NomenclatorItemResponse
 
 class NomenclatorBase(BaseModel):
     name: str = Field(..., min_length=2, max_length=100)
-    campaign_id: Optional[int] = Field(default=None, gt=0)
 
 class NomenclatorCreate(NomenclatorBase, BaseCreate):
     parent_nomenclator_id: Optional[int] = Field(default=None, gt=0)
