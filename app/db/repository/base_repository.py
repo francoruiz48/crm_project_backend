@@ -25,7 +25,9 @@ class BaseRepository:
           - True (Lectura): Trae registros del tenant actual O globales (NULL).
           - False (Escritura): Trae SOLO registros del tenant actual (protege los globales).
         """
+
         if hasattr(cls.model, "organization_id"):
+
             org_id = TENANT_ORG_ID.get()
             
             # Si hay un tenant activo en el contexto
@@ -311,7 +313,7 @@ class BaseRepository:
             data = cls._normalize_data(obj_data)
             
             if hasattr(cls.model, "organization_id"):
-                org_id = TENANT_ORG_ID.get()
+                org_id = user_context.organization_id if user_context else TENANT_ORG_ID.get()
                 if org_id is not None:
                     data["organization_id"] = org_id
             

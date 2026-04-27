@@ -82,7 +82,6 @@ def test_field_template_validation(api, initial_structure, template_code, valid_
         "name": f"Campo {template_code}",
         "field_template_code": template_code,
         "campaign_id": camp_id,
-        "lead_field_section_id": 1,
         "order": 1
     }, headers=api.headers)
     

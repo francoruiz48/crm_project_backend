@@ -471,8 +471,7 @@ def test_validate_policy_rejects_forbidden_field_type(api, initial_structure):
         "campaign_id":        camp_id,
         "name":               "Archivo Test",
         "field_type_code":    "FILE",
-        "field_subtype_code": "FILE_DOCUMENT",
-        "lead_field_section_id": 1,
+        "field_subtype_code": "FILE_DOCUMENT"
     }, headers=api.headers)
 
     if f_file.status_code not in (200, 201):

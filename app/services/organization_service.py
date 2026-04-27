@@ -1,6 +1,7 @@
 from typing import Optional
 from app.core.constans import INITIAL_ROUTES_STATES, INITIAL_STATES
 from app.models.lead_contact_state import LeadContactState
+from app.models.lead_field_section import LeadFieldSection
 from app.services.base_service import BaseService
 from app.db.repository.organization_repository import OrganizationRepository
 from app.models.lead_flow import LeadFlow
@@ -33,6 +34,21 @@ class OrganizationService(BaseService):
                 organization_id=org_id
             )
             session.add(new_state)
+
+    @classmethod
+    def _create_default_sections(cls, session, org_id: int):
+
+        """Crea secciones de campos predeterminadas para la organización"""
+        default_sections = [
+            {"name": "Información básica"},
+        ]
+        
+        for section_data in default_sections:
+            new_section = LeadFieldSection(
+                name=section_data["name"],
+                organization_id=org_id
+            )
+            session.add(new_section)
 
     @classmethod
     def _create_default_lead_flow(cls, session, org_id: int, user_context: Optional[UserContext] = None):
@@ -82,6 +98,8 @@ class OrganizationService(BaseService):
             cls._create_default_lead_flow(uow.session, org.id, user_context=user_context)
 
             cls._create_default_contact_states(uow.session, org.id)
+
+            cls._create_default_sections(uow.session, org.id)
             
             # --- 3. CORONAR AL CREADOR COMO OWNER ---
             if user_id:

@@ -75,8 +75,7 @@ def test_create_and_update_full_hierarchy_flow(api):
     res_field = api.create_lead_field(
         campaign_id=camp_id, 
         name="Campo Test", 
-        field_type_code="STRING", 
-        section_id=1, 
+        field_type_code="STRING",
         expected_status=200
     )
     field_id = res_field["id"]

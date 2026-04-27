@@ -771,7 +771,7 @@ class LeadService(BaseService):
 
 
                 # HISTORIAL DEL LEAD
-                changes = []
+                changes = {}
                 
                 # Función auxiliar para comparar tipos mixtos (str vs int vs list) de forma segura
                 def _norm_for_compare(val):
@@ -788,12 +788,11 @@ class LeadService(BaseService):
 
                     # Comparamos si el valor realmente cambió
                     if _norm_for_compare(old_val) != _norm_for_compare(new_val):
-                        changes.append({
-                            "field_id": fid,
+                        changes[fid] = {
                             "field_name": field_def.name,
                             "old_value": old_val,
                             "new_value": new_val
-                        })
+                        }
 
                 # ------------------
 

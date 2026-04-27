@@ -97,9 +97,6 @@ def run_seeds(db=None):
         seed_lead_field_subtypes(db)
         db.commit()
 
-        seed_lead_field_sections(db)
-        db.commit()
-
         # 3. Geografía
         seed_geography_separated(db)
         db.commit()
@@ -119,17 +116,6 @@ def run_seeds(db=None):
     finally:
         if should_close:
             db.close()
-
-
-def seed_lead_field_sections(db):
-    print("Procesando Secciones de Campos...")
-    datos = [
-        {"name": "Datos Personales"},       
-        {"name": "Información de Contacto"},
-        {"name": "Detalles Adicionales"}          
-    ]
-    # Usamos 'name' como clave única para no duplicar
-    seed_generic(db, model=LeadFieldSection, items=datos, unique_by=["name"])
 
 # -----------------------------------------------------------------------------
 # 1. SEED LEAD FIELD TYPES

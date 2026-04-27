@@ -1,5 +1,6 @@
 from typing import Optional
 from fastapi import HTTPException, status
+from app.models.lead_field_section import LeadFieldSection
 from app.models.nomenclator import Nomenclator
 from app.services.base_service import BaseService
 from app.core.templates.field_templates import STANDARD_FIELD_TEMPLATES
@@ -22,11 +23,14 @@ from datetime import date, datetime
 from app.core.constans import DATE_TIME_FORMAT
 from app.core.security import UserContext
 from app.schemas.lead_field_schema import LeadFieldOrderList
+from app.core.context import TENANT_ORG_ID
+from app.db.repository.lead_field_section_repository import LeadFieldSectionRepository
 
 class LeadFieldService(BaseService):
     repository = LeadFieldRepository
     nomenclatorService = NomenclatorService
     campaign_repository = CampaignRepository
+    section_repository = LeadFieldSectionRepository
     
     # =========================================================================
     # HELPERS DE VALIDACIÓN (CHECKERS)
@@ -85,8 +89,8 @@ class LeadFieldService(BaseService):
     def create(cls, obj_in, user_context: Optional[UserContext] = None):
         def do_create(uow):
             errors = []
-            
             data = obj_in.model_dump(exclude_unset=True)
+            org_id = user_context.organization_id if user_context else TENANT_ORG_ID.get()
 
             # --- 1. VALIDACIÓN DE CONTEXTO (Bloqueante) ---
             campaign_id = data.get("campaign_id")
@@ -95,8 +99,7 @@ class LeadFieldService(BaseService):
 
             campaign = cls.campaign_repository.get_by_id(uow.session, campaign_id, user_context=user_context)
             if not campaign:
-                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "campaign_id", "message": f"La campaña {campaign_id} no existe."}])
-        
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "campaign_id", "message": f"La campaña {campaign_id} no existe o no tiene acceso."}])
 
             # --- 2. EXTRACCIÓN DE DATOS ---
             template_code = data.get("field_template_code")
@@ -107,8 +110,34 @@ class LeadFieldService(BaseService):
             calc_expr = data.get("calculation_expression")
             name = data.get("name")
             current_mask = data.get("input_mask")
+            section_id = data.get("lead_field_section_id")
 
-            # --- 3. LÓGICA DE TEMPLATE (Pre-llenado) ---
+            # --- Validar Sección ---
+            if section_id:
+                section = cls.section_repository.get_by_id(uow.session, section_id, user_context=user_context)
+                if not section:
+                    errors.append({"field": "lead_field_section_id", "message": "La sección no existe o no pertenece a su empresa."})
+            else:
+                # Buscamos la sección más antigua (ID más bajo) de la organización
+                section = uow.session.query(LeadFieldSection).filter(
+                    LeadFieldSection.organization_id == org_id
+                ).order_by(LeadFieldSection.id.asc()).first()
+                
+                if section:
+                    # ¡IMPORTANTE! Actualizamos el payload para que se guarde este ID
+                    data["lead_field_section_id"] = section.id
+                else:
+                    # Fallback de seguridad extremo por si algo falló en la creación de la org
+                    errors.append({"field": "lead_field_section_id", "message": "Su organización no tiene una sección por defecto configurada."})
+
+            # --- Validar Campaña Relacionada ---
+            rel_campaign_id = data.get("related_campaign_id")
+            if rel_campaign_id:
+                rel_campaign = cls.campaign_repository.get_by_id(uow.session, rel_campaign_id, user_context=user_context)
+                if not rel_campaign:
+                    errors.append({"field": "related_campaign_id", "message": "La campaña relacionada no existe o no tiene acceso a ella."})
+
+            # --- 3. LÓGICA DE TEMPLATE ---
             rules_to_create = []
             if template_code:
                 template = STANDARD_FIELD_TEMPLATES.get(template_code)
@@ -117,99 +146,77 @@ class LeadFieldService(BaseService):
                 else:
                     if not name:
                         data["name"] = template.name
-                        name = template.name # Actualizar variable local
-                    
-                    # Sobrescribimos el tipo con el del template
+                        name = template.name
                     data["field_type_code"] = template.field_type_code
                     data["field_template_name"] = template.name
                     field_type_code = template.field_type_code
                     rules_to_create = template.rules
 
-                    # 3.1 INYECTAR MÁSCARA DEL TEMPLATE (Si no se envió una manual)
                     if template.input_mask and not current_mask:
                         data["input_mask"] = template.input_mask
                         current_mask = template.input_mask
 
             elif nomenclator_id:
-                # Si viene de nomenclador y no tiene nombre, usamos el del nomenclador
-                nomenclator = uow.session.query(Nomenclator).get(nomenclator_id)
+                nomenclator = cls.nomenclatorService.repository.get_by_id(uow.session, nomenclator_id, user_context=user_context)
                 if not nomenclator:
-                    errors.append({"field": "nomenclator_id", "message": f"El Nomenclador {nomenclator_id} no existe."})
+                    errors.append({"field": "nomenclator_id", "message": f"El Nomenclador no existe o no tienes acceso."})
                 elif not name:
                     data["name"] = nomenclator.name
                     name = nomenclator.name
 
             # --- 3.5. ASIGNACIÓN INTELIGENTE DE INPUT MASK ---
-            if not current_mask: # Si todavía no tenemos máscara
+            if not current_mask:
                 if mask_template_code:
-                    # El usuario eligió una máscara del listado del frontend
                     if mask_template_code in STANDARD_INPUT_MASKS:
                         data["input_mask"] = STANDARD_INPUT_MASKS[mask_template_code]["mask"]
                     else:
                         errors.append({"field": "mask_template_code", "message": f"Plantilla de máscara '{mask_template_code}' no válida."})
                 else:
-                    # Aplicar default implícito por Subtipo o Tipo
                     if subtype_code and subtype_code in DEFAULT_SUBTYPE_MASKS:
                         data["input_mask"] = DEFAULT_SUBTYPE_MASKS[subtype_code]
                     elif field_type_code in DEFAULT_TYPE_MASKS:
                         data["input_mask"] = DEFAULT_TYPE_MASKS[field_type_code]
 
-            # --- 4. VALIDACIONES DE TIPO (Acumulativas) ---
-            
-            # 4.1 Existencia de Type Code
+            # --- 4. VALIDACIONES DE TIPO ---
             if not field_type_code:
                 errors.append({"field": "field_type_code", "message": "El tipo de campo es obligatorio (o use una plantilla)."})
-                # Si no hay tipo, muchas validaciones subsiguientes fallarán o no tienen sentido.
-                # Cortamos aquí si es crítico, o continuamos con cuidado. 
-                # Para robustez, cortamos si no hay tipo base.
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
 
             field_type = uow.session.query(LeadFieldType).filter_by(code=field_type_code).first()
             if not field_type:
                 errors.append({"field": "field_type_code", "message": f"El tipo '{field_type_code}' no existe."})
             else:
-                # Validar Subtipos
                 has_subtypes = len(field_type.subtypes) > 0
                 if has_subtypes and not subtype_code:
                     errors.append({"field": "field_subtype_code", "message": "Este tipo de campo requiere un subtipo."})
-                
                 if subtype_code:
                     valid_subtype = any(s.code == subtype_code for s in field_type.subtypes)
                     if not valid_subtype:
                         errors.append({"field": "field_subtype_code", "message": f"El subtipo '{subtype_code}' no es válido para '{field_type_code}'."})
 
-            # 4.2 Lógica Nomenclador
-            if nomenclator_id:
-                if field_type_code not in NOMENCLATOR_FIELD_TYPES:
-                    errors.append({"field": "field_type_code", "message": f"Para usar un nomenclador, el tipo debe ser uno de {NOMENCLATOR_FIELD_TYPES}."})
+            if nomenclator_id and field_type_code not in NOMENCLATOR_FIELD_TYPES:
+                errors.append({"field": "field_type_code", "message": f"Para usar un nomenclador, el tipo debe ser uno de {NOMENCLATOR_FIELD_TYPES}."})
             
-            # 4.3 Lógica LEAD
-            if field_type_code == "LEAD":
-                if not data.get("related_campaign_id"):
-                    errors.append({"field": "related_campaign_id", "message": "Requerido para campos tipo LEAD."})
-            else:
-                if data.get("related_campaign_id"):
-                    errors.append({"field": "field_type_code", "message": "No puede asignar 'related_campaign_id' si el tipo no es LEAD."})
+            if field_type_code == "LEAD" and not rel_campaign_id:
+                errors.append({"field": "related_campaign_id", "message": "Requerido para campos tipo LEAD."})
+            elif rel_campaign_id and field_type_code != "LEAD":
+                errors.append({"field": "field_type_code", "message": "No puede asignar 'related_campaign_id' si el tipo no es LEAD."})
 
-            # 4.4 Lógica CALCULATED
             if field_type_code == "CALCULATED":
                 if not calc_expr:
                     errors.append({"field": "calculation_expression", "message": "Requerido para campos CALCULATED."})
                 else:
                     data["required"] = False
                     data["is_primary"] = False
-            else:
-                if calc_expr:
-                    errors.append({"field": "field_type_code", "message": "No puede asignar fórmula si el campo no es CALCULATED."})
+            elif calc_expr:
+                errors.append({"field": "field_type_code", "message": "No puede asignar fórmula si el campo no es CALCULATED."})
 
             # --- 5. VALIDACIONES DE INTEGRIDAD ---
-            
             if not name:
                 errors.append({"field": "name", "message": "El nombre del campo es obligatorio."})
             else:
                 cls._check_name_uniqueness(uow.session, campaign_id, name, errors=errors)
 
-            # Validar constraints con leads existentes
             has_existing_leads = LeadRepository.has_leads_in_campaign(uow.session, campaign_id)
             if has_existing_leads:
                 if data.get("required") is True:
@@ -217,7 +224,6 @@ class LeadFieldService(BaseService):
                 if data.get("is_primary") is True:
                     errors.append({"field": "is_primary", "message": "No se puede crear campo 'Primary' en campaña con leads existentes."})
 
-            # Validar Orden
             order = data.get("order")
             if order is None:
                 max_order = cls.repository.get_max_order(uow.session, campaign_id)
@@ -234,7 +240,6 @@ class LeadFieldService(BaseService):
                 new_field = cls.repository.create(uow.session, data)
                 uow.session.flush()
 
-                # Backfill
                 if has_existing_leads:
                     is_nomenclator = nomenclator_id is not None
                     LeadFieldValueRepository.initialize_values_for_new_field(
@@ -245,7 +250,7 @@ class LeadFieldService(BaseService):
                         is_nomenclator=is_nomenclator
                     )
 
-                # Reglas de Template
+                #Reglas de template
                 for rule_cfg in rules_to_create:
                     rule_payload = rule_cfg.copy()
                     rule_payload["field_id"] = new_field.id
@@ -256,7 +261,6 @@ class LeadFieldService(BaseService):
                         field_type_code=new_field.field_type_code
                     )
 
-                # Reglas Implícitas (Si no es template)
                 if not template_code:
                     implicit_rules = DEFAULT_TYPE_RULES.get(field_type_code, []).copy()
                     if subtype_code:
@@ -276,18 +280,12 @@ class LeadFieldService(BaseService):
                         )
 
                 cls._log_audit(uow.session, new_field, action="CREATE", changes=data, user_id=user_context.user.id if user_context and user_context.user else None)
-
                 return new_field
 
             except Exception as e:
-                # Error interno de base de datos no controlado
                 raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail=[{"field": "general", "message": f"Error interno: {str(e)}"}])
 
-        return cls._execute(
-            action="Creando Campo de Lead",
-            func=do_create,
-            success_msg="Campo configurado exitosamente."
-        )
+        return cls._execute(action="Creando Campo de Lead", func=do_create, success_msg="Campo configurado exitosamente.")
 
     # =========================================================================
     # UPDATE
@@ -315,38 +313,25 @@ class LeadFieldService(BaseService):
             # 3. Validar Restricciones Históricas
             new_required = data.get("required")
             new_primary = data.get("is_primary")
-            
             if (new_required is not None) or (new_primary is not None):
                 check_req = new_required if new_required is not None else current_field.required
                 check_pri = new_primary if new_primary is not None else current_field.is_primary
                 cls._check_historic_constraints(uow.session, current_field, check_req, check_pri, errors)
 
-            # 5. Validación LEAD relacionado
-            if not "related_campaign_id" in data and current_field.related_campaign is not None:
-                if "related_campaign_id" in data and data["related_campaign_id"] is None:
-                     errors.append({"field": "related_campaign_id", "message": "El campo es obligatorio para tipo LEAD."})
+            # --- 4. NUEVA SEGURIDAD: Validar Sección si cambia ---
+            if "lead_field_section_id" in data and data["lead_field_section_id"] != current_field.lead_field_section_id:
+                org_id = user_context.organization_id if user_context else TENANT_ORG_ID.get()
+                section = uow.session.query(LeadFieldSection).filter(
+                    LeadFieldSection.id == data["lead_field_section_id"],
+                    LeadFieldSection.organization_id == org_id
+                ).first()
+                if not section:
+                    errors.append({"field": "lead_field_section_id", "message": "La sección no existe o no pertenece a su empresa."})
 
-            if "related_campaign_id" in data:
-                new_rel_id = data["related_campaign_id"]
-                old_rel_id = current_field.related_campaign.id if current_field.related_campaign else None
-                
-                if new_rel_id != old_rel_id:
-                    if new_rel_id is None and current_field.field_type_code == "LEAD":
-                        errors.append({"field": "related_campaign_id", "message": "El campo es obligatorio."})
-
-                    has_data = uow.session.query(LeadFieldValue).filter(
-                        LeadFieldValue.field_id == obj_id
-                    ).first()
-
-                    if has_data:
-                        errors.append({"field": "related_campaign_id", "message": "No se puede cambiar la campaña relacionada porque ya existen leads con datos."})
-
-            # 6. Validación de cálculo
+            # 5. Validación de cálculo (La estructura nos protege, solo re-evaluamos)
             new_expr = data.get("calculation_expression")
-            
             if new_expr and current_field.field_type_code != "CALCULATED":
                 errors.append({"field": "calculation_expression", "message": "Solo campos CALCULATED aceptan fórmulas."})
-
             if current_field.field_type_code == "CALCULATED" and "calculation_expression" in data:
                 if not new_expr:
                     errors.append({"field": "calculation_expression", "message": "No se puede eliminar la expresión de un campo calculado."})
@@ -355,7 +340,6 @@ class LeadFieldService(BaseService):
             if errors:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
 
-            #Detectamos cambio en formula y recalculamos campos CALCULATED afectados
             expression_changed = False
             if current_field.field_type_code == "CALCULATED":
                 if new_expr and new_expr != current_field.calculation_expression:
@@ -393,38 +377,50 @@ class LeadFieldService(BaseService):
     def set_active(cls, field_id: int, user_context: Optional[UserContext] = None):
         def do_reactivate(uow):
             errors = []
-            field = uow.session.get(LeadField, field_id)
-            if not field: cls._not_found(field_id)
-            if field.active: return field
-
-            # 1. Validar Nombre
-            cls._check_name_uniqueness(uow.session, field.campaign_id, field.name, errors, exclude_id=field_id)
             
-            # Si hay error de nombre, fallamos aquí mismo
+            # --- 1. SEGURIDAD: Usamos el repositorio para validar acceso (Devuelve Pydantic) ---
+            secure_check = cls.repository.get_by_id(uow.session, field_id, user_context=user_context, detailed=False)
+            if not secure_check: 
+                cls._not_found(field_id)
+                
+            if secure_check.active:
+                return secure_check
+
+            # --- 2. ORM: Buscamos la instancia real de SQLAlchemy para poder modificarla ---
+            from app.models.lead_field import LeadField
+            field_db = uow.session.query(LeadField).filter_by(id=field_id).first()
+
+            # 3. Validar Nombre
+            cls._check_name_uniqueness(uow.session, field_db.campaign_id, field_db.name, errors, exclude_id=field_id)
             if errors:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
 
-            # 2. Validar Orden (Auto-Fix)
-            # Aquí usamos el checker pero controlamos nosotros el error para no fallar
+            # 4. Validar Orden (Auto-Fix)
             order_errors = []
-            cls._check_order_uniqueness(uow.session, field.campaign_id, field.order, order_errors, exclude_id=field_id)
+            cls._check_order_uniqueness(uow.session, field_db.campaign_id, field_db.order, order_errors, exclude_id=field_id)
             
             if order_errors:
-                # Conflicto detectado -> Auto-fix
-                max_order = cls.repository.get_max_order(uow.session, field.campaign_id)
-                field.order = max_order + 1
+                max_order = cls.repository.get_max_order(uow.session, field_db.campaign_id)
+                field_db.order = max_order + 1
 
-            was_active = field.active
-
-            field.updated_by = user_context.user.id if user_context else None
-            field.active = True
-            uow.session.add(field)
+            was_active = field_db.active
+            field_db.updated_by = user_context.user.id if user_context and user_context.user else None
+            field_db.active = True
+            
+            # No hace falta uow.session.add() porque field_db ya está vinculado a la sesión
             uow.session.flush()
 
             if not was_active:
-                cls._log_audit(uow.session, field, action="ACTIVATE", changes={"active": {"old": False, "new": True}}, user_id=user_context.user.id if user_context else None)
+                cls._log_audit(
+                    uow.session, 
+                    field_db, 
+                    action="ACTIVATE", 
+                    changes={"active": {"old": False, "new": True}}, 
+                    user_id=user_context.user.id if user_context and user_context.user else None
+                )
 
-            return field
+            # Retornamos el objeto ya formateado limpiamente por el repositorio
+            return cls.repository.get_by_id(uow.session, field_id, user_context=user_context, detailed=True)
 
         return cls._execute(
             action="Activando Campo",

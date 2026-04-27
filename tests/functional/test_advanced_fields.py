@@ -1,5 +1,4 @@
 import pytest
-from app.models.lead_field import LeadField
 
 # Helper para no repetir código de creación
 def create_field_and_assert_validation(api, camp_id, field_props, valid_val, invalid_val, error_fragment):

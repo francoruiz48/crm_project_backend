@@ -22,6 +22,7 @@ def relationship_setup(api, db_session, initial_structure):
     ws_id = initial_structure["workspace_id"]
     camp_source_id = initial_structure["campaign_id"]
     lead_flow_id = initial_structure["lead_flow_id"]
+    section_id = initial_structure["section_id"]
     
     # Campaña Destino
     camp_target = Campaign(name="Campaña Destino (Pool)", workspace_id=ws_id, lead_flow_id=lead_flow_id, organization_id=org_id)
@@ -37,7 +38,7 @@ def relationship_setup(api, db_session, initial_structure):
     db_session.commit()
 
     # Campo simple en target para crear leads
-    f_target_name = LeadField(name="Nombre Target", field_type_code="STRING", campaign_id=camp_target.id, order=1, lead_field_section_id=1, organization_id=org_id, active=True)
+    f_target_name = LeadField(name="Nombre Target", field_type_code="STRING", campaign_id=camp_target.id, order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
     db_session.add(f_target_name)
     db_session.commit()
 
@@ -62,8 +63,7 @@ def relationship_setup(api, db_session, initial_structure):
         "field_type_code": "LEAD",
         "campaign_id": camp_source_id,
         "related_campaign_id": camp_target.id,
-        "order": 10,
-        "lead_field_section_id": 1
+        "order": 10
     }, headers=api.headers)
     assert res_field.status_code == 200
     field_rel_id = res_field.json()["id"]
@@ -251,7 +251,7 @@ def test_update_field_change_related_campaign_ignored(api, db_session, initial_s
     res_f = api.client.post("/lead_fields/", json={
         "name": "Amigos V2", "field_type_code": "LEAD", 
         "campaign_id": camp_source_id, "related_campaign_id": camp_source_id,
-        "order": 1, "lead_field_section_id": 1
+        "order": 1
     }, headers=api.headers)
     f_id = res_f.json()["id"]
 
@@ -288,6 +288,7 @@ def test_create_lead_fail_cross_campaign_id(api, db_session, relationship_setup,
     """
     setup = relationship_setup
     lead_flow_id = initial_structure["lead_flow_id"]
+    section_id = initial_structure["section_id"]
 
     # 1. Crear una Tercera Campaña "Extra" y un Lead ahí
     ws_id = initial_structure["workspace_id"]
@@ -303,7 +304,7 @@ def test_create_lead_fail_cross_campaign_id(api, db_session, relationship_setup,
     )
     db_session.add(state_extra)
     
-    f_dummy = LeadField(name="Dummy", field_type_code="STRING", campaign_id=camp_extra.id, order=1, lead_field_section_id=1, organization_id=org_id, active=True)
+    f_dummy = LeadField(name="Dummy", field_type_code="STRING", campaign_id=camp_extra.id, order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
     db_session.add(f_dummy)
     db_session.commit()
 
@@ -363,7 +364,7 @@ def test_update_lead_fail_self_reference(api, relationship_setup):
         "name": "Auto Referencia", "field_type_code": "LEAD",
         "campaign_id": setup["camp_source_id"], 
         "related_campaign_id": setup["camp_source_id"], # Apunta a sí misma
-        "order": 99, "lead_field_section_id": 1
+        "order": 99
     }, headers=api.headers)
     f_auto_id = res_field.json()["id"]
 
