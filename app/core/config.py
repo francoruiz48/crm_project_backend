@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     SUPABASE_KEY: str
     SUPABASE_BUCKET: str
 
+    CAPTCHA_SECRET_KEY: str
+    CAPTCHA_VERIFY_URL: AnyHttpUrl
+
     BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
 
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
