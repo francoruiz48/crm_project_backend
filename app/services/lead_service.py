@@ -78,6 +78,7 @@ class LeadService(BaseService):
             return value
 
 
+
     @classmethod
     def _evaluate_calculated_fields(cls, input_data: dict, field_defs_list: list):
         calculated_fields = [f for f in field_defs_list if f.field_type_code == "CALCULATED"]
@@ -157,6 +158,60 @@ class LeadService(BaseService):
                 "field": first_primary.name,
                 "message": "Ya existe un Lead con estos datos identificatorios."
             })
+
+    @classmethod
+    def _translate_value_for_history(cls, session, field_def, raw_val):
+        """
+        Convierte IDs crudos de Nomencladores o Leads en sus nombres legibles
+        para guardarlos en el historial del frontend.
+        """
+        if raw_val is None or raw_val == "" or raw_val == []:
+            return ""
+
+        is_list = isinstance(raw_val, list)
+        val_list = raw_val if is_list else [raw_val]
+        
+        # 1. Traducción de Nomencladores
+        if field_def.field_type_code in NOMENCLATOR_FIELD_TYPES:
+            from app.models.nomenclator_item import NomenclatorItem
+            items = session.query(NomenclatorItem).filter(NomenclatorItem.id.in_(val_list)).all()
+            
+            # Mapeamos para mantener el orden o simplemente extraemos nombres
+            names = [item.value for item in items]
+            return names if is_list else (names[0] if names else "")
+
+        # 2. Traducción de Leads Relacionados (usando title_order)
+        elif field_def.field_type_code == "LEAD":
+            from app.models.lead_field import LeadField
+            from app.models.lead_field_value import LeadFieldValue
+            
+            # Buscamos todos los valores de los leads vinculados que tengan title_order
+            values = session.query(LeadFieldValue, LeadField).join(
+                LeadField, LeadFieldValue.field_id == LeadField.id
+            ).filter(
+                LeadFieldValue.lead_id.in_(val_list),
+                LeadField.title_order.isnot(None)
+            ).order_by(LeadFieldValue.lead_id, LeadField.title_order.asc()).all()
+            
+            # Agrupamos los valores encontrados por lead_id
+            lead_titles = {lid: [] for lid in val_list}
+            for fv, f in values:
+                if fv.value:
+                    lead_titles[fv.lead_id].append(fv.value)
+            
+            display_names = []
+            for lid in val_list:
+                parts = lead_titles.get(lid, [])
+                if parts:
+                    display_names.append(" ".join(parts))
+                else:
+                    # Fallback si el lead vinculado no tiene campos con title_order
+                    display_names.append("Lead vinculado")
+                    
+            return display_names if is_list else (display_names[0] if display_names else "")
+
+        # 3. Si es texto, número, fecha, etc., devolver tal cual
+        return raw_val
 
     # ---------------------------------------------------------
     # HELPER DE MÁSCARAS (Modificado para no lanzar excepción)
@@ -701,15 +756,12 @@ class LeadService(BaseService):
             if not current_lead: cls._not_found(obj_id)
             
             # Logica de Tags
-            # Verificamos si el campo fue enviado explícitamente en la petición
             if "tag_ids" in obj_in.model_fields_set:
-                # Obtenemos la instancia real de SQLAlchemy para poder asignar relaciones ORM
                 lead_db = uow.session.query(Lead).filter_by(id=obj_id).first()
                 cls._assign_tags(
                     session=uow.session, 
                     lead_obj=lead_db, 
                     tag_ids=obj_in.tag_ids, 
-                    # Sacamos la organización directo del Pydantic Schema, no necesitamos '.campaign'
                     org_id=current_lead.organization_id 
                 )
 
@@ -724,7 +776,7 @@ class LeadService(BaseService):
                 
                 defs_map = {f.id: f for f in current_campaign_defs}
                 
-                # Validaciones previas de estructura
+                # Validaciones previas
                 incoming_ids = [v.get('field_id') if isinstance(v, dict) else v.field_id for v in obj_in.values]
                 for fid in incoming_ids:
                     if fid not in defs_map: 
@@ -755,11 +807,7 @@ class LeadService(BaseService):
                     db_values[v.field_id] = val
                 
                 full_context = {**db_values, **incoming_data}
-                
-                # Calcular (Solo con campos de la campaña)
                 full_context = cls._evaluate_calculated_fields(full_context, current_campaign_defs)
-                
-                # Validar Reglas (Solo con campos de la campaña)
                 cls._validate_processed_data(uow, full_context, current_campaign_defs, errors, current_lead_id=obj_id)
                 
                 if errors:
@@ -770,14 +818,14 @@ class LeadService(BaseService):
                         incoming_data[field.id] = full_context[field.id]
 
 
-                # HISTORIAL DEL LEAD
-                changes = {}
+                # --- HISTORIAL DEL LEAD ---
+                changes = {}           # Para auditoría interna (Logs técnicos con IDs)
+                history_changes = {}   # Para el usuario final (Legible, sin IDs)
                 
-                # Función auxiliar para comparar tipos mixtos (str vs int vs list) de forma segura
                 def _norm_for_compare(val):
                     if isinstance(val, list): return sorted([str(x) for x in val])
                     if val is None: return ""
-                    if isinstance(val, float): return str(round(val, 4)) # Prevenir falsos positivos por decimales
+                    if isinstance(val, float): return str(round(val, 4))
                     return str(val).strip()
 
                 for fid, new_val in incoming_data.items():
@@ -788,28 +836,39 @@ class LeadService(BaseService):
 
                     # Comparamos si el valor realmente cambió
                     if _norm_for_compare(old_val) != _norm_for_compare(new_val):
+                        # 1. Guardamos el cambio técnico crudo
                         changes[fid] = {
                             "field_name": field_def.name,
                             "old_value": old_val,
                             "new_value": new_val
                         }
+                        
+                        # 2. Traducimos para el timeline del usuario
+                        display_old = cls._translate_value_for_history(uow.session, field_def, old_val)
+                        display_new = cls._translate_value_for_history(uow.session, field_def, new_val)
+                        
+                        history_changes[fid] = {
+                            "field_name": field_def.name,
+                            "old_value": display_old,
+                            "new_value": display_new
+                        }
 
-                # ------------------
-
+                # Persistencia
                 clean_values = cls._reconstruct_items_for_repo(incoming_data, current_campaign_defs)
                 cls.repository.upsert_values(uow.session, obj_id, clean_values)
 
-                user_id=user_context.user.id if user_context else None
+                user_id = user_context.user.id if user_context else None
 
+                # Registro duro del sistema (con IDs)
                 cls._log_audit(uow.session, current_lead, action="UPDATE", changes=changes, user_id=user_id)
 
-                # --- GUARDAR LOG SI HUBO CAMBIOS --
-                if changes:
+                # Registro visual del front (Nombres legibles, "Juan Pérez" en lugar de [14])
+                if history_changes:
                     cls._log_activity(
                         session=uow.session,
                         lead_id=obj_id,
                         activity_type="FIELDS_UPDATED",
-                        details={"changes": changes},
+                        details={"changes": history_changes},
                         user_id=user_id
                     )
 
