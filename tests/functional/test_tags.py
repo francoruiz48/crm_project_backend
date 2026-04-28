@@ -27,8 +27,7 @@ def tags_setup(api):
     api.client.post("/lead_fields/", json={
         "campaign_id": camp["id"], 
         "name": "Nombre Dummy", 
-        "field_type_code": "STRING", 
-        "lead_field_section_id": 1
+        "field_type_code": "STRING"
     }, headers=api.headers)
 
     lead = api.client.post("/leads/", json={"campaign_id": camp["id"], "values": []}, headers=api.headers).json()

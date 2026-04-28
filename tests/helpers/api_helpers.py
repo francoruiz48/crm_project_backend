@@ -201,18 +201,17 @@ class ApiClient:
 
     def create_lead_field(self, campaign_id: int, name: str, field_type_code: str,
                           subtype_code: str = None, required: bool = False,
-                          is_primary: bool = False, section_id: int = 1,
+                          is_primary: bool = False, section_id: int = None,
                           calculation_expression=None, expected_status=None,
                           nomenclator_id: int = None, **kwargs) -> Dict:
         headers = self._inject_context()
         payload = {
-            "campaign_id":        campaign_id,
-            "name":               name,
-            "field_type_code":    field_type_code,
-            "required":           required,
-            "lead_field_section_id": section_id,
-            "is_visible":         True,
-            "is_primary":         is_primary,
+            "campaign_id": campaign_id,
+            "name": name,
+            "field_type_code": field_type_code,
+            "required": required,
+            "is_visible": True,
+            "is_primary": is_primary,
         }
         if subtype_code:
             payload["field_subtype_code"] = subtype_code
@@ -220,6 +219,8 @@ class ApiClient:
             payload["calculation_expression"] = calculation_expression
         if nomenclator_id:
             payload["nomenclator_id"] = nomenclator_id
+        if section_id:
+            payload["lead_field_section_id"] = section_id
         payload.update(kwargs)
 
         resp = self.client.post("/lead_fields/", json=payload, headers=headers)
@@ -230,11 +231,10 @@ class ApiClient:
                                         expected_status=None) -> Dict:
         headers = self._inject_context()
         payload = {
-            "campaign_id":        campaign_id,
+            "campaign_id": campaign_id,
             "field_template_code": template_code,
-            "required":           required,
-            "lead_field_section_id": 1,
-            "is_visible":         True,
+            "required": required,
+            "is_visible": True,
         }
         resp = self.client.post("/lead_fields/", json=payload, headers=headers)
         return validate(resp, expected_status, f"crear Campo Template '{template_code}'")

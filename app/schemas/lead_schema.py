@@ -32,6 +32,10 @@ class LeadResponse(LeadBase, BaseResponse):
     current_state_id: int
     tags: List[TagResponse] = Field(default_factory=list)
 
+class LeadLiteResponse(LeadBase, BaseResponse):
+    organization_id : int
+    current_state_id: int
+
 class LeadDetailedResponse(LeadBase, BaseDetailResponse):
     field_values: List[LeadFieldValueDetailedResponse] = Field(
         default_factory=list

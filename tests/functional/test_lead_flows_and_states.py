@@ -57,11 +57,11 @@ def flow_setup(api, db_session, initial_structure):
     }, headers=api.headers).json()
 
     api.client.post("/lead_fields/", json={
-        "campaign_id": c1["id"], "name": "Nombre Dummy", "field_type_code": "STRING", "lead_field_section_id": 1
+        "campaign_id": c1["id"], "name": "Nombre Dummy", "field_type_code": "STRING"
     }, headers=api.headers)
 
     api.client.post("/lead_fields/", json={
-        "campaign_id": c2["id"], "name": "Nombre Dummy", "field_type_code": "STRING", "lead_field_section_id": 1
+        "campaign_id": c2["id"], "name": "Nombre Dummy", "field_type_code": "STRING"
     }, headers=api.headers)
 
     return {
