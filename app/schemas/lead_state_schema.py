@@ -10,6 +10,8 @@ class LeadStateBase(BaseModel):
     category: str = Field(default="OPEN", pattern="^(OPEN|WON|LOST)$")
     is_initial: bool = Field(default=False)
     order: Optional[int] = Field(default=None, gt=0)
+    position_x: Optional[float] = Field(default=0.0, description="Coordenada X en la interfaz gráfica")
+    position_y: Optional[float] = Field(default=0.0, description="Coordenada Y en la interfaz gráfica")
 
 class LeadStateCreate(LeadStateBase, BaseCreate):
     pass
@@ -20,6 +22,8 @@ class LeadStateUpdate(BaseModel):
     category: Optional[str] = Field(default=None, pattern="^(OPEN|WON|LOST)$")
     is_initial: Optional[bool] = None
     order: Optional[int] = Field(default=None, gt=0)
+    position_x: Optional[float] = Field(default=0.0, description="Coordenada X en la interfaz gráfica")
+    position_y: Optional[float] = Field(default=0.0, description="Coordenada Y en la interfaz gráfica")
 
 class LeadStateResponse(LeadStateBase, BaseResponse):
     organization_id: int

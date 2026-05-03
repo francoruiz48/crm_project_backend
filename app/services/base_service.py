@@ -16,7 +16,7 @@ class BaseService:
     # ---------- helpers internos ----------
     @classmethod
     def _model_name(cls):
-        return cls.repository.model.__name__
+        return cls.repository.model.__name__ if cls.repository else "General"
 
     @classmethod
     def _not_found(cls, obj_id):

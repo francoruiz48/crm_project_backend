@@ -20,9 +20,8 @@ class LeadStateTransitionResponse(LeadStateTransitionBase, BaseResponse):
     pass
 
 class LeadStateTransitionDetailedResponse(LeadStateTransitionBase, BaseDetailResponse):
-    from_state : LeadStateDetailedResponse
+    from_state : Optional[LeadStateDetailedResponse]
     to_state : LeadStateDetailedResponse
-
 
 class TransitionPair(BaseModel):
     from_state_id: int = Field(gt=0)
