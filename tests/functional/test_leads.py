@@ -54,10 +54,11 @@ def test_create_lead_various_types(api, db_session, initial_structure):
     """
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
     
-    f_fecha = LeadField(name="Fecha Nacimiento", field_type_code="DATE", campaign_id=camp_id, order=1, lead_field_section_id=1, organization_id=org_id, active=True)
-    f_vip = LeadField(name="Es VIP", field_type_code="BOOL", campaign_id=camp_id, order=2, lead_field_section_id=1, organization_id=org_id, active=True)
-    f_score = LeadField(name="Puntaje", field_type_code="NUMBER", campaign_id=camp_id, order=3, lead_field_section_id=1, organization_id=org_id, active=True)
+    f_fecha = LeadField(name="Fecha Nacimiento", field_type_code="DATE", campaign_id=camp_id, order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
+    f_vip = LeadField(name="Es VIP", field_type_code="BOOL", campaign_id=camp_id, order=2, lead_field_section_id=section_id, organization_id=org_id, active=True)
+    f_score = LeadField(name="Puntaje", field_type_code="NUMBER", campaign_id=camp_id, order=3, lead_field_section_id=section_id, organization_id=org_id, active=True)
     
     db_session.add_all([f_fecha, f_vip, f_score])
     db_session.commit()
@@ -82,8 +83,9 @@ def test_create_lead_input_mask_validation_failure(api, db_session, initial_stru
     """
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
     
-    f_patente = LeadField(name="Patente Fail", field_type_code="STRING", campaign_id=camp_id, input_mask="AAA-###", order=1, lead_field_section_id=1, organization_id=org_id, active=True)
+    f_patente = LeadField(name="Patente Fail", field_type_code="STRING", campaign_id=camp_id, input_mask="AAA-###", order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
     db_session.add(f_patente)
     db_session.commit()
 
@@ -98,8 +100,9 @@ def test_create_lead_input_mask_validation_success(api, db_session, initial_stru
     """
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
     
-    f_patente = LeadField(name="Patente OK", field_type_code="STRING", campaign_id=camp_id, input_mask="AAA-###", order=1, lead_field_section_id=1, organization_id=org_id, active=True)
+    f_patente = LeadField(name="Patente OK", field_type_code="STRING", campaign_id=camp_id, input_mask="AAA-###", order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
     db_session.add(f_patente)
     db_session.commit()
 
@@ -117,9 +120,10 @@ def test_create_lead_duplicate_primary_field(api, db_session, initial_structure)
     """
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
     
     # 1. Campo Primary (DNI)
-    f_dni = LeadField(name="DNI", field_type_code="STRING", campaign_id=camp_id, is_primary=True, order=1, lead_field_section_id=1, organization_id=org_id, active=True)
+    f_dni = LeadField(name="DNI", field_type_code="STRING", campaign_id=camp_id, is_primary=True, order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
     db_session.add(f_dni)
     db_session.commit()
 
@@ -160,10 +164,11 @@ def test_search_leads_advanced(api, db_session, initial_structure):
     """
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
     
     # 1. Setup Campos (Edad y Nombre)
-    f_edad = LeadField(name="Edad", field_type_code="INT", campaign_id=camp_id, order=1, lead_field_section_id=1, organization_id=org_id, active=True)
-    f_nombre = LeadField(name="Nombre", field_type_code="STRING", campaign_id=camp_id, order=2, lead_field_section_id=1, organization_id=org_id, active=True)
+    f_edad = LeadField(name="Edad", field_type_code="INT", campaign_id=camp_id, order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
+    f_nombre = LeadField(name="Nombre", field_type_code="STRING", campaign_id=camp_id, order=2, lead_field_section_id=section_id, organization_id=org_id, active=True)
     db_session.add_all([f_edad, f_nombre])
     db_session.commit()
 
@@ -236,6 +241,7 @@ def test_create_lead_with_multiple_nomenclator(api, db_session, initial_structur
     """
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
     
     # 1. Setup Datos Específicos para este test (Nomenclador y Items)
     nom = Nomenclator(name="Etiquetas Test", organization_id=org_id)
@@ -254,7 +260,7 @@ def test_create_lead_with_multiple_nomenclator(api, db_session, initial_structur
         field_type_code="SELECTOR",
         field_subtype_code="SELECTOR_MULTIPLE",
         nomenclator_id=nom.id,
-        lead_field_section_id=1,
+        lead_field_section_id=section_id,
         required=False,
         order=5, 
         organization_id=org_id,
@@ -289,6 +295,7 @@ def test_search_lead_by_nomenclator(api, db_session, initial_structure):
     """
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
     
     # 1. Setup Nomenclador
     nom = Nomenclator(name="Depto", organization_id=org_id)
@@ -302,7 +309,7 @@ def test_search_lead_by_nomenclator(api, db_session, initial_structure):
     field_depto = LeadField(
         name="Departamento", campaign_id=camp_id, 
         field_type_code="SELECTOR", field_subtype_code="SELECTOR_SIMPLE",
-        nomenclator_id=nom.id, lead_field_section_id=1, order=1, 
+        nomenclator_id=nom.id, lead_field_section_id=section_id, order=1, 
         organization_id=org_id, active=True
     )
     db_session.add(field_depto)
@@ -412,6 +419,7 @@ def test_get_leads_filtering(api, db_session, initial_structure):
     org_id = initial_structure["org_id"]
     workspace_id = initial_structure["workspace_id"]
     lead_flow_id = initial_structure["lead_flow_id"]
+    section_id = initial_structure["section_id"]
     
     camp_b = Campaign(name="Campaña B", workspace_id=workspace_id, lead_flow_id=lead_flow_id, organization_id=org_id)
     db_session.add(camp_b)
@@ -424,8 +432,8 @@ def test_get_leads_filtering(api, db_session, initial_structure):
     )
     db_session.add(state_extra)
 
-    f_nom_a = LeadField(name="Nombre A", field_type_code="STRING", campaign_id=camp_a_id, order=1, lead_field_section_id=1, organization_id=org_id, active=True)
-    f_nom_b = LeadField(name="Nombre B", field_type_code="STRING", campaign_id=camp_b.id, order=1, lead_field_section_id=1, organization_id=org_id, active=True)
+    f_nom_a = LeadField(name="Nombre A", field_type_code="STRING", campaign_id=camp_a_id, order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
+    f_nom_b = LeadField(name="Nombre B", field_type_code="STRING", campaign_id=camp_b.id, order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
     db_session.add_all([f_nom_a, f_nom_b])
     db_session.commit()
 
@@ -458,8 +466,9 @@ def test_create_lead_int_validation_case_of_decimal(api, db_session, initial_str
     """
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
-    
-    f_int = LeadField(name="Contador", field_type_code="INT", campaign_id=camp_id, order=1, lead_field_section_id=1, organization_id=org_id, active=True)
+    section_id = initial_structure["section_id"]
+
+    f_int = LeadField(name="Contador", field_type_code="INT", campaign_id=camp_id, order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
     db_session.add(f_int)
     db_session.commit()
     
@@ -481,8 +490,8 @@ def test_create_lead_int_validation_case_of_huge_int(api, db_session, initial_st
     """
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
-    
-    f_int = LeadField(name="Contador", field_type_code="INT", campaign_id=camp_id, order=1, lead_field_section_id=1, organization_id=org_id, active=True)
+    section_id = initial_structure["section_id"]
+    f_int = LeadField(name="Contador", field_type_code="INT", campaign_id=camp_id, order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
     db_session.add(f_int)
     db_session.commit()
     

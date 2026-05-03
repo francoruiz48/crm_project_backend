@@ -1,6 +1,5 @@
 from datetime import date, datetime
 import re
-from sqlalchemy import or_
 from fastapi import HTTPException, UploadFile, status
 from app.core.constans import ALLOWED_DOCUMENT_TYPES, ALLOWED_IMAGE_TYPES, DATE_FORMAT, DATE_TIME_FORMAT, DEFAULT_PAGE_SIZE, NOMENCLATOR_FIELD_TYPES
 from app.core.exceptions.exceptions import ValidationError 
@@ -17,9 +16,9 @@ from app.db.repository.campaign_repository import CampaignRepository
 from app.db.repository.lead_state_repository import LeadStateRepository
 from app.db.repository.lead_state_transition_repository import LeadStateTransitionRepository
 from app.db.repository.audit.lead_state_history_repository import LeadStateHistoryRepository
-from app.models.lead_routing_rule import LeadRoutingRule
 from app.core.security import UserContext
-from typing import Optional
+from app.services.routing_rule_evaluator_service import RoutingRuleEvaluatorService
+from typing import List, Optional
 
 class LeadService(BaseService):
     repository = LeadRepository
@@ -78,65 +77,7 @@ class LeadService(BaseService):
         except (ValueError, TypeError):
             return value
 
-    @classmethod
-    def _evaluate_routing_rules(cls, session, campaign, context_data: dict, field_defs_list: list):
-        """
-        Evalúa las reglas de enrutamiento activas para asignar un equipo al Lead.
-        Retorna el team_id ganador o None si no hay coincidencias.
-        """
 
-        # 1. Obtener reglas aplicables (Globales de la Org + Específicas de la Campaña)
-        # Ordenadas estrictamente por prioridad (order ASC)
-        rules = session.query(LeadRoutingRule).filter(
-            LeadRoutingRule.organization_id == campaign.organization_id,
-            LeadRoutingRule.active == True,
-            or_(LeadRoutingRule.campaign_id.is_(None), LeadRoutingRule.campaign_id == campaign.id)
-        ).order_by(LeadRoutingRule.order.asc()).all()
-
-        if not rules:
-            return None
-
-        # 2. Mapear qué campos del Lead apuntan a qué Nomenclador
-        # (Para evaluar reglas globales sin importar de qué campaña vengan)
-        nom_to_fields = {}
-        for f in field_defs_list:
-            if getattr(f, 'nomenclator_id', None):
-                if f.nomenclator_id not in nom_to_fields:
-                    nom_to_fields[f.nomenclator_id] = []
-                nom_to_fields[f.nomenclator_id].append(f.id)
-
-        # 3. Evaluar reglas en cascada
-        for rule in rules:
-            if rule.condition_type == "NOMENCLATOR":
-                nom_id = rule.condition_target_id
-                target_val = rule.condition_value # Ej: "45" (ID del item Mendoza)
-                
-                # Buscar si alguno de los campos ligados a este nomenclador tiene el valor buscado
-                related_field_ids = nom_to_fields.get(nom_id, [])
-                for fid in related_field_ids:
-                    lead_val = context_data.get(fid)
-                    if not lead_val: continue
-                    
-                    # El valor en el dict puede ser un ID único o una lista de IDs
-                    if isinstance(lead_val, list):
-                        if any(str(x) == target_val for x in lead_val):
-                            return rule.target_team_id
-                    else:
-                        if str(lead_val) == target_val:
-                            return rule.target_team_id
-
-            elif rule.condition_type == "CUSTOM_FIELD":
-                fid = rule.condition_target_id
-                target_val = rule.condition_value
-                
-                lead_val = context_data.get(fid)
-                if lead_val is not None:
-                    # Comparamos ignorando mayúsculas y espacios para evitar errores de tipeo
-                    if str(lead_val).strip().lower() == str(target_val).strip().lower():
-                        return rule.target_team_id
-
-        # Si el lead pasó por todas las reglas y ninguna coincidió, queda huérfano
-        return None
 
     @classmethod
     def _evaluate_calculated_fields(cls, input_data: dict, field_defs_list: list):
@@ -217,6 +158,60 @@ class LeadService(BaseService):
                 "field": first_primary.name,
                 "message": "Ya existe un Lead con estos datos identificatorios."
             })
+
+    @classmethod
+    def _translate_value_for_history(cls, session, field_def, raw_val):
+        """
+        Convierte IDs crudos de Nomencladores o Leads en sus nombres legibles
+        para guardarlos en el historial del frontend.
+        """
+        if raw_val is None or raw_val == "" or raw_val == []:
+            return ""
+
+        is_list = isinstance(raw_val, list)
+        val_list = raw_val if is_list else [raw_val]
+        
+        # 1. Traducción de Nomencladores
+        if field_def.field_type_code in NOMENCLATOR_FIELD_TYPES:
+            from app.models.nomenclator_item import NomenclatorItem
+            items = session.query(NomenclatorItem).filter(NomenclatorItem.id.in_(val_list)).all()
+            
+            # Mapeamos para mantener el orden o simplemente extraemos nombres
+            names = [item.value for item in items]
+            return names if is_list else (names[0] if names else "")
+
+        # 2. Traducción de Leads Relacionados (usando title_order)
+        elif field_def.field_type_code == "LEAD":
+            from app.models.lead_field import LeadField
+            from app.models.lead_field_value import LeadFieldValue
+            
+            # Buscamos todos los valores de los leads vinculados que tengan title_order
+            values = session.query(LeadFieldValue, LeadField).join(
+                LeadField, LeadFieldValue.field_id == LeadField.id
+            ).filter(
+                LeadFieldValue.lead_id.in_(val_list),
+                LeadField.title_order.isnot(None)
+            ).order_by(LeadFieldValue.lead_id, LeadField.title_order.asc()).all()
+            
+            # Agrupamos los valores encontrados por lead_id
+            lead_titles = {lid: [] for lid in val_list}
+            for fv, f in values:
+                if fv.value:
+                    lead_titles[fv.lead_id].append(fv.value)
+            
+            display_names = []
+            for lid in val_list:
+                parts = lead_titles.get(lid, [])
+                if parts:
+                    display_names.append(" ".join(parts))
+                else:
+                    # Fallback si el lead vinculado no tiene campos con title_order
+                    display_names.append("Lead vinculado")
+                    
+            return display_names if is_list else (display_names[0] if display_names else "")
+
+        # 3. Si es texto, número, fecha, etc., devolver tal cual
+        return raw_val
 
     # ---------------------------------------------------------
     # HELPER DE MÁSCARAS (Modificado para no lanzar excepción)
@@ -537,24 +532,42 @@ class LeadService(BaseService):
                     detail=[{"field": "general", "message": "La campaña no tiene un flujo de estados válido (falta configurar un estado inicial)."}]
                 )
             
+            from app.models.lead_contact_state import LeadContactState
+            initial_contact_state = uow.session.query(LeadContactState).filter_by(
+                organization_id=campaign.organization_id,
+                is_initial=True,
+                active=True
+            ).first()
+            
             #Ejecución de Motor de enrutamiento
-            assigned_team_id = cls._evaluate_routing_rules(
-                session=uow.session, 
-                campaign=campaign, 
-                context_data=context_data, 
-                field_defs_list=current_campaign_defs
+            assigned_team_id = RoutingRuleEvaluatorService.evaluate(
+                session = uow.session,
+                campaign_id = campaign.id,
+                organization_id = campaign.organization_id,
+                context_data = context_data,
+                field_defs_list = current_campaign_defs,
+                lead_obj = None, # Aún no existe, se asigna antes de crear
             )
 
             # Persistencia Real (Ahora inyectamos el current_state_id)
             lead_data = {
                 'campaign_id': obj_in.campaign_id,
                 'current_state_id': initial_state.id,
+                'contact_state_id': initial_contact_state.id if initial_contact_state else None,
                 'team_id': assigned_team_id
             }
 
             lead = cls.repository.create(uow.session, lead_data, user_context=user_context)
             cls.repository.upsert_values(uow.session, lead.id, clean_values)
             lead_id = lead.id
+
+            #Agregamos las etiquetas si vienen en el input
+            if hasattr(obj_in, 'tag_ids') and obj_in.tag_ids is not None:
+                # Buscamos el objeto REAL de SQLAlchemy para que las relaciones ORM se guarden
+                lead_db = uow.session.query(Lead).filter_by(id=lead_id).first()
+                cls._assign_tags(uow.session, lead_db, obj_in.tag_ids, campaign.organization_id)
+
+            uow.session.flush()
 
             state_history_data = {
                 "lead_id": lead_id,
@@ -742,8 +755,18 @@ class LeadService(BaseService):
             current_lead = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
             if not current_lead: cls._not_found(obj_id)
             
+            # Logica de Tags
+            if "tag_ids" in obj_in.model_fields_set:
+                lead_db = uow.session.query(Lead).filter_by(id=obj_id).first()
+                cls._assign_tags(
+                    session=uow.session, 
+                    lead_obj=lead_db, 
+                    tag_ids=obj_in.tag_ids, 
+                    org_id=current_lead.organization_id 
+                )
+
             # Update base
-            lead_data = obj_in.model_dump(exclude_unset=True, exclude={"values"})
+            lead_data = obj_in.model_dump(exclude_unset=True, exclude={"values", "tag_ids"})
             if lead_data:
                 cls.repository.update(uow.session, obj_id, lead_data, user_context=user_context)
 
@@ -753,7 +776,7 @@ class LeadService(BaseService):
                 
                 defs_map = {f.id: f for f in current_campaign_defs}
                 
-                # Validaciones previas de estructura
+                # Validaciones previas
                 incoming_ids = [v.get('field_id') if isinstance(v, dict) else v.field_id for v in obj_in.values]
                 for fid in incoming_ids:
                     if fid not in defs_map: 
@@ -784,11 +807,7 @@ class LeadService(BaseService):
                     db_values[v.field_id] = val
                 
                 full_context = {**db_values, **incoming_data}
-                
-                # Calcular (Solo con campos de la campaña)
                 full_context = cls._evaluate_calculated_fields(full_context, current_campaign_defs)
-                
-                # Validar Reglas (Solo con campos de la campaña)
                 cls._validate_processed_data(uow, full_context, current_campaign_defs, errors, current_lead_id=obj_id)
                 
                 if errors:
@@ -799,14 +818,14 @@ class LeadService(BaseService):
                         incoming_data[field.id] = full_context[field.id]
 
 
-                # HISTORIAL DEL LEAD
-                changes = []
+                # --- HISTORIAL DEL LEAD ---
+                changes = {}           # Para auditoría interna (Logs técnicos con IDs)
+                history_changes = {}   # Para el usuario final (Legible, sin IDs)
                 
-                # Función auxiliar para comparar tipos mixtos (str vs int vs list) de forma segura
                 def _norm_for_compare(val):
                     if isinstance(val, list): return sorted([str(x) for x in val])
                     if val is None: return ""
-                    if isinstance(val, float): return str(round(val, 4)) # Prevenir falsos positivos por decimales
+                    if isinstance(val, float): return str(round(val, 4))
                     return str(val).strip()
 
                 for fid, new_val in incoming_data.items():
@@ -817,43 +836,55 @@ class LeadService(BaseService):
 
                     # Comparamos si el valor realmente cambió
                     if _norm_for_compare(old_val) != _norm_for_compare(new_val):
-                        changes.append({
-                            "field_id": fid,
+                        # 1. Guardamos el cambio técnico crudo
+                        changes[fid] = {
                             "field_name": field_def.name,
                             "old_value": old_val,
                             "new_value": new_val
-                        })
+                        }
+                        
+                        # 2. Traducimos para el timeline del usuario
+                        display_old = cls._translate_value_for_history(uow.session, field_def, old_val)
+                        display_new = cls._translate_value_for_history(uow.session, field_def, new_val)
+                        
+                        history_changes[fid] = {
+                            "field_name": field_def.name,
+                            "old_value": display_old,
+                            "new_value": display_new
+                        }
 
-                # ------------------
-
+                # Persistencia
                 clean_values = cls._reconstruct_items_for_repo(incoming_data, current_campaign_defs)
                 cls.repository.upsert_values(uow.session, obj_id, clean_values)
 
-                user_id=user_context.user.id if user_context else None
+                user_id = user_context.user.id if user_context else None
 
+                # Registro duro del sistema (con IDs)
                 cls._log_audit(uow.session, current_lead, action="UPDATE", changes=changes, user_id=user_id)
 
-                # --- GUARDAR LOG SI HUBO CAMBIOS --
-                if changes:
+                # Registro visual del front (Nombres legibles, "Juan Pérez" en lugar de [14])
+                if history_changes:
                     cls._log_activity(
                         session=uow.session,
                         lead_id=obj_id,
                         activity_type="FIELDS_UPDATED",
-                        details={"changes": changes},
+                        details={"changes": history_changes},
                         user_id=user_id
                     )
 
         return cls.get_by_id(obj_id, detailed=True)
 
     @classmethod
-    def search(cls, user_context: Optional[UserContext] = None, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, detailed: bool = False, search_req=None):
+    def search(cls, user_context: Optional[UserContext] = None, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, detailed: bool = False, search_req=None, order_by=None, ascending: bool = True):
         def do_search(uow):
             total, items = cls.repository.search(
                 session=uow.session, user_context=user_context,
                 page=page,
                 page_size=page_size,
                 search_params=search_req,
-                detailed=detailed
+                detailed=detailed,
+                order_by=order_by,
+                ascending=ascending
             )
             
             for item in items:
@@ -894,3 +925,33 @@ class LeadService(BaseService):
         )
         
         return cls._enrich_lead_with_urls(lead)
+    
+    @classmethod
+    def _assign_tags(cls, session, lead_obj, tag_ids: list[int], org_id: int):
+        """
+        Asigna etiquetas a un lead. Si tag_ids es una lista vacía, borra las asociaciones.
+        Verifica que todas las etiquetas pertenezcan a la organización del lead.
+        """
+        from app.models.tag import Tag
+        
+        if tag_ids is None or not tag_ids:
+            lead_obj.tags = [] # Borramos todas las etiquetas asociadas
+            return
+
+        # Buscamos solo las etiquetas que coinciden con los IDs y pertenecen a la empresa
+        tags = session.query(Tag).filter(
+            Tag.id.in_(tag_ids),
+            Tag.organization_id == org_id,
+            Tag.active == True
+        ).all()
+        
+        # Validación de seguridad: ¿Encontró la misma cantidad de etiquetas que enviaron?
+        # Usamos set() por si el front mandó IDs duplicados por error en el array
+        if len(tags) != len(set(tag_ids)):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, 
+                detail=[{"field": "tag_ids", "message": "Una o más etiquetas no existen o no pertenecen a tu organización."}]
+            )
+            
+        # Asignación directa: SQLAlchemy se encarga de hacer los INSERT/DELETE en la tabla intermedia
+        lead_obj.tags = tags

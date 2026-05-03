@@ -12,7 +12,6 @@ def _setup_rule_scenario(api, camp_id, name, type_code, rule_code, rule_params):
         "name": name,
         "field_type_code": type_code,
         "campaign_id": camp_id,
-        "lead_field_section_id": 1,
         "order": 99
     }, headers=api.headers)
     assert res_field.status_code == 200, f"Error creando campo: {res_field.text}"
@@ -140,10 +139,10 @@ def test_validation_rule_relational_templates(api, initial_structure):
     camp_id = initial_structure["campaign_id"]
 
     # Necesitamos crear dos campos manualmente para que interactúen entre sí
-    res_f1 = api.client.post("/lead_fields/", json={"name": "Sueldo", "field_type_code": "INT", "campaign_id": camp_id, "lead_field_section_id": 1, "order": 1}, headers=api.headers)
+    res_f1 = api.client.post("/lead_fields/", json={"name": "Sueldo", "field_type_code": "INT", "campaign_id": camp_id, "order": 1}, headers=api.headers)
     f1_id = res_f1.json()["id"]
 
-    res_f2 = api.client.post("/lead_fields/", json={"name": "Gasto", "field_type_code": "INT", "campaign_id": camp_id, "lead_field_section_id": 1, "order": 2}, headers=api.headers)
+    res_f2 = api.client.post("/lead_fields/", json={"name": "Gasto", "field_type_code": "INT", "campaign_id": camp_id, "order": 2}, headers=api.headers)
     f2_id = res_f2.json()["id"]
 
     # Regla: Gasto debe ser menor al Sueldo
@@ -174,10 +173,10 @@ def test_validation_rule_conditional_templates(api, initial_structure):
     camp_id = initial_structure["campaign_id"]
 
     # REQUIRED_IF (Si Estado_Civil == 'Casado', entonces Conyuge_Nombre es obligatorio)
-    res_f1 = api.client.post("/lead_fields/", json={"name": "Estado_Civil", "field_type_code": "STRING", "campaign_id": camp_id, "lead_field_section_id": 1, "order": 1}, headers=api.headers)
+    res_f1 = api.client.post("/lead_fields/", json={"name": "Estado_Civil", "field_type_code": "STRING", "campaign_id": camp_id, "order": 1}, headers=api.headers)
     f1_id = res_f1.json()["id"]
 
-    res_f2 = api.client.post("/lead_fields/", json={"name": "Conyuge_Nombre", "field_type_code": "STRING", "campaign_id": camp_id, "lead_field_section_id": 1, "order": 2}, headers=api.headers)
+    res_f2 = api.client.post("/lead_fields/", json={"name": "Conyuge_Nombre", "field_type_code": "STRING", "campaign_id": camp_id, "order": 2}, headers=api.headers)
     f2_id = res_f2.json()["id"]
 
     # Regla: Conyuge_Nombre REQUIRED_IF Estado_Civil = 'Casado'
@@ -214,8 +213,9 @@ def test_validation_rule_conditional_templates(api, initial_structure):
 def test_validation_rule_delete_rule(api, db_session, initial_structure):
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
     
-    f_edad = LeadField(name="Edad Regla", field_type_code="INT", campaign_id=camp_id, order=1, lead_field_section_id=1, organization_id=org_id, active=True)
+    f_edad = LeadField(name="Edad Regla", field_type_code="INT", campaign_id=camp_id, order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
     db_session.add(f_edad)
     db_session.commit()
 
@@ -231,8 +231,9 @@ def test_validation_rule_delete_rule(api, db_session, initial_structure):
 def test_validation_rule_delete_rule_check_404(api, db_session, initial_structure):
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
-    
-    f_edad = LeadField(name="Edad Regla 404", field_type_code="INT", campaign_id=camp_id, order=1, lead_field_section_id=1, organization_id=org_id, active=True)
+    section_id = initial_structure["section_id"]
+
+    f_edad = LeadField(name="Edad Regla 404", field_type_code="INT", campaign_id=camp_id, order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
     db_session.add(f_edad)
     db_session.commit()
 
@@ -248,8 +249,9 @@ def test_validation_rule_delete_rule_check_404(api, db_session, initial_structur
 def test_create_manual_validation_rule_success(api, db_session, initial_structure):
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
-    
-    f_num = LeadField(name="Numero Par", field_type_code="INT", campaign_id=camp_id, order=2, lead_field_section_id=1, organization_id=org_id, active=True)
+    section_id = initial_structure["section_id"]
+
+    f_num = LeadField(name="Numero Par", field_type_code="INT", campaign_id=camp_id, order=2, lead_field_section_id=section_id, organization_id=org_id, active=True)
     db_session.add(f_num)
     db_session.commit() 
 
@@ -262,7 +264,7 @@ def test_create_manual_validation_rule_success(api, db_session, initial_structur
 def test_create_validation_rule_fail_empty_params(api, initial_structure):
     camp_id = initial_structure["campaign_id"]
     
-    res_field = api.client.post("/lead_fields/", json={"name": "Test Params", "field_type_code": "INT", "campaign_id": camp_id, "lead_field_section_id": 1, "order": 99}, headers=api.headers)
+    res_field = api.client.post("/lead_fields/", json={"name": "Test Params", "field_type_code": "INT", "campaign_id": camp_id, "order": 99}, headers=api.headers)
     field_id = res_field.json()["id"]
 
     payload = {

@@ -11,6 +11,7 @@ def test_validation_rule_test_rule_success(api, db_session, initial_structure):
     """
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
     
     # 1. Setup: Crear un campo numérico "Edad"
     f_edad = LeadField(
@@ -18,9 +19,9 @@ def test_validation_rule_test_rule_success(api, db_session, initial_structure):
         field_type_code="INT", 
         campaign_id=camp_id, 
         order=1,
-        lead_field_section_id=1, 
+        lead_field_section_id=section_id, 
         organization_id=org_id,
-        active=True  # <--- Agregado por seguridad
+        active=True
     )
     db_session.add(f_edad)
     db_session.commit()
@@ -57,7 +58,6 @@ def test_validation_rule_test_rule_failure(api, db_session, initial_structure):
         "name":"Edad Regla", 
         "field_type_code":"INT", 
         "campaign_id":camp_id, 
-        "lead_field_section_id":1,
         "order":1
     }
     res_create_field = api.client.post("/lead_fields/", json=payload_edad, headers=api.headers)
@@ -93,6 +93,7 @@ def test_validation_rule_delete_rule(api, db_session, initial_structure):
     """
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
     
     # 1. Setup: Crear un campo numérico "Edad"
     f_edad = LeadField(
@@ -100,7 +101,7 @@ def test_validation_rule_delete_rule(api, db_session, initial_structure):
         field_type_code="INT", 
         campaign_id=camp_id, 
         order=1,
-        lead_field_section_id=1, 
+        lead_field_section_id=section_id, 
         organization_id=org_id,
         active=True
     )
@@ -137,6 +138,7 @@ def test_validation_rule_delete_rule_check_404(api, db_session, initial_structur
     """
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
     
     # 1. Setup: Crear un campo numérico "Edad"
     f_edad = LeadField(
@@ -144,7 +146,7 @@ def test_validation_rule_delete_rule_check_404(api, db_session, initial_structur
         field_type_code="INT", 
         campaign_id=camp_id, 
         order=1,
-        lead_field_section_id=1, 
+        lead_field_section_id=section_id, 
         organization_id=org_id,
         active=True
     )
@@ -178,8 +180,9 @@ def test_create_manual_validation_rule_success(api, db_session, initial_structur
     """
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
     
-    f_num = LeadField(name="Numero Par", field_type_code="INT", campaign_id=camp_id, order=2, lead_field_section_id=1, organization_id=org_id, active=True)
+    f_num = LeadField(name="Numero Par", field_type_code="INT", campaign_id=camp_id, order=2, lead_field_section_id=section_id, organization_id=org_id, active=True)
     db_session.add(f_num)
     db_session.commit() 
 
@@ -213,7 +216,6 @@ def test_create_manual_validation_rule_failure(api, db_session, initial_structur
         "name":"Número Par", 
         "field_type_code":"INT", 
         "campaign_id":camp_id, 
-        "lead_field_section_id":1,
         "order":1
     }
     res_create_field = api.client.post("/lead_fields/", json=payload_num, headers=api.headers)
@@ -249,8 +251,7 @@ def test_validation_rule_math_min_max(api, initial_structure):
         "name": "Edad Test",
         "field_template_code": "AGE",
         "campaign_id": camp_id,
-        "order": 1,
-        "lead_field_section_id": 1
+        "order": 1
     }, headers=api.headers)
     assert res_field.status_code == 200
     f_id = res_field.json()["id"]
@@ -272,8 +273,7 @@ def test_validation_rule_date_logic(api, initial_structure):
     res_field = api.client.post("/lead_fields/", json={
         "field_template_code": "BIRTH_DATE",
         "campaign_id": camp_id,
-        "order": 3,
-        "lead_field_section_id": 1
+        "order": 3
     }, headers=api.headers)
     f_id = res_field.json()["id"]
 
@@ -296,8 +296,7 @@ def test_validation_rule_text_length(api, initial_structure):
     res_field = api.client.post("/lead_fields/", json={
         "field_template_code": "CBU_ALIAS",
         "campaign_id": camp_id,
-        "order": 4,
-        "lead_field_section_id": 1
+        "order": 4
     }, headers=api.headers)
     f_id = res_field.json()["id"]
 
@@ -322,7 +321,6 @@ def test_create_validation_rule_fail_empty_params(api, initial_structure):
         "name": "Campo Test Params",
         "field_type_code": "INT",
         "campaign_id": camp_id,
-        "lead_field_section_id": 1,
         "order": 99
     }, headers=api.headers)
     assert res_field.status_code == 200

@@ -97,9 +97,6 @@ def run_seeds(db=None):
         seed_lead_field_subtypes(db)
         db.commit()
 
-        seed_lead_field_sections(db)
-        db.commit()
-
         # 3. Geografía
         seed_geography_separated(db)
         db.commit()
@@ -119,17 +116,6 @@ def run_seeds(db=None):
     finally:
         if should_close:
             db.close()
-
-
-def seed_lead_field_sections(db):
-    print("Procesando Secciones de Campos...")
-    datos = [
-        {"name": "Datos Personales"},       
-        {"name": "Información de Contacto"},
-        {"name": "Detalles Adicionales"}          
-    ]
-    # Usamos 'name' como clave única para no duplicar
-    seed_generic(db, model=LeadFieldSection, items=datos, unique_by=["name"])
 
 # -----------------------------------------------------------------------------
 # 1. SEED LEAD FIELD TYPES
@@ -155,7 +141,6 @@ def seed_lead_field_types(db):
         {"code": "RATING", "description": "Rating"},
         {"code": "ADDRESS", "description": "Dirección"},
         {"code": "RICH_TEXT", "description": "Texto Enriquecido"},
-        {"code": "TAGS", "description": "Etiquetas"},
         {"code": "PASSWORD", "description": "Contraseña"},
     ]
     seed_generic(db, model=LeadFieldType, items=datos, unique_by=["code"])
@@ -198,7 +183,7 @@ def seed_rbac(db):
         "role", "workspace", "lead_field_section",
         "lead_comment", "organization", "lead_flow", "lead_state", 
         "lead_state_transition", "team", "team_member", 
-        "team_workspace_access", "team_campaign_access", "lead_routing_rule", "lead_view"
+        "team_workspace_access", "team_campaign_access", "lead_routing_policy", "lead_view"
     ]
 
     # 2. Entidades de Solo Lectura (Catálogos del sistema)
@@ -359,10 +344,10 @@ def seed_test_tenants(db):
     print("✅ Organizaciones y Usuarios de prueba creados con éxito.")
 
 
-def get_or_create_nomenclator(db, name):
+def get_or_create_nomenclator(db, name, parent_id=None):
         nom = db.query(Nomenclator).filter_by(name=name).first()
         if not nom:
-            nom = Nomenclator(name=name)
+            nom = Nomenclator(name=name, parent_nomenclator_id=parent_id)
             db.add(nom)
             db.flush()
         return nom
@@ -387,7 +372,7 @@ def seed_geography_separated(db):
 
     # 1. Nomencladores Base
     nom_pais = get_or_create_nomenclator(db, "Países")
-    nom_prov = get_or_create_nomenclator(db, "Provincias")
+    nom_prov = get_or_create_nomenclator(db, "Provincias", parent_id=nom_pais.id)
 
     # 2. Datos Externos
     TARGET_COUNTRIES = ["AR", "CL", "BR", "ES", "US"] 

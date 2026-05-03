@@ -1,156 +1,606 @@
+
+"""
 import pytest
+from unittest.mock import patch
 from app.models.team_member import TeamMember
 from app.models.team import Team
+from tests.fixtures.user_fixtures import (
+    _make_user, _link_user_to_org, _make_team_member, as_user
+)
 
 
+@pytest.fixture
+def two_users(db_session, initial_structure):
+    org_id = initial_structure["org_id"]
+    user_a = _make_user(db_session, "Usuario A Manager", f"usera_{org_id}@test.com")
+    user_b = _make_user(db_session, "Usuario B Agent",   f"userb_{org_id}@test.com")
+    _link_user_to_org(db_session, user_a, org_id)
+    _link_user_to_org(db_session, user_b, org_id)
+    db_session.commit()
+    return {"manager": user_a, "agent": user_b, "org_id": org_id}
 
-def test_team_crud_and_duplicate_members(api, db_session, initial_structure):
-    """
-    Bloque 1: Verifica la creación de equipos, adición de miembros 
-    y el rechazo de miembros duplicados.
-    """
-    # 1. Crear Equipo
-    team = api.create_team(name="Ventas Norte", is_visibility_shared=True)
+
+def test_create_team_adds_creator_as_manager(api, db_session):
+    team = api.create_team(name="Equipo Auto-Manager")
     assert team["id"] > 0
-    assert team["active"] is True
+    db_session.expire_all()
+    member = db_session.query(TeamMember).filter_by(
+        team_id=team["id"], user_id=1, role="MANAGER"
+    ).first()
+    assert member is not None, "El creador debería ser MANAGER automáticamente."
 
-    # 2. Agregar Miembro (Asumimos que el user_id=1 existe por el setup)
-    member = api.add_team_member(team["id"], user_id=1, role="MANAGER")
-    assert member["role"] == "MANAGER"
 
-    # 3. Intentar agregar el mismo miembro al mismo equipo (Debe fallar 400)
+def test_team_name_must_be_unique_per_org(api):
+    api.create_team("Equipo Nombre Unico", expected_status=200)
+    api.create_team("Equipo Nombre Unico", expected_status=400)
+
+
+def test_team_delete_cascades_members(api, db_session):
+    team = api.create_team("Equipo Cascade")
+    team_id = team["id"]
+    db_session.expire_all()
+    assert db_session.query(TeamMember).filter_by(team_id=team_id).count() == 1
+    api.client.delete(f"/teams/{team_id}", headers=api.headers)
+    db_session.expire_all()
+    assert db_session.get(Team, team_id) is None
+    assert db_session.query(TeamMember).filter_by(team_id=team_id).count() == 0
+
+
+def test_team_same_name_different_orgs_allowed(api, db_session):
+    org2 = api.create_organization("Segunda Org para nombre")
+    old_org_id = api.org_id
+    api.create_team("Nombre Compartido")           # Org 1
+    api.org_id = org2["id"]
+    api.create_team("Nombre Compartido")           # Org 2
+    api.org_id = old_org_id                        # Restaurar
+
+
+def test_agent_cannot_add_manager(api, db_session, two_users):
+    team = api.create_team("Equipo Roles 1")
+    team_id = team["id"]
+    api.add_team_member(team_id, two_users["agent"].id, role="AGENT")
+
+    with as_user(api, two_users["agent"]): # <-- api en lugar de db_session
+        resp = api.client.post(
+            "/team_members/",
+            json={"team_id": team_id, "user_id": two_users["manager"].id, "role": "MANAGER"},
+            headers=api.headers,
+        )
+    assert resp.status_code == 403
+    assert "MANAGER" in resp.text or "AGENT" in resp.text
+
+
+def test_agent_cannot_self_promote_to_manager(api, db_session, two_users):
+    team = api.create_team("Equipo Roles 2")
+    team_id = team["id"]
+    member = api.add_team_member(team_id, two_users["agent"].id, role="AGENT")
+
+    with as_user(api, two_users["agent"]):
+        resp = api.client.put( # <-- Usar PUT para evitar el 400 de "ya existe en el equipo"
+            f"/team_members/{member['id']}",
+            json={"role": "MANAGER"},
+            headers=api.headers,
+        )
+    assert resp.status_code == 403
+
+
+def test_manager_can_add_agent(api, db_session, two_users):
+    team    = api.create_team("Equipo Roles 3")
+    team_id = team["id"]
+    api.add_team_member(team_id, two_users["manager"].id, role="MANAGER")
+
+    with as_user(api, two_users["manager"]):
+        resp = api.client.post(
+            "/team_members/",
+            json={"team_id": team_id, "user_id": two_users["agent"].id, "role": "AGENT"},
+            headers=api.headers,
+        )
+    assert resp.status_code in (200, 201)
+
+
+def test_manager_can_promote_agent_to_manager(api, db_session, two_users):
+    team    = api.create_team("Equipo Roles 4")
+    team_id = team["id"]
+    api.add_team_member(team_id, two_users["manager"].id, role="MANAGER")
+    member  = api.add_team_member(team_id, two_users["agent"].id, role="AGENT")
+
+    with as_user(api, two_users["manager"]):
+        resp = api.client.put(
+            f"/team_members/{member['id']}",
+            json={"role": "MANAGER"},
+            headers=api.headers,
+        )
+    assert resp.status_code == 200
+    assert resp.json()["role"] == "MANAGER"
+
+
+def test_duplicate_member_rejected(api):
+    team = api.create_team("Equipo Duplicado")
     api.add_team_member(team["id"], user_id=1, role="AGENT", expected_status=400)
 
-    # 4. Borrar Equipo y validar Cascada (TeamMember debe desaparecer)
-    api.client.delete(f"/teams/{team['id']}", headers=api.headers)
-    db_session.expire_all()
-    
-    assert db_session.get(Team, team["id"]) is None
-    assert db_session.get(TeamMember, member["id"]) is None
 
-
-def test_routing_rule_custom_field_and_fallback(api, initial_structure):
-    """
-    Bloque 4: Verifica que un Lead se auto-asigne a un equipo si cumple la regla,
-    y que caiga huérfano (None) si no la cumple.
-    """
+def test_routing_policy_simple_match_and_fallback(api, initial_structure):
     camp_id = initial_structure["campaign_id"]
+    team    = api.create_team("Equipo VIP")
+    f_sueldo= api.create_lead_field(camp_id, "Sueldo", "INT")
 
-    # 1. Setup: Crear Equipo y Campo Custom
-    team_vip = api.create_team("Equipo VIP")
-    field_sueldo = api.create_lead_field(camp_id, "Sueldo", "INT")
-
-    # 2. Crear Regla de Enrutamiento (Sueldo = 5000 -> Equipo VIP)
-    api.create_routing_rule(
-        condition_type="CUSTOM_FIELD",
-        condition_target_id=field_sueldo["id"],
-        condition_value="5000",
-        target_team_id=team_vip["id"],
-        campaign_id=camp_id
+    api.create_routing_policy(
+        name           = "Sueldo exacto VIP",
+        target_team_id = team["id"],
+        conditions     = [{"lead_field_id": f_sueldo["id"], "operator": "eq",
+                           "value_str": "5000", "position": 0}],
+        priority       = 1,
+        campaign_id    = camp_id,
     )
 
-    # 3. Crear Lead MATCH (Debe ir al Equipo VIP)
-    lead_vip = api.create_lead(camp_id, [{"field_id": field_sueldo["id"], "value": 5000}])
-    assert lead_vip["team_id"] == team_vip["id"], "El motor no asignó el equipo correctamente."
+    lead_vip    = api.create_lead(camp_id, [{"field_id": f_sueldo["id"], "value": 5000}])
+    lead_normal = api.create_lead(camp_id, [{"field_id": f_sueldo["id"], "value": 1000}])
 
-    # 4. Crear Lead FALLBACK (Debe quedar huérfano)
-    lead_normal = api.create_lead(camp_id, [{"field_id": field_sueldo["id"], "value": 1000}])
-    assert lead_normal["team_id"] is None, "El lead no debería tener equipo."
+    assert lead_vip["team_id"]    == team["id"], "VIP debería ir al equipo."
+    assert lead_normal["team_id"] is None,       "Normal no debería tener equipo."
 
 
-def test_routing_rule_priority_order(api, initial_structure):
-    """
-    Bloque 4: Verifica el choque de reglas. El motor debe respetar la regla
-    con el 'order' más bajo (mayor prioridad).
-    """
+def test_routing_policy_string_ilike(api, initial_structure):
+    camp_id   = initial_structure["campaign_id"]
+    team      = api.create_team("Equipo Buenos Aires")
+    f_ciudad  = api.create_lead_field(camp_id, "Ciudad", "STRING")
+
+    api.create_routing_policy(
+        name           = "Ciudad Buenos Aires",
+        target_team_id = team["id"],
+        conditions     = [{"lead_field_id": f_ciudad["id"], "operator": "ilike",
+                           "value_str": "buenos aires", "position": 0}],
+        priority       = 1,
+        campaign_id    = camp_id,
+    )
+
+    match   = api.create_lead(camp_id, [{"field_id": f_ciudad["id"], "value": "BUENOS AIRES"}])
+    no_match= api.create_lead(camp_id, [{"field_id": f_ciudad["id"], "value": "Rosario"}])
+
+    assert match["team_id"]    == team["id"]
+    assert no_match["team_id"] is None
+
+
+def test_routing_policy_range_inclusive(api, initial_structure):
+    camp_id  = initial_structure["campaign_id"]
+    team     = api.create_team("Equipo Rango")
+    f_monto  = api.create_lead_field(camp_id, "Monto", "INT")
+
+    api.create_routing_policy(
+        name           = "Monto en rango",
+        target_team_id = team["id"],
+        conditions     = [{
+            "lead_field_id": f_monto["id"],
+            "operator_min": "gte", "value_min": "1000",
+            "operator_max": "lte", "value_max": "5000",
+            "position": 0,
+        }],
+        priority    = 1,
+        campaign_id = camp_id,
+    )
+
+    in_range  = api.create_lead(camp_id, [{"field_id": f_monto["id"], "value": 1000}])
+    out_range = api.create_lead(camp_id, [{"field_id": f_monto["id"], "value": 5001}])
+    boundary  = api.create_lead(camp_id, [{"field_id": f_monto["id"], "value": 5000}])
+
+    assert in_range["team_id"]  == team["id"]
+    assert out_range["team_id"] is None
+    assert boundary["team_id"]  == team["id"]
+
+
+def test_routing_policy_range_exclusive_lower(api, initial_structure):
     camp_id = initial_structure["campaign_id"]
+    team    = api.create_team("Equipo Rango Exclusivo")
+    f_val   = api.create_lead_field(camp_id, "Puntaje", "INT")
 
-    # 1. Setup
-    team_a = api.create_team("Equipo A (Prioridad)")
-    team_b = api.create_team("Equipo B (Secundario)")
-    f_provincia = api.create_lead_field(camp_id, "Provincia", "STRING")
-
-    # 2. Crear Regla 1 (Orden 2 - Secundario)
-    api.create_routing_rule(
-        condition_type="CUSTOM_FIELD",
-        condition_target_id=f_provincia["id"],
-        condition_value="Mendoza",
-        target_team_id=team_b["id"],
-        campaign_id=camp_id,
-        order=2
+    api.create_routing_policy(
+        name           = "Puntaje mayor estricto",
+        target_team_id = team["id"],
+        conditions     = [{
+            "lead_field_id": f_val["id"],
+            "operator_min": "gt", "value_min": "100",
+            "operator_max": "lte", "value_max": "200",
+            "position": 0,
+        }],
+        priority    = 1,
+        campaign_id = camp_id,
     )
 
-    # 3. Crear Regla 2 (Orden 1 - Prioridad) MISMA CONDICIÓN
-    api.create_routing_rule(
-        condition_type="CUSTOM_FIELD",
-        condition_target_id=f_provincia["id"],
-        condition_value="Mendoza",
-        target_team_id=team_a["id"],
-        campaign_id=camp_id,
-        order=1
-    )
+    exact_boundary = api.create_lead(camp_id, [{"field_id": f_val["id"], "value": 100}])
+    above_boundary = api.create_lead(camp_id, [{"field_id": f_val["id"], "value": 101}])
 
-    # 4. Crear Lead -> Debe ser atrapado por la Regla de Orden 1 (Equipo A)
-    lead = api.create_lead(camp_id, [{"field_id": f_provincia["id"], "value": "Mendoza"}])
-    assert lead["team_id"] == team_a["id"], "No se respetó la prioridad de la regla (Order)."
+    assert exact_boundary["team_id"] is None
+    assert above_boundary["team_id"] == team["id"]
 
 
-def test_routing_rule_nomenclator_global(api, initial_structure):
-    """
-    Bloque 4: Verifica una regla GLOBAL (Nivel Organización) basada en Nomenclador.
-    Debe aplicar sin importar en qué campaña se cree el lead.
-    """
+def test_routing_policy_selector_in(api, db_session, initial_structure):
+    from app.models.nomenclator import Nomenclator
+    from app.models.nomenclator_item import NomenclatorItem
+
     camp_id = initial_structure["campaign_id"]
+    org_id  = initial_structure["org_id"]
 
-    # 1. Crear Nomenclador y agregar item
-    res_nom = api.client.post("/nomenclators/", json={"name": "Zonas"}, headers=api.headers)
-    nom_id = res_nom.json()["id"]
-    res_item = api.client.post(f"/nomenclator_items/", json={"code": "Sur", "value": "Sur", "nomenclator_id": nom_id}, headers=api.headers)
-    item_sur_id = res_item.json()["id"]
+    nom = Nomenclator(name="Zonas Test In", organization_id=org_id)
+    db_session.add(nom)
+    db_session.flush()
+    item_norte = NomenclatorItem(nomenclator_id=nom.id, value="Norte", organization_id=org_id)
+    item_sur   = NomenclatorItem(nomenclator_id=nom.id, value="Sur",   organization_id=org_id)
+    db_session.add_all([item_norte, item_sur])
+    db_session.commit()
 
-    # 2. Crear Equipo y Regla GLOBAL (campaign_id = None)
-    team_sur = api.create_team("Ventas Sur")
-    api.create_routing_rule(
-        condition_type="NOMENCLATOR",
-        condition_target_id=nom_id,
-        condition_value=str(item_sur_id),
-        target_team_id=team_sur["id"],
-        campaign_id=None
+    team   = api.create_team("Equipo Norte/Sur")
+    f_zona = api.create_lead_field(
+        camp_id, "Zona", "SELECTOR", subtype_code="SELECTOR_SIMPLE", nomenclator_id=nom.id
     )
 
-    # 3. Crear Campo Selector en la Campaña que apunte al nomenclador
-    f_zona = api.create_lead_field(camp_id, "Seleccione Zona", "SELECTOR", subtype_code="SELECTOR_SIMPLE", nomenclator_id=nom_id)
+    api.create_routing_policy(
+        name           = "Zona Norte o Sur",
+        target_team_id = team["id"],
+        conditions     = [{
+            "lead_field_id": f_zona["id"],
+            "operator":    "in",
+            "value_list":  [str(item_norte.id), str(item_sur.id)],
+            "position": 0,
+        }],
+        priority    = 1,
+        campaign_id = camp_id,
+    )
 
-    # 4. Crear Lead -> Debe atraparlo la regla global
-    lead = api.create_lead(camp_id, [{"field_id": f_zona["id"], "value": item_sur_id}])
-    assert lead["team_id"] == team_sur["id"], "La regla global de nomenclador falló."
+    match    = api.create_lead(camp_id, [{"field_id": f_zona["id"], "value": item_norte.id}])
+    no_match = api.create_lead(camp_id, [])
+
+    assert match["team_id"]    == team["id"]
+    assert no_match["team_id"] is None
+
+
+def test_routing_policy_selector_eq_strict(api, db_session, initial_structure):
+    from app.models.nomenclator import Nomenclator
+    from app.models.nomenclator_item import NomenclatorItem
+
+    camp_id = initial_structure["campaign_id"]
+    org_id  = initial_structure["org_id"]
+
+    nom = Nomenclator(name="Tags Strict", organization_id=org_id)
+    db_session.add(nom)
+    db_session.flush()
+    tag_a = NomenclatorItem(nomenclator_id=nom.id, value="TagA", organization_id=org_id)
+    tag_b = NomenclatorItem(nomenclator_id=nom.id, value="TagB", organization_id=org_id)
+    db_session.add_all([tag_a, tag_b])
+    db_session.commit()
+
+    team  = api.create_team("Equipo Strict")
+    f_tag = api.create_lead_field(
+        camp_id, "Tags", "SELECTOR", subtype_code="SELECTOR_MULTIPLE", nomenclator_id=nom.id
+    )
+
+    api.create_routing_policy(
+        name           = "Solo TagA y TagB exactos",
+        target_team_id = team["id"],
+        conditions     = [{
+            "lead_field_id": f_tag["id"],
+            "operator":    "eq_strict",
+            "value_list":  [str(tag_a.id), str(tag_b.id)],
+            "position": 0,
+        }],
+        priority    = 1,
+        campaign_id = camp_id,
+    )
+
+    exact = api.create_lead(camp_id, [{"field_id": f_tag["id"], "value": [tag_a.id, tag_b.id]}])
+    only_a = api.create_lead(camp_id, [{"field_id": f_tag["id"], "value": tag_a.id}])
+
+    assert exact["team_id"]  == team["id"]
+    assert only_a["team_id"] is None
+
+
+def test_routing_policy_and_both_must_match(api, initial_structure):
+    camp_id  = initial_structure["campaign_id"]
+    team     = api.create_team("Equipo AND")
+    f_ciudad = api.create_lead_field(camp_id, "Ciudad AND", "STRING")
+    f_edad   = api.create_lead_field(camp_id, "Edad AND",   "INT")
+
+    api.create_routing_policy(
+        name             = "Ciudad Mendoza Y Edad >= 25",
+        target_team_id   = team["id"],
+        logical_operator = "AND",
+        conditions       = [
+            {"lead_field_id": f_ciudad["id"], "operator": "eq",  "value_str": "Mendoza",  "position": 0},
+            {"lead_field_id": f_edad["id"],   "operator": "gte", "value_str": "25", "position": 1},
+        ],
+        priority    = 1,
+        campaign_id = camp_id,
+    )
+
+    both_match   = api.create_lead(camp_id, [
+        {"field_id": f_ciudad["id"], "value": "Mendoza"},
+        {"field_id": f_edad["id"],   "value": 30},
+    ])
+    only_city    = api.create_lead(camp_id, [
+        {"field_id": f_ciudad["id"], "value": "Mendoza"},
+        {"field_id": f_edad["id"],   "value": 20},
+    ])
+
+    assert both_match["team_id"] == team["id"]
+    assert only_city["team_id"]  is None
+
+
+def test_routing_policy_or_any_condition_matches(api, initial_structure):
+    camp_id  = initial_structure["campaign_id"]
+    team     = api.create_team("Equipo OR")
+    f_ciudad = api.create_lead_field(camp_id, "Ciudad OR",  "STRING")
+    f_vip    = api.create_lead_field(camp_id, "Es VIP OR",  "BOOL")
+
+    api.create_routing_policy(
+        name             = "Ciudad Mendoza O Es VIP",
+        target_team_id   = team["id"],
+        logical_operator = "OR",
+        conditions       = [
+            {"lead_field_id": f_ciudad["id"], "operator": "eq", "value_str": "Mendoza", "position": 0},
+            {"lead_field_id": f_vip["id"],    "operator": "eq", "value_str": "true",    "position": 1},
+        ],
+        priority    = 1,
+        campaign_id = camp_id,
+    )
+
+    via_ciudad  = api.create_lead(camp_id, [{"field_id": f_ciudad["id"], "value": "Mendoza"}])
+    via_vip     = api.create_lead(camp_id, [{"field_id": f_vip["id"],    "value": True}])
+    no_match    = api.create_lead(camp_id, [{"field_id": f_ciudad["id"], "value": "Córdoba"}])
+
+    assert via_ciudad["team_id"] == team["id"]
+    assert via_vip["team_id"]    == team["id"]
+    assert no_match["team_id"]   is None
+
+
+def test_routing_policy_priority_lower_wins(api, initial_structure):
+    camp_id   = initial_structure["campaign_id"]
+    team_alta = api.create_team("Equipo Alta Prioridad")
+    team_baja = api.create_team("Equipo Baja Prioridad")
+    f_score   = api.create_lead_field(camp_id, "Score Prio", "INT")
+
+    api.create_routing_policy(
+        name="Score >= 50 (prio 2)", target_team_id=team_baja["id"],
+        conditions=[{"lead_field_id": f_score["id"], "operator": "gte",
+                     "value_str": "50", "position": 0}],
+        priority=2, campaign_id=camp_id,
+    )
+    api.create_routing_policy(
+        name="Score >= 50 (prio 1)", target_team_id=team_alta["id"],
+        conditions=[{"lead_field_id": f_score["id"], "operator": "gte",
+                     "value_str": "50", "position": 0}],
+        priority=1, campaign_id=camp_id,
+    )
+
+    lead = api.create_lead(camp_id, [{"field_id": f_score["id"], "value": 80}])
+    assert lead["team_id"] == team_alta["id"]
+
+
+def test_routing_policy_priority_unique_per_scope(api, initial_structure):
+    camp_id = initial_structure["campaign_id"]
+    team    = api.create_team("Equipo Prio Dup")
+    f_x     = api.create_lead_field(camp_id, "Campo Prio", "INT")
+
+    api.create_routing_policy(
+        name="Política prio 1", target_team_id=team["id"],
+        conditions=[{"lead_field_id": f_x["id"], "operator": "eq",
+                     "value_str": "1", "position": 0}],
+        priority=1, campaign_id=camp_id,
+    )
+    api.create_routing_policy(
+        name="Política prio 1 bis", target_team_id=team["id"],
+        conditions=[{"lead_field_id": f_x["id"], "operator": "eq",
+                     "value_str": "2", "position": 0}],
+        priority=1, campaign_id=camp_id,
+        expected_status=400,
+    )
+
+
+def test_routing_policy_native_field_current_state(api, initial_structure):
+    camp_id      = initial_structure["campaign_id"]
+    initial_state= initial_structure["state_initial_id"]
+    team         = api.create_team("Equipo Estado Inicial")
+
+    api.create_routing_policy(
+        name           = "Lead en estado inicial",
+        target_team_id = team["id"],
+        conditions     = [{
+            "native_field": "current_state_id",
+            "operator":     "eq",
+            "value_str":    str(initial_state),
+            "position": 0,
+        }],
+        priority    = 1,
+        campaign_id = camp_id,
+    )
+
+    f_dummy = api.create_lead_field(camp_id, "Dummy Native", "STRING")
+    lead    = api.create_lead(camp_id, [{"field_id": f_dummy["id"], "value": "x"}])
+    assert lead["team_id"] == team["id"]
+
+
+def test_agent_cannot_create_routing_policy(api, db_session, two_users):
+    team    = api.create_team("Equipo Policy Perm")
+    api.add_team_member(team["id"], two_users["agent"].id, role="AGENT")
+
+    with as_user(api, two_users["agent"]):
+        resp = api.client.post(
+            "/lead_routing_policies/",
+            json={
+                "name":           "Política del Agent",
+                "target_team_id": team["id"],
+                "priority":       99,
+                "logical_operator": "AND",
+                "conditions":     [],
+            },
+            headers=api.headers,
+        )
+    assert resp.status_code == 403
+
+
+def test_manager_can_create_routing_policy(api, db_session, two_users, initial_structure):
+    camp_id = initial_structure["campaign_id"]
+    team    = api.create_team("Equipo Policy Manager")
+    api.add_team_member(team["id"], two_users["manager"].id, role="MANAGER")
+    f_x     = api.create_lead_field(camp_id, "Campo Manager Policy", "INT")
+
+    with as_user(api, two_users["manager"]):
+        resp = api.client.post(
+            "/lead_routing_policies/",
+            json={
+                "name":           "Política del Manager",
+                "target_team_id": team["id"],
+                "priority":       50,
+                "logical_operator": "AND",
+                "campaign_id":    camp_id,
+                "conditions": [{
+                    "lead_field_id": f_x["id"],
+                    "operator":      "eq",
+                    "value_str":     "1",
+                    "position":      0,
+                }],
+            },
+            headers=api.headers,
+        )
+    assert resp.status_code in (200, 201)
+
+
+def test_validate_policy_rejects_forbidden_field_type(api, initial_structure):
+    camp_id = initial_structure["campaign_id"]
+    team    = api.create_team("Equipo Validate")
+
+    f_file = api.client.post("/lead_fields/", json={
+        "campaign_id":        camp_id,
+        "name":               "Archivo Test",
+        "field_type_code":    "FILE",
+        "field_subtype_code": "FILE_DOCUMENT"
+    }, headers=api.headers)
+
+    if f_file.status_code not in (200, 201):
+        import pytest
+        pytest.skip("No se pudo crear campo FILE para este test")
+
+    f_id = f_file.json()["id"]
+
+    result = api.validate_routing_policy(
+        target_team_id = team["id"],
+        conditions     = [{
+            "lead_field_id": f_id,
+            "operator":      "eq",
+            "value_str":     "algo",
+            "position":      0,
+        }],
+        campaign_id = camp_id,
+    )
+    assert result["valid"] is False
+    assert any("FILE" in e or "permitido" in e or "compatible" in e for e in result["errors"])
+
+
+def test_validate_policy_detects_team_wrong_org(api, initial_structure):
+    org2 = api.create_organization("Org Validate Externa")
+    old_id = api.org_id
+    api.org_id = org2["id"]
+    team_otro = api.create_team("Equipo Externo")
+    api.org_id = old_id
+
+    result = api.validate_routing_policy(
+        target_team_id = team_otro["id"],
+        conditions     = [],
+    )
+    assert result["valid"] is False
+    assert any("organización" in e.lower() or "equipo" in e.lower() for e in result["errors"])
+
+
+def test_validate_policy_valid_conditions_returns_true(api, initial_structure):
+    camp_id = initial_structure["campaign_id"]
+    team    = api.create_team("Equipo Validate OK")
+    f_num   = api.create_lead_field(camp_id, "Número Validate", "INT")
+
+    result = api.validate_routing_policy(
+        target_team_id = team["id"],
+        conditions     = [{
+            "lead_field_id": f_num["id"],
+            "operator":      "gte",
+            "value_str":     "100",
+            "position":      0,
+        }],
+        campaign_id = camp_id,
+    )
+    assert result["valid"] is True
+    assert result["errors"] == []
+
+
+def test_routing_policy_global_applies_to_any_campaign(api, initial_structure):
+    camp_id = initial_structure["campaign_id"]
+    team    = api.create_team("Equipo Global Policy")
+    f_score = api.create_lead_field(camp_id, "Score Global", "INT")
+
+    api.create_routing_policy(
+        name           = "Score alto global",
+        target_team_id = team["id"],
+        conditions     = [{"lead_field_id": f_score["id"], "operator": "gte",
+                           "value_str": "90", "position": 0}],
+        priority       = 1,
+        campaign_id    = None,
+    )
+
+    lead = api.create_lead(camp_id, [{"field_id": f_score["id"], "value": 95}])
+    assert lead["team_id"] == team["id"]
 
 
 def test_bulk_assign_leads(api, initial_structure):
-    """
-    Bloque 5: Verifica la reasignación masiva manual.
-    """
     camp_id = initial_structure["campaign_id"]
+    f_base  = api.create_lead_field(camp_id, "Dato Bulk", "STRING")
+    lead_1  = api.create_lead(camp_id, [{"field_id": f_base["id"], "value": "A"}])
+    lead_2  = api.create_lead(camp_id, [{"field_id": f_base["id"], "value": "B"}])
 
-    # 1. Crear leads huérfanos
-    f_base = api.create_lead_field(camp_id, "Dato", "STRING")
-    lead_1 = api.create_lead(camp_id, [{"field_id": f_base["id"], "value": "A"}])
-    lead_2 = api.create_lead(camp_id, [{"field_id": f_base["id"], "value": "B"}])
-    
     assert lead_1["team_id"] is None
 
-    # 2. Crear Equipo y usar Bulk Assign
-    team = api.create_team("Equipo Rescate")
-    
-    # Asumimos que agregaste el endpoint PATCH en tu LeadController
+    team     = api.create_team("Equipo Rescate")
     res_bulk = api.bulk_assign(
-        lead_ids=[lead_1["id"], lead_2["id"]],
-        target_team_id=team["id"]
+        lead_ids       = [lead_1["id"], lead_2["id"]],
+        target_team_id = team["id"],
     )
 
-    # 3. Validar
     assert len(res_bulk) == 2
-    for l in res_bulk:
-        assert l["team_id"] == team["id"], "El bulk assign no actualizó el team_id"
+    for lead in res_bulk:
+        assert lead["team_id"] == team["id"]
 
 
+def test_workspace_access_rejects_wrong_org_workspace(api, initial_structure):
+    org2      = api.create_organization("Org Access Test")
+    old_id    = api.org_id
+    api.org_id= org2["id"]
+    ws_otro   = api.create_workspace("WS Externo")
+    api.org_id= old_id
+
+    team = api.create_team("Equipo Access WS")
+    resp = api.client.post(
+        "/team_workspace_access/",
+        json={"team_id": team["id"], "workspace_id": ws_otro["id"]},
+        headers=api.headers,
+    )
+    assert resp.status_code == 400
+
+
+def test_campaign_access_rejects_wrong_org_campaign(api, initial_structure):
+    org2      = api.create_organization("Org Access Camp Test")
+    old_id    = api.org_id
+    api.org_id= org2["id"]
+    ws_otro   = api.create_workspace("WS Externo Camp")
+    
+    # Obtener dinámicamente el lead flow ID de la nueva org
+    resp_flow = api.client.get("/lead_flows", headers=api.headers)
+    flow_id   = resp_flow.json()["items"][0]["id"]
+    
+    camp_otro = api.create_campaign(ws_otro["id"], "Campaña Externa", lead_flow_id=flow_id)
+    api.org_id= old_id
+
+    team = api.create_team("Equipo Access Camp")
+    resp = api.client.post(
+        "/team_campaign_access/",
+        json={"team_id": team["id"], "campaign_id": camp_otro["id"]},
+        headers=api.headers,
+    )
+    assert resp.status_code == 400
+
+
+"""

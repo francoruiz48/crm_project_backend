@@ -1,4 +1,5 @@
 import pytest
+from app.models.lead_field_section import LeadFieldSection
 from app.models.lead_field_type import LeadFieldType
 from app.models.lead_field import LeadField
 from app.models.campaign import Campaign
@@ -24,6 +25,10 @@ def initial_structure(db_session):
 
     camp = Campaign(name="Test Campaign", workspace_id=ws.id, lead_flow_id=lead_flow.id, organization_id=org.id)
     db_session.add(camp)
+    db_session.flush()
+
+    section = LeadFieldSection(name="Información básica", organization_id=org.id)
+    db_session.add(section)
     db_session.flush()
     
     # 1. Creamos 3 estados (Inicial, Intermedio, Final)
@@ -57,6 +62,7 @@ def initial_structure(db_session):
         "campaign_id": camp.id, 
         "workspace_id": ws.id, 
         "org_id": org.id,
+        "section_id": section.id,
         "state_initial_id": state_new.id,
         "state_contact_id": state_contact.id,
         "state_won_id": state_won.id,
@@ -67,6 +73,7 @@ def initial_structure(db_session):
 def initial_fields(db_session, initial_structure):
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
     
     f_nombre = LeadField(
         name="Nombre", 
@@ -74,7 +81,7 @@ def initial_fields(db_session, initial_structure):
         campaign_id=camp_id, 
         required=True, 
         order=1, 
-        lead_field_section_id=1, 
+        lead_field_section_id=section_id, 
         organization_id=org_id,
         active=True
     )
@@ -84,7 +91,7 @@ def initial_fields(db_session, initial_structure):
         campaign_id=camp_id, 
         required=False, 
         order=2, 
-        lead_field_section_id=1, 
+        lead_field_section_id=section_id, 
         organization_id=org_id,
         active=True
     )

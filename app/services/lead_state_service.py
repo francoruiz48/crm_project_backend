@@ -172,3 +172,47 @@ class LeadStateService(BaseService):
                 cls._log_audit(uow.session, updated_state, action="UPDATE", changes=changes, user_id=updated_by)
 
             return updated_state
+        
+
+    @classmethod
+    def delete(cls, obj_id: int, user_context: Optional[UserContext] = None):
+        def do_delete(uow):
+            from app.models.lead_state import LeadState
+            
+            state_to_delete = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
+            if not state_to_delete:
+                cls._not_found(obj_id)
+
+            # Regla 4: Bloquear eliminación de estado inicial
+            if state_to_delete.is_initial:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    detail=[{"field": "general", "message": "No se puede eliminar un estado inicial."}]
+                )
+
+            flow_id = state_to_delete.lead_flow_id
+            category = state_to_delete.category
+            deleted_order = state_to_delete.order
+
+            # Eliminamos el estado
+            result = cls.repository.delete(uow.session, obj_id, user_context=user_context)
+            uow.session.flush()
+
+            # Regla 5: Reordenar los estados OPEN restantes
+            if category == "OPEN" and deleted_order is not None:
+                states_to_reorder = uow.session.query(LeadState).filter(
+                    LeadState.lead_flow_id == flow_id,
+                    LeadState.category == "OPEN",
+                    LeadState.order > deleted_order
+                ).order_by(LeadState.order.asc()).all()
+
+                for state in states_to_reorder:
+                    state.order -= 1
+                    uow.session.add(state)
+                
+                uow.session.flush()
+
+            cls._log_audit(uow.session, state_to_delete, action="DELETE", changes=None, user_id=user_context.user.id if user_context and user_context.user else None)
+            return result
+
+        return cls._execute(action="Eliminar Estado de Lead", obj_id=obj_id, func=do_delete)

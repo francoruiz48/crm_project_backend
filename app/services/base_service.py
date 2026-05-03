@@ -16,7 +16,7 @@ class BaseService:
     # ---------- helpers internos ----------
     @classmethod
     def _model_name(cls):
-        return cls.repository.model.__name__
+        return cls.repository.model.__name__ if cls.repository else "General"
 
     @classmethod
     def _not_found(cls, obj_id):
@@ -166,6 +166,34 @@ class BaseService:
             return result
 
         return cls._execute(action="Eliminando", obj_id=obj_id, func=do_delete, success_msg=SUCCESS_DELETE)
+    
+
+    @classmethod
+    def bulk_delete(cls, obj_ids: list[int], user_context: Optional[UserContext] = None):
+        def do_bulk_delete(uow):
+            # 1. Buscamos los objetos ANTES de borrarlos para poder auditar
+            objs_to_delete = uow.session.query(cls.repository.model).filter(
+                cls.repository.model.id.in_(obj_ids)
+            ).all()
+
+            if not objs_to_delete:
+                return {"deleted": [], "disabled": [], "failed": obj_ids}
+
+            # 2. Ejecutamos la acción masiva en la DB
+            result = cls.repository.bulk_delete(uow.session, obj_ids, user_context=user_context)
+
+            # 3. LOG DE AUDITORÍA
+            user_id = user_context.user.id if user_context and user_context.user else None
+            
+            for obj in objs_to_delete:
+                if obj.id in result["deleted"]:
+                    cls._log_audit(uow.session, obj, action="DELETE", changes=None, user_id=user_id)
+                elif obj.id in result["disabled"]:
+                    cls._log_audit(uow.session, obj, action="SOFT_DELETE", changes=None, user_id=user_id)
+
+            return result
+
+        return cls._execute(action="Eliminando masivamente", func=do_bulk_delete, success_msg="Operación masiva finalizada.")
 
     @classmethod
     def set_active(cls, obj_id: int, user_context: Optional[UserContext] = None):
@@ -197,4 +225,42 @@ class BaseService:
             obj_id=obj_id,
             func=do_activate,
             success_msg=SUCCESS_UPDATE
+        )
+    
+    @classmethod
+    def bulk_set_active(cls, obj_ids: list[int], user_context: Optional[UserContext] = None):
+        def do_bulk_activate(uow):
+            if not hasattr(cls.repository.model, 'active'):
+                raise AppException(detail=f"El modelo {cls._model_name()} no soporta activación.")
+
+            # 1. Buscamos los objetos
+            objs_to_activate = uow.session.query(cls.repository.model).filter(
+                cls.repository.model.id.in_(obj_ids)
+            ).all()
+
+            if not objs_to_activate:
+                return {"activated": [], "already_active": [], "failed": obj_ids}
+
+            # 2. Ejecutamos la acción masiva
+            result = cls.repository.bulk_set_active(uow.session, obj_ids, user_context=user_context)
+
+            # 3. LOG DE AUDITORÍA (Solo para los que realmente se activaron)
+            user_id = user_context.user.id if user_context and user_context.user else None
+            
+            for obj in objs_to_activate:
+                if obj.id in result["activated"]:
+                    cls._log_audit(
+                        session=uow.session, 
+                        obj=obj, 
+                        action="ACTIVATE", 
+                        changes={"active": {"old": False, "new": True}}, 
+                        user_id=user_id
+                    )
+
+            return result
+
+        return cls._execute(
+            action="Activando masivamente", 
+            func=do_bulk_activate, 
+            success_msg="Operación masiva de activación finalizada."
         )

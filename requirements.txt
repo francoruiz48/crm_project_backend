@@ -18,3 +18,4 @@ pytest-sugar
 pytest-clarity
 pandas
 openpyxl
+slowapi

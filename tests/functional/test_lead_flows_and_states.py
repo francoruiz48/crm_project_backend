@@ -57,11 +57,11 @@ def flow_setup(api, db_session, initial_structure):
     }, headers=api.headers).json()
 
     api.client.post("/lead_fields/", json={
-        "campaign_id": c1["id"], "name": "Nombre Dummy", "field_type_code": "STRING", "lead_field_section_id": 1
+        "campaign_id": c1["id"], "name": "Nombre Dummy", "field_type_code": "STRING"
     }, headers=api.headers)
 
     api.client.post("/lead_fields/", json={
-        "campaign_id": c2["id"], "name": "Nombre Dummy", "field_type_code": "STRING", "lead_field_section_id": 1
+        "campaign_id": c2["id"], "name": "Nombre Dummy", "field_type_code": "STRING"
     }, headers=api.headers)
 
     return {
@@ -249,3 +249,223 @@ def test_lead_ghost_movement(api, flow_setup):
     
     assert res_ghost.status_code == 400
     assert "ya se encuentra en este estado" in res_ghost.text
+
+
+# =============================================================================
+# TESTS DE VALIDACIONES DE LEAD FLOW
+# =============================================================================
+
+def test_lead_flow_name_unique_per_org_create(api, flow_setup):
+    """El nombre del flujo debe ser único dentro de la organización."""
+    empty_flow_id = flow_setup["flow_empty_id"]
+
+    # 1. Al crear: Intentar crear uno con el nombre del flujo válido ("Flujo de Ventas")
+    res_create = api.client.post("/lead_flows/", json={
+        "name": "Flujo de Ventas"
+    }, headers=api.headers)
+    assert res_create.status_code == 400
+    assert "Ya existe un flujo" in res_create.text
+
+
+def test_lead_flow_name_unique_per_org_update(api, flow_setup):
+    """El nombre del flujo debe ser único dentro de la organización."""
+    empty_flow_id = flow_setup["flow_empty_id"]
+
+    # 2. Al actualizar: Intentar renombrar el flujo vacío al nombre del flujo válido
+    res_update = api.client.put(f"/lead_flows/{empty_flow_id}", json={
+        "name": "Flujo de Ventas"
+    }, headers=api.headers)
+    assert res_update.status_code == 400
+    assert "Ya existe un flujo" in res_update.text
+
+
+# =============================================================================
+# TESTS DE VALIDACIONES DE CAMPAÑAS Y FLUJOS
+# =============================================================================
+
+def test_campaign_prevent_flow_change_with_leads(api, flow_setup):
+    """No se puede cambiar el lead_flow_id de una campaña si ya tiene leads."""
+    camp_valid = flow_setup["camp_valid_id"]
+    flow_empty = flow_setup["flow_empty_id"]
+
+    # Creamos un lead en la campaña válida
+    api.client.post("/leads/", json={"campaign_id": camp_valid, "values": []}, headers=api.headers)
+
+    # Intentamos cambiarle el flujo a la campaña
+    res = api.client.put(f"/campaigns/{camp_valid}", json={
+        "lead_flow_id": flow_empty
+    }, headers=api.headers)
+
+    assert res.status_code == 400
+    assert "ya tiene prospectos asignados" in res.text
+
+def test_campaign_allow_flow_change_without_leads(api, flow_setup):
+    """SÍ se puede cambiar el lead_flow_id de una campaña si NO tiene leads."""
+    camp_empty = flow_setup["camp_empty_id"]
+    flow_valid = flow_setup["flow_valid_id"]
+
+    # Cambiamos el flujo de la campaña vacía para que use el flujo válido
+    res = api.client.put(f"/campaigns/{camp_empty}", json={
+        "lead_flow_id": flow_valid
+    }, headers=api.headers)
+
+    assert res.status_code == 200
+    assert res.json()["lead_flow_id"] == flow_valid
+
+
+# =============================================================================
+# TESTS DE ELIMINACIÓN Y REORDENAMIENTO DE ESTADOS (LeadState)
+# =============================================================================
+
+def test_lead_state_prevent_delete_initial(api, flow_setup):
+    """El sistema debe bloquear la eliminación de un estado inicial."""
+    state_initial_id = flow_setup["state_nuevo_id"]
+
+    res = api.client.delete(f"/lead_states/{state_initial_id}", headers=api.headers)
+    
+    assert res.status_code == 400
+    assert "No se puede eliminar un estado inicial" in res.text
+
+def test_lead_state_delete_reorders_open_states(api):
+    """Al eliminar un estado OPEN, los estados siguientes deben reordenarse (restar 1 a su orden)."""
+    # 1. Creamos un flujo temporal exclusivo para este test
+    f_res = api.client.post("/lead_flows/", json={"name": "Reorder Flow"}, headers=api.headers).json()
+    f_id = f_res["id"]
+
+    # 2. Creamos 3 estados OPEN (El backend les asignará Order 1, 2 y 3)
+    s1 = api.client.post("/lead_states/", json={"lead_flow_id": f_id, "name": "S1", "category": "OPEN", "is_initial": True}, headers=api.headers).json()
+    s2 = api.client.post("/lead_states/", json={"lead_flow_id": f_id, "name": "S2", "category": "OPEN"}, headers=api.headers).json()
+    s3 = api.client.post("/lead_states/", json={"lead_flow_id": f_id, "name": "S3", "category": "OPEN"}, headers=api.headers).json()
+
+    assert s1["order"] == 1
+    assert s2["order"] == 2
+    assert s3["order"] == 3
+
+    # 3. Eliminamos el del medio (S2)
+    res_del = api.client.delete(f"/lead_states/{s2['id']}", headers=api.headers)
+    assert res_del.status_code == 200
+
+    # 4. Verificamos que S3 bajó al orden 2
+    s3_updated = api.client.get(f"/lead_states/{s3['id']}", headers=api.headers).json()
+    assert s3_updated["order"] == 2
+
+
+# =============================================================================
+# TESTS DE BULK Y "CALLEJONES SIN SALIDA" (LeadStateTransition)
+# =============================================================================
+
+def test_transition_prevent_dead_end_on_delete(api, flow_setup):
+    """Si al eliminar una transición un estado OPEN se queda con 0 salidas, debe fallar."""
+    flow_id = flow_setup["flow_valid_id"]
+    
+    # En el fixture creamos: Nuevo -> Contactado -> Ganado
+    # Si borramos (Nuevo -> Contactado), "Nuevo" se queda en 0 salidas.
+    
+    # 1. Obtener las transiciones del flujo
+    res_trans = api.client.get(f"/lead_state_transitions/?lead_flow_id={flow_id}&page_size=10", headers=api.headers).json()
+    
+    # Buscar la transición donde el origen es "Nuevo"
+    t_nuevo_contactado = next(t for t in res_trans["items"] if t["from_state_id"] == flow_setup["state_nuevo_id"])
+
+    # 2. Intentar eliminarla
+    res_del = api.client.delete(f"/lead_state_transitions/{t_nuevo_contactado['id']}", headers=api.headers)
+    
+    assert res_del.status_code == 400
+    assert "quedaría sin ninguna ruta de salida" in res_del.text
+
+
+@pytest.fixture
+def bulk_flow_setup(api):
+    """
+    Prepara un flujo y 3 estados para aislar las pruebas de transiciones masivas.
+    """
+    f_res = api.client.post("/lead_flows/", json={"name": "Bulk Flow Tests"}, headers=api.headers).json()
+    f_id = f_res["id"]
+    
+    s1 = api.client.post("/lead_states/", json={"lead_flow_id": f_id, "name": "Paso 1", "category": "OPEN", "is_initial": True}, headers=api.headers).json()
+    s2 = api.client.post("/lead_states/", json={"lead_flow_id": f_id, "name": "Paso 2", "category": "OPEN"}, headers=api.headers).json()
+    s3 = api.client.post("/lead_states/", json={"lead_flow_id": f_id, "name": "Exito",  "category": "WON"}, headers=api.headers).json()
+
+    return {
+        "flow_id": f_id,
+        "s1_id": s1["id"],
+        "s2_id": s2["id"],
+        "s3_id": s3["id"]
+    }
+
+def test_transition_bulk_create(api, bulk_flow_setup):
+    """
+    Prueba la creación masiva de transiciones (Bulk Create).
+    """
+    f_id = bulk_flow_setup["flow_id"]
+    s1_id = bulk_flow_setup["s1_id"]
+    s2_id = bulk_flow_setup["s2_id"]
+    s3_id = bulk_flow_setup["s3_id"]
+
+    res_create = api.client.post("/lead_state_transitions/bulk", json={
+        "lead_flow_id": f_id,
+        "transitions": [
+            {"from_state_id": s1_id, "to_state_id": s2_id},
+            {"from_state_id": s2_id, "to_state_id": s3_id}
+        ]
+    }, headers=api.headers)
+    
+    assert res_create.status_code == 200
+    assert len(res_create.json()) == 2
+
+
+def test_transition_bulk_update_fails_on_dead_end(api, bulk_flow_setup):
+    """
+    Falla al hacer un update masivo si un estado OPEN queda sin salidas (Callejón sin salida).
+    """
+    f_id = bulk_flow_setup["flow_id"]
+    s1_id = bulk_flow_setup["s1_id"]
+    s2_id = bulk_flow_setup["s2_id"]
+    s3_id = bulk_flow_setup["s3_id"]
+
+    # Intentamos mandar un nuevo grafo donde S1 va a S2, y S1 va a S3.
+    # ¡Pero olvidamos ponerle una salida a S2! S2 se convertiría en un callejón sin salida.
+    res_update_fail = api.client.put("/lead_state_transitions/bulk", json={
+        "lead_flow_id": f_id,
+        "transitions": [
+            {"from_state_id": s1_id, "to_state_id": s2_id},
+            {"from_state_id": s1_id, "to_state_id": s3_id}
+        ]
+    }, headers=api.headers)
+    
+    assert res_update_fail.status_code == 400
+    assert "callejón sin salida" in res_update_fail.text
+
+
+def test_transition_bulk_update_success(api, bulk_flow_setup):
+    """
+    Prueba la actualización masiva (sincronización) de transiciones con éxito,
+    borrando lo viejo, manteniendo lo que sirve y creando lo nuevo.
+    """
+    f_id = bulk_flow_setup["flow_id"]
+    s1_id = bulk_flow_setup["s1_id"]
+    s2_id = bulk_flow_setup["s2_id"]
+    s3_id = bulk_flow_setup["s3_id"]
+
+    # 1. Establecemos un estado inicial en la base de datos (S1 -> S2 -> S3)
+    api.client.post("/lead_state_transitions/bulk", json={
+        "lead_flow_id": f_id,
+        "transitions": [
+            {"from_state_id": s1_id, "to_state_id": s2_id},
+            {"from_state_id": s2_id, "to_state_id": s3_id}
+        ]
+    }, headers=api.headers)
+
+    # 2. Corregimos el error del test anterior y agregamos una nueva ruta directa S1 -> S3. 
+    # Mantenemos la salida de S2 para evitar el callejón sin salida.
+    res_update_ok = api.client.put("/lead_state_transitions/bulk", json={
+        "lead_flow_id": f_id,
+        "transitions": [
+            {"from_state_id": s1_id, "to_state_id": s2_id}, # Ya existía (se mantiene)
+            {"from_state_id": s1_id, "to_state_id": s3_id}, # Nueva
+            {"from_state_id": s2_id, "to_state_id": s3_id}  # Ya existía (se mantiene, evita el callejón)
+        ]
+    }, headers=api.headers)
+    
+    assert res_update_ok.status_code == 200
+    assert len(res_update_ok.json()) == 3
