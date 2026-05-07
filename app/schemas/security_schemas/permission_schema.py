@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-from app.schemas.base_schema import BaseDetailResponse
+from app.schemas.base_schema import BaseDetailedResponse
 
 class PermissionResponse(BaseModel):
     name: str

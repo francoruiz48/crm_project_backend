@@ -1,5 +1,5 @@
 
-from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
+from app.schemas.base_schema import BaseDetailedResponse, BaseCreate, BaseResponse
 from pydantic import BaseModel, computed_field, Field
 from typing import List, Optional
 
@@ -17,7 +17,7 @@ class LeadFlowUpdate(BaseModel):
 class LeadFlowResponse(LeadFlowBase, BaseResponse):
     organization_id: int = Field(gt=0)
 
-class LeadFlowDetailedResponse(LeadFlowBase, BaseDetailResponse):
+class LeadFlowDetailedResponse(LeadFlowBase, BaseDetailedResponse):
     organization_id: int = Field(gt=0)
 
 class StateNodeSchema(BaseModel):

@@ -1,4 +1,4 @@
-from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
+from app.schemas.base_schema import BaseDetailedResponse, BaseCreate, BaseResponse
 from app.schemas.lead_field_schema import LeadFieldDetailedResponse, LeadFieldLiteResponse, LeadFieldResponse
 from pydantic import BaseModel, ConfigDict
 from typing import List, Optional, Union
@@ -30,7 +30,7 @@ class LeadFieldValueResponse(LeadFieldValueBase, BaseResponse):
     nomenclator_items: List[NomenclatorItemResponse] = []
     related_leads: List[RelatedLeadResponse] = []
 
-class LeadFieldValueDetailedResponse(LeadFieldValueBase, BaseDetailResponse):
+class LeadFieldValueDetailedResponse(LeadFieldValueBase, BaseDetailedResponse):
     lead_id: int
     field: Optional[LeadFieldDetailedResponse] = None
     nomenclator_items: List[NomenclatorItemResponse] = []
