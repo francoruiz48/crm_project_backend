@@ -31,3 +31,5 @@ class LeadStateResponse(LeadStateBase, BaseResponse):
 class LeadStateDetailedResponse(LeadStateBase, BaseDetailResponse):
     organization_id: int
 
+class LeadStateListResponse(BaseModel):
+    data: List[LeadStateResponse]

@@ -6,6 +6,9 @@ from app.db.unit_of_work import UnitOfWork
 from app.db.repository.lead_state_repository import LeadStateRepository
 from app.schemas.lead_state_schema import LeadStateCreate
 from app.core.security import UserContext
+from app.models.lead_state import LeadState
+from app.models.lead_state_transition import LeadStateTransition
+from app.schemas.lead_state_schema import LeadStateResponse
 
 class LeadStateService(BaseService):
     repository = LeadStateRepository()
@@ -93,6 +96,36 @@ class LeadStateService(BaseService):
             cls._log_audit(uow.session, created_obj, action="CREATE", changes=state_data, user_id=created_by)
 
             return created_obj
+
+    @classmethod
+    def get_allowed_next_states(cls, current_state_id: int, user_context: Optional[UserContext] = None):
+        """
+        Devuelve una lista de los estados a los que un lead puede transicionar,
+        basado en las rutas definidas en el LeadFlowGraph.
+        """
+        def do_get(uow):
+            
+            # 1. Validar que el estado actual exista y pertenezca a la organización
+            current_state = cls.repository.get_by_id(uow.session, current_state_id, user_context=user_context)
+            if not current_state:
+                cls._not_found(current_state_id)
+
+            # 2. Consultar los estados destino permitidos
+            next_states = uow.session.query(LeadState).join(
+                LeadStateTransition, LeadState.id == LeadStateTransition.to_state_id
+            ).filter(
+                LeadStateTransition.from_state_id == current_state_id
+            ).order_by(
+                LeadState.order.asc() # Ordenamos para que en el front el dropdown quede prolijo
+            ).all()
+
+            return [LeadStateResponse.model_validate(state) for state in next_states]
+
+        return cls._execute(
+            action="Obtener siguientes estados permitidos", 
+            obj_id=current_state_id, 
+            func=do_get
+        )
 
     @classmethod
     def update(cls, obj_id: int, obj_in, user_context: Optional[UserContext] = None):
