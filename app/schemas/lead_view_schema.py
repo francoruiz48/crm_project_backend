@@ -1,5 +1,5 @@
 
-from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
+from app.schemas.base_schema import BaseDetailedResponse, BaseCreate, BaseResponse
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional
 
@@ -28,6 +28,6 @@ class LeadViewUpdate(BaseModel):
 class LeadViewResponse(LeadViewBase, BaseResponse):
     organization_id: int
 
-class LeadViewDetailedResponse(LeadViewBase, BaseDetailResponse):
+class LeadViewDetailedResponse(LeadViewBase, BaseDetailedResponse):
     organization_id: int
 

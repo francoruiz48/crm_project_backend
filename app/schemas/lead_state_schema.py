@@ -1,5 +1,5 @@
 
-from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
+from app.schemas.base_schema import BaseDetailedResponse, BaseCreate, BaseResponse
 from pydantic import BaseModel, computed_field, Field
 from typing import List, Dict, Any, Optional
 
@@ -28,6 +28,8 @@ class LeadStateUpdate(BaseModel):
 class LeadStateResponse(LeadStateBase, BaseResponse):
     organization_id: int
 
-class LeadStateDetailedResponse(LeadStateBase, BaseDetailResponse):
+class LeadStateDetailedResponse(LeadStateBase, BaseDetailedResponse):
     organization_id: int
 
+class LeadStateListResponse(BaseModel):
+    data: List[LeadStateResponse]

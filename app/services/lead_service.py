@@ -5,6 +5,7 @@ from app.core.constans import ALLOWED_DOCUMENT_TYPES, ALLOWED_IMAGE_TYPES, DATE_
 from app.core.exceptions.exceptions import ValidationError 
 from app.models.lead import Lead
 from app.models.audit.lead_activity_history import LeadActivityHistory
+from app.services.automation_engine import AutomationEngine
 from app.services.base_service import BaseService
 from app.db.repository.lead_repository import LeadRepository
 from app.db.repository.lead_field_repository import LeadFieldRepository
@@ -486,13 +487,22 @@ class LeadService(BaseService):
         context_data = cls._fill_missing_fields(context_data, current_campaign_defs)
         context_data = cls._apply_defaults(context_data, current_campaign_defs)
 
-        # 5. Calcular (Los cálculos suelen ser seguros, si fallan dan None)
+        # 5. INYECCIÓN DEL MOTOR DE AUTOMATIZACIÓN
+        event = "ON_CREATE" if not is_simulation else "SIMULATION" 
+        context_data, automation_audit = AutomationEngine.run(
+            session=uow.session, 
+            campaign_id=campaign_id, 
+            context_data=context_data, 
+            event=event
+        )
+
+        # 6. Calcular (Los cálculos suelen ser seguros, si fallan dan None)
         context_data = cls._evaluate_calculated_fields(context_data, current_campaign_defs)
 
-        # 6. Chequear Duplicados (Agrega a errors si falla)
+        # 7. Chequear Duplicados (Agrega a errors si falla)
         cls._check_duplicates(uow.session, campaign_id, context_data, current_campaign_defs, errors)
         
-        # 7. Validar Reglas y Tipos (Agrega a errors si falla)
+        # 8. Validar Reglas y Tipos (Agrega a errors si falla)
         cls._validate_processed_data(uow, context_data, current_campaign_defs, errors, current_lead_id=None)
         
         # --- VERIFICACIÓN FINAL ---
@@ -500,7 +510,7 @@ class LeadService(BaseService):
             # Lanzamos la excepción con la LISTA de errores
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
 
-        # 8. Preparar estructura
+        # 9. Preparar estructura
         clean_values = cls._reconstruct_items_for_repo(context_data, current_campaign_defs)
         
         return clean_values, context_data, current_campaign_defs
@@ -807,7 +817,18 @@ class LeadService(BaseService):
                     db_values[v.field_id] = val
                 
                 full_context = {**db_values, **incoming_data}
+
+                #INYECCIÓN DEL MOTOR DE AUTOMATIZACIÓN (ON_UPDATE)
+                full_context, automation_audit = AutomationEngine.run(
+                    session=uow.session,
+                    campaign_id=current_lead.campaign_id,
+                    context_data=full_context,
+                    event="ON_UPDATE"
+                )
+
+                #Calcular los campos calculados con el contexto completo (DB + incoming)
                 full_context = cls._evaluate_calculated_fields(full_context, current_campaign_defs)
+                #Validar reglas 
                 cls._validate_processed_data(uow, full_context, current_campaign_defs, errors, current_lead_id=obj_id)
                 
                 if errors:
@@ -816,6 +837,9 @@ class LeadService(BaseService):
                 for field in current_campaign_defs:
                     if field.field_type_code == "CALCULATED" and field.id in full_context:
                         incoming_data[field.id] = full_context[field.id]
+
+                for auto_fid, auto_data in automation_audit.items():
+                    incoming_data[auto_fid] = auto_data["new_value"]
 
 
                 # --- HISTORIAL DEL LEAD ---
@@ -847,11 +871,16 @@ class LeadService(BaseService):
                         display_old = cls._translate_value_for_history(uow.session, field_def, old_val)
                         display_new = cls._translate_value_for_history(uow.session, field_def, new_val)
                         
-                        history_changes[fid] = {
+                        history_change_data = {
                             "field_name": field_def.name,
                             "old_value": display_old,
                             "new_value": display_new
                         }
+
+                        if fid in automation_audit:
+                            history_change_data["source_rule"] = automation_audit[fid]["source_rule"]
+
+                        history_changes[fid] = history_change_data
 
                 # Persistencia
                 clean_values = cls._reconstruct_items_for_repo(incoming_data, current_campaign_defs)

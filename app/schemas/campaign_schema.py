@@ -1,5 +1,5 @@
 
-from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
+from app.schemas.base_schema import BaseDetailedResponse, BaseCreate, BaseResponse
 from pydantic import BaseModel, computed_field, Field
 from typing import Optional
 
@@ -23,7 +23,7 @@ class CampaignUpdate(BaseModel):
 class CampaignResponse(CampaignBase, BaseResponse):
     organization_id : int
 
-class CampaignDetailedResponse(CampaignBase, BaseDetailResponse):
+class CampaignDetailedResponse(CampaignBase, BaseDetailedResponse):
     organization_id : int
 
 

@@ -1,5 +1,5 @@
 
-from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
+from app.schemas.base_schema import BaseDetailedResponse, BaseCreate, BaseResponse
 from pydantic import BaseModel, computed_field, Field
 from typing import List, Dict, Any, Optional
 
@@ -18,6 +18,6 @@ class NomenclatorItemResponse(NomenclatorItemBase, BaseResponse):
     parent_item: Optional["NomenclatorItemResponse"] = None
     organization_id: Optional[int] = Field(default=None, gt=0)
 
-class NomenclatorItemDetailedResponse(NomenclatorItemBase, BaseDetailResponse):
+class NomenclatorItemDetailedResponse(NomenclatorItemBase, BaseDetailedResponse):
     parent_item: Optional["NomenclatorItemResponse"] = None
     organization_id: Optional[int] = Field(default=None, gt=0)

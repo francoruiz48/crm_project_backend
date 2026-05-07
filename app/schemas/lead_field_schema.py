@@ -1,4 +1,4 @@
-from app.schemas.base_schema import BaseCreate, BaseDetailResponse, BaseResponse
+from app.schemas.base_schema import BaseCreate, BaseDetailedResponse, BaseResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from app.schemas.nomenclator_schema import NomenclatorResponse
@@ -65,7 +65,7 @@ class LeadFieldLiteResponse(BaseModel, BaseResponse):
     title_order: Optional[int] = None
 
 
-class LeadFieldDetailedResponse(LeadFieldBase, BaseDetailResponse):
+class LeadFieldDetailedResponse(LeadFieldBase, BaseDetailedResponse):
     field_template_name: Optional[str] = None
     field_type: Optional[LeadFieldTypeResponse]
     field_subtype: Optional[LeadFieldSubtypeResponse]

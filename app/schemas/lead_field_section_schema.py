@@ -1,5 +1,5 @@
 from typing import Optional
-from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
+from app.schemas.base_schema import BaseDetailedResponse, BaseCreate, BaseResponse
 from pydantic import BaseModel, Field
 
 
@@ -15,7 +15,7 @@ class LeadFieldSectionUpdate(BaseModel):
 class LeadFieldSectionResponse(LeadFieldSectionBase, BaseResponse):
     organization_id: int
 
-class LeadFieldSectionDetailedResponse(LeadFieldSectionBase, BaseDetailResponse):
+class LeadFieldSectionDetailedResponse(LeadFieldSectionBase, BaseDetailedResponse):
     organization_id: int
 
 

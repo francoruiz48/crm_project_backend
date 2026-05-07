@@ -9,7 +9,7 @@ from app.models.lead_routing_policy import (
     VALID_OPERATORS, VALID_RANGE_OPS_MIN, VALID_RANGE_OPS_MAX,
     VALID_LOGICAL_OPS, LIST_OPERATORS, NATIVE_FIELDS,
 )
-from app.schemas.base_schema import BaseResponse, BaseDetailResponse, BaseCreate
+from app.schemas.base_schema import BaseResponse, BaseDetailedResponse, BaseCreate
 
 
 # ===========================================================================
@@ -168,7 +168,7 @@ class LeadRoutingPolicyResponse(LeadRoutingPolicyBase, BaseResponse):
     organization_id: int
 
 
-class LeadRoutingPolicyDetailedResponse(LeadRoutingPolicyBase, BaseDetailResponse):
+class LeadRoutingPolicyDetailedResponse(LeadRoutingPolicyBase, BaseDetailedResponse):
     organization_id: int
     conditions: List[LeadRoutingConditionResponse] = []
 

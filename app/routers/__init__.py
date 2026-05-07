@@ -36,6 +36,7 @@ from app.controllers.tag_controller import router as tag_router
 from app.controllers.web_form_controller import router as web_form_router
 from app.controllers.web_form_public_controller import router as web_form_public_router
 from app.controllers.lead_flow_graph_controller import router as lead_flow_graph_router
+from app.controllers.field_automation_controller import router as field_automation_router
 
 router = APIRouter()
 
@@ -76,3 +77,4 @@ router.include_router(tag_router)
 router.include_router(web_form_router)
 router.include_router(web_form_public_router)
 router.include_router(lead_flow_graph_router)
+router.include_router(field_automation_router)

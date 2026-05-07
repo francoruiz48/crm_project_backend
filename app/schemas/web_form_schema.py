@@ -1,6 +1,6 @@
 from typing import Optional, List
 from pydantic import BaseModel, Field
-from app.schemas.base_schema import BaseCreate, BaseResponse, BaseDetailResponse
+from app.schemas.base_schema import BaseCreate, BaseResponse, BaseDetailedResponse
 from app.schemas.web_form_field_schema import WebFormFieldCreate, WebFormFieldResponse
 
 class ThemeConfig(BaseModel):
@@ -57,7 +57,7 @@ class WebFormResponse(WebFormBase, BaseResponse):
     campaign_id: int
     public_uuid: str
 
-class WebFormDetailedResponse(WebFormResponse, BaseDetailResponse):
+class WebFormDetailedResponse(WebFormResponse, BaseDetailedResponse):
     fields: List[WebFormFieldResponse] = Field(default_factory=list)
 
 # --- RESPUESTA PÚBLICA (Para el endpoint expuesto) ---
