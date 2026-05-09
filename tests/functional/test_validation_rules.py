@@ -271,9 +271,10 @@ def test_validation_rule_date_logic(api, initial_structure):
     
     # Creamos campo Fecha Nacimiento
     res_field = api.client.post("/lead_fields/", json={
-        "field_template_code": "BIRTH_DATE",
-        "campaign_id": camp_id,
-        "order": 3
+        "name": "Fecha Nacimiento Test",
+        "field_type_code": "DATE",
+        "field_subtype_code": "BIRTH_DATE",
+        "campaign_id": camp_id
     }, headers=api.headers)
     f_id = res_field.json()["id"]
 

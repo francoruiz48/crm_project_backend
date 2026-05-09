@@ -1,7 +1,6 @@
 from typing import Dict, Any, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-
 from app.models.field_automation import FieldAutomation
 from app.schemas.field_automation_schema import (
     RuleGroup, RuleCondition, LogicalOperatorEnum, 
@@ -95,13 +94,17 @@ class AutomationEngine:
         target_val = condition.value
         op = condition.operator
 
-        # --- MAGIA: Variables de Macro (Fechas relativas) ---
         if isinstance(target_val, str):
+            now = datetime.utcnow() # Calculamos la hora exacta una sola vez
+            
             if target_val == "{{CURRENT_DATE}}":
-                target_val = datetime.utcnow().strftime(DATE_FORMAT)
+                target_val = now.strftime(DATE_FORMAT)
             elif target_val == "{{CURRENT_DATETIME}}":
-                # Usá tu constante DATE_TIME_FORMAT aquí si la tenés importada
-                target_val = datetime.utcnow().strftime(DATE_TIME_FORMAT)
+                target_val = now.strftime(DATE_TIME_FORMAT)
+            elif target_val == "{{YESTERDAY}}":
+                target_val = (now - timedelta(days=1)).strftime(DATE_FORMAT)
+            elif target_val == "{{TOMORROW}}":
+                target_val = (now + timedelta(days=1)).strftime(DATE_FORMAT)
 
         is_empty = actual_val is None or actual_val == "" or actual_val == []
         if op == ConditionOperatorEnum.IS_EMPTY: return is_empty
@@ -113,7 +116,7 @@ class AutomationEngine:
             if isinstance(val, list): return set(str(v).strip() for v in val)
             return {str(val).strip()}
 
-        print(f"Evaluando condición: Campo {condition.field_id} {op} '{condition.value}' (Valor actual: '{actual_val}', Valor objetivo procesado: '{target_val}')")
+        
         if op == ConditionOperatorEnum.EQUALS:
             return _to_set(actual_val) == _to_set(target_val)
             

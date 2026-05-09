@@ -128,18 +128,6 @@ STANDARD_FIELD_TEMPLATES = {
     # =========================================================================
     # 4. FECHAS Y EDADES
     # =========================================================================
-    "BIRTH_DATE": FieldTemplate(
-        code="BIRTH_DATE",
-        name="Fecha de Nacimiento",
-        field_type_code="DATE",
-        rules=[
-            {
-                "template_code": "DATE_PAST",
-                "template_params": {},
-                "error_message": "La fecha debe ser en el pasado."
-            }
-        ]
-    ),
     "BIRTH_DATE_ADULT": FieldTemplate(
         code="BIRTH_DATE_ADULT",
         name="Fecha de Nacimiento (+18)",

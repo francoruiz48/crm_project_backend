@@ -36,17 +36,12 @@ ROUTING_FORBIDDEN_FIELD_TYPES = {
 # Operadores válidos según tipo de campo
 OPERATOR_RULES: dict[str, set[str]] = {
     "STRING":    {"eq", "neq", "like", "ilike"},
-    "EMAIL":     {"eq", "neq", "like", "ilike"},
-    "PHONE":     {"eq", "neq", "like", "ilike"},
     "INT":       {"eq", "neq", "gt", "lt", "gte", "lte"},
     "NUMBER":    {"eq", "neq", "gt", "lt", "gte", "lte"},
-    "MONEY":     {"eq", "neq", "gt", "lt", "gte", "lte"},
-    "RATING":    {"eq", "neq", "gt", "lt", "gte", "lte"},
     "DATE":      {"eq", "neq", "gt", "lt", "gte", "lte"},
     "DATE_TIME": {"eq", "neq", "gt", "lt", "gte", "lte"},
     "BOOL":      {"eq", "neq"},
     "SELECTOR":  {"eq", "eq_strict", "neq", "in", "not_in"},
-    "CHECKBOX":  {"eq", "eq_strict", "neq", "in", "not_in"},
     "CALCULATED":{"eq", "neq", "gt", "lt", "gte", "lte", "like", "ilike"},
     # Nativos
     "_NATIVE_DATE": {"eq", "neq", "gt", "lt", "gte", "lte"},

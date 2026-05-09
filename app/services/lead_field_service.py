@@ -187,8 +187,30 @@ class LeadFieldService(BaseService):
                 errors.append({"field": "field_type_code", "message": f"El tipo '{field_type_code}' no existe."})
             else:
                 has_subtypes = len(field_type.subtypes) > 0
+                
+                # --- MAGIA: AUTO-ASIGNACIÓN DE SUBTIPO ---
                 if has_subtypes and not subtype_code:
-                    errors.append({"field": "field_subtype_code", "message": "Este tipo de campo requiere un subtipo."})
+                    if field_type_code in ["SELECTOR", "FILE"]:
+                        # Estos tipos OBLIGAN al usuario a decidir.
+                        errors.append({"field": "field_subtype_code", "message": f"El tipo '{field_type_code}' requiere que seleccione un subtipo explícitamente."})
+                    else:
+                        # Fallbacks automáticos basados en tus seeds
+                        fallback_map = {
+                            "STRING": "STRING",
+                            "NUMBER": "NUMBER",
+                            "BOOL": "BOOL",
+                            "DATE": "DATE_ONLY",
+                            "DATE_TIME": "DATE_TIME"
+                        }
+                        
+                        auto_subtype = fallback_map.get(field_type_code)
+                        if auto_subtype:
+                            subtype_code = auto_subtype
+                            data["field_subtype_code"] = auto_subtype # Inyectamos en data para guardarlo
+                        else:
+                            errors.append({"field": "field_subtype_code", "message": "Este tipo de campo requiere un subtipo."})
+
+                # Validación estándar si ya tenemos el subtype_code (enviado o auto-asignado)
                 if subtype_code:
                     valid_subtype = any(s.code == subtype_code for s in field_type.subtypes)
                     if not valid_subtype:
