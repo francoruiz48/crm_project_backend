@@ -32,6 +32,7 @@ class ActionTypeEnum(str, Enum):
     CLEAR_VALUE = "CLEAR_VALUE"
     COPY_FROM_FIELD = "COPY_FROM_FIELD"
     SET_CURRENT_DATE = "SET_CURRENT_DATE"
+    SET_CURRENT_DATETIME = "SET_CURRENT_DATETIME"
 
 # ==========================================
 # 2. ESQUEMAS DEL ÁRBOL JSONB
