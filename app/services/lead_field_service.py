@@ -253,6 +253,16 @@ class LeadFieldService(BaseService):
             else:
                 cls._check_order_uniqueness(uow.session, campaign_id, order, errors)
 
+            is_vis = data.get("is_visible", True)
+            is_req = data.get("required", False)
+            is_pri = data.get("is_primary", False)
+
+            if not is_vis:
+                if is_req:
+                    errors.append({"field": "required", "message": "Un campo oculto (is_visible=False) no puede ser obligatorio."})
+                if is_pri:
+                    errors.append({"field": "is_primary", "message": "Un campo oculto no puede marcarse como identificador principal."})
+
             # --- 6. CHECK FINAL ---
             if errors:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
