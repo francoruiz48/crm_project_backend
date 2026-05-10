@@ -76,7 +76,6 @@ class LeadController(BaseController):
                 files_map = {}
                 avatar_file = None
                 for key, value in form.items():
-                    # --- CAMBIO AQUÍ: Usamos hasattr en lugar de isinstance ---
                     # Verificamos si tiene 'filename', lo cual confirma que es un UploadFile
                     if key.startswith("file_") and hasattr(value, "filename"):
                         try:

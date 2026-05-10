@@ -26,7 +26,7 @@ class CampaignService(BaseService):
         if target_audience == "B2B":
             # Campos para Venta a Empresas
             default_fields = [
-                {"name": "Nombre", "field_type_code": "STRING", "required": True, "is_primary": False, "order": 1},
+                {"name": "Nombre", "field_type_code": "STRING", "required": True, "is_primary": False, "order": 1, "title_order": 1},
                 {"name": "Razón Social", "field_type_code": "STRING", "required": True, "is_primary": False, "order": 2},
                 {"name": "Teléfono", "field_type_code": "STRING", "field_subtype_code": "PHONE", "required": False, "order": 4},
                 {"name": "Email", "field_type_code": "STRING", "field_subtype_code": "EMAIL", "required": False, "order": 5},
@@ -35,11 +35,10 @@ class CampaignService(BaseService):
         elif target_audience == "B2C":
                 # Campos para Venta a Personas
                 default_fields = [
-                    {"name": "Nombre", "field_type_code": "STRING", "required": True, "is_primary": False, "order": 1},
-                    {"name": "Apellido", "field_type_code": "STRING", "required": True, "is_primary": False, "order": 2},
-                    {"name": "Email", "field_type_code": "STRING", "field_subtype_code": "EMAIL", "required": False, "order": 3},
-                    {"name": "Celular", "field_type_code": "STRING", "field_subtype_code": "MOBILE", "required": False, "order": 4},
-                    {"name": "Fecha de Nacimiento", "field_type_code": "DATE", "field_subtype_code": "BIRTH_DATE", "required": False, "order": 5}
+                    {"name": "Nombre Completo", "field_type_code": "STRING", "required": True, "is_primary": False, "order": 1, "title_order": 1},
+                    {"name": "Email", "field_type_code": "STRING", "field_subtype_code": "EMAIL", "required": False, "order": 2},
+                    {"name": "Celular", "field_type_code": "STRING", "field_subtype_code": "MOBILE", "required": False, "order": 3},
+                    {"name": "Fecha de Nacimiento", "field_type_code": "DATE", "field_subtype_code": "BIRTH_DATE", "required": False, "order": 4}
                 ]
 
         for field_data in default_fields:
