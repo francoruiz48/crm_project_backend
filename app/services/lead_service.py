@@ -434,7 +434,15 @@ class LeadService(BaseService):
 
     @classmethod
     def _enrich_lead_with_urls(cls, lead):
-        if not lead or not lead.field_values: return lead
+        if not lead: return lead
+        
+        # 1. Enriquecer la URL de la foto de perfil nativa
+        if hasattr(lead, 'picture_url') and lead.picture_url:
+            # Asumiendo que get_public_url no duplica el dominio si ya lo tiene
+            lead.picture_url = StorageService.get_public_url(lead.picture_url)
+
+        # 2. Enriquecer los campos dinámicos tipo FILE
+        if not lead.field_values: return lead
         for fv in lead.field_values:
             if fv.field and fv.field.field_type_code == "FILE":
                 if fv.value: 
@@ -520,7 +528,7 @@ class LeadService(BaseService):
     # ---------------------------------------------------------
 
     @classmethod
-    def create(cls, obj_in, user_context: Optional[UserContext] = None, files_map: dict = None):
+    def create(cls, obj_in, user_context: Optional[UserContext] = None, files_map: dict = None, avatar_file: UploadFile = None):
         # NOTA: Ya no necesitamos try/except ValidationError globales envolventes, 
         # porque _prepare_creation_data gestiona la lista y lanza HTTPException.
         with UnitOfWork() as uow:
@@ -559,12 +567,20 @@ class LeadService(BaseService):
                 lead_obj = None, # Aún no existe, se asigna antes de crear
             )
 
+            # Si el frontend manda un string directo (ej. URL ya subida)
+            picture_url = getattr(obj_in, 'picture_url', None)
+
+            if avatar_file:
+                StorageService.validate_file(avatar_file, ALLOWED_IMAGE_TYPES)
+                picture_url = StorageService.upload_file(avatar_file, folder="avatars")
+
             # Persistencia Real (Ahora inyectamos el current_state_id)
             lead_data = {
                 'campaign_id': obj_in.campaign_id,
                 'current_state_id': initial_state.id,
                 'contact_state_id': initial_contact_state.id if initial_contact_state else None,
-                'team_id': assigned_team_id
+                'team_id': assigned_team_id,
+                'picture_url': picture_url
             }
 
             lead = cls.repository.create(uow.session, lead_data, user_context=user_context)
@@ -758,7 +774,7 @@ class LeadService(BaseService):
             }
 
     @classmethod
-    def update(cls, obj_id: int, obj_in, files_map: dict = None, user_context: Optional[UserContext] = None):
+    def update(cls, obj_id: int, obj_in, files_map: dict = None, user_context: Optional[UserContext] = None, avatar_file: UploadFile = None):
         errors = [] 
         
         with UnitOfWork() as uow:
@@ -777,6 +793,12 @@ class LeadService(BaseService):
 
             # Update base
             lead_data = obj_in.model_dump(exclude_unset=True, exclude={"values", "tag_ids"})
+
+            if avatar_file:
+                StorageService.validate_file(avatar_file, ALLOWED_IMAGE_TYPES)
+                picture_url = StorageService.upload_file(avatar_file, folder="avatars")
+                lead_data["picture_url"] = picture_url
+
             if lead_data:
                 cls.repository.update(uow.session, obj_id, lead_data, user_context=user_context)
 

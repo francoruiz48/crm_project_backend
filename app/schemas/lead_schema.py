@@ -13,7 +13,7 @@ class LeadBase(BaseModel):
     assigned_to_user_id: Optional[int] = Field(default=None, gt=0)
     team_id: Optional[int] = Field(default=None, gt=0)
     contact_state_id: Optional[int] = Field(default=None, gt=0)
-    
+    picture_url: Optional[str] = None
 
 class LeadCreate(LeadBase, BaseCreate):
     values: List[LeadFieldValueCreate]

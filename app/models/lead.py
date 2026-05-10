@@ -1,6 +1,6 @@
 
 from app.models.base_model import BaseModelDB
-from sqlalchemy import Column, ForeignKey, Integer
+from sqlalchemy import Column, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 from app.models.tag import lead_tag_association
 
@@ -11,6 +11,8 @@ class Lead(BaseModelDB):
     campaign = relationship("Campaign", back_populates="leads")
     field_values = relationship("LeadFieldValue", back_populates="lead", cascade="all, delete-orphan")
     comments = relationship("LeadComment", back_populates="lead", cascade="all, delete-orphan")
+
+    picture_url = Column(String, nullable=True)
 
     organization_id = Column(Integer, ForeignKey("organization.id"), nullable=False)
     organization = relationship("Organization", foreign_keys=[organization_id])
