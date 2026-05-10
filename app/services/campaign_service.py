@@ -9,11 +9,47 @@ from app.db.repository.workspace_repository import WorkspaceRepository
 from fastapi import status, HTTPException
 from app.core.security import UserContext
 from app.models.lead import Lead
+from app.schemas.lead_field_schema import LeadFieldCreate
+from app.services.lead_field_service import LeadFieldService
 
 class CampaignService(BaseService):
     repository = CampaignRepository
     workspace_repository = WorkspaceRepository
     lead_flow_repository = LeadFlowRepository
+    lead_field_service = LeadFieldService
+
+    @classmethod
+    def _create_default_fields(cls, uow, target_audience: str, campaign_id: int, user_context: UserContext):
+        # 3. LÓGICA DE TEMPLATES B2B vs B2C
+        default_fields = []
+        
+        if target_audience == "B2B":
+            # Campos para Venta a Empresas
+            default_fields = [
+                {"name": "Nombre", "field_type_code": "STRING", "required": True, "is_primary": False, "order": 1, "title_order": 1},
+                {"name": "Razón Social", "field_type_code": "STRING", "required": True, "is_primary": False, "order": 2},
+                {"name": "Teléfono", "field_type_code": "STRING", "field_subtype_code": "PHONE", "required": False, "order": 4},
+                {"name": "Email", "field_type_code": "STRING", "field_subtype_code": "EMAIL", "required": False, "order": 5},
+                {"name": "Sitio Web", "field_type_code": "STRING", "field_subtype_code": "WEBSITE", "required": False, "order": 6},
+            ]
+        elif target_audience == "B2C":
+                # Campos para Venta a Personas
+                default_fields = [
+                    {"name": "Nombre Completo", "field_type_code": "STRING", "required": True, "is_primary": False, "order": 1, "title_order": 1},
+                    {"name": "Email", "field_type_code": "STRING", "field_subtype_code": "EMAIL", "required": False, "order": 2},
+                    {"name": "Celular", "field_type_code": "STRING", "field_subtype_code": "MOBILE", "required": False, "order": 3},
+                    {"name": "Fecha de Nacimiento", "field_type_code": "DATE", "field_subtype_code": "BIRTH_DATE", "required": False, "order": 4}
+                ]
+
+        for field_data in default_fields:
+            field_data["campaign_id"] = campaign_id
+            schema_in = LeadFieldCreate(**field_data)
+            
+            cls.lead_field_service.create_within_session(
+                session=uow.session, 
+                obj_in=schema_in, 
+                user_context=user_context
+            )
 
     @classmethod
     def create(cls, obj_in, user_context: Optional[UserContext] = None):
@@ -63,11 +99,15 @@ class CampaignService(BaseService):
             data = obj_in.model_dump(exclude={"lead_flow_id"}) 
             data["lead_flow_id"] = target_lead_flow_id
 
+            target_audience = data.pop("target_audience", None)
+
             # 1. Crear la campaña base
             new_campaign = cls.repository.create(uow.session, data, user_context=user_context)
             
             # 2. Flush para que la BD le asigne un ID a new_campaign (necesario para el log)
             uow.session.flush() 
+
+            cls._create_default_fields(uow, target_audience, new_campaign.id, user_context)
 
             # 3. LOG DE AUDITORÍA (Llamamos al helper del BaseService)
             cls._log_audit(

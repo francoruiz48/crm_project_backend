@@ -53,7 +53,6 @@ def get_dynamic_value(val_str):
     ("POSTAL_CODE", "C1425AB", "C 1425"), # Tiene espacio, falla ALPHANUMERIC
 
     # 4. FECHAS Y EDADES
-    ("BIRTH_DATE", "__PAST__", "__FUTURE__"), 
     ("BIRTH_DATE_ADULT", "__ADULT__", "__MINOR__"), # MINOR falla la regla de MIN_AGE
     ("APPOINTMENT_DATE", "__NEXT_MONDAY__", "__NEXT_SUNDAY__"), # Sunday falla IS_WEEKDAY
 

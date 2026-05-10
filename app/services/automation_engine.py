@@ -1,12 +1,12 @@
 from typing import Dict, Any, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-
 from app.models.field_automation import FieldAutomation
 from app.schemas.field_automation_schema import (
     RuleGroup, RuleCondition, LogicalOperatorEnum, 
     ConditionOperatorEnum, ActionTypeEnum, AutomationAction
 )
+from app.core.constans import DATE_FORMAT, DATE_TIME_FORMAT
 
 class AutomationEngine:
     
@@ -94,6 +94,18 @@ class AutomationEngine:
         target_val = condition.value
         op = condition.operator
 
+        if isinstance(target_val, str):
+            now = datetime.utcnow() # Calculamos la hora exacta una sola vez
+            
+            if target_val == "{{CURRENT_DATE}}":
+                target_val = now.strftime(DATE_FORMAT)
+            elif target_val == "{{CURRENT_DATETIME}}":
+                target_val = now.strftime(DATE_TIME_FORMAT)
+            elif target_val == "{{YESTERDAY}}":
+                target_val = (now - timedelta(days=1)).strftime(DATE_FORMAT)
+            elif target_val == "{{TOMORROW}}":
+                target_val = (now + timedelta(days=1)).strftime(DATE_FORMAT)
+
         is_empty = actual_val is None or actual_val == "" or actual_val == []
         if op == ConditionOperatorEnum.IS_EMPTY: return is_empty
         if op == ConditionOperatorEnum.IS_NOT_EMPTY: return not is_empty
@@ -103,11 +115,8 @@ class AutomationEngine:
         def _to_set(val):
             if isinstance(val, list): return set(str(v).strip() for v in val)
             return {str(val).strip()}
-            
-        def _to_float(val):
-            try: return float(val)
-            except: return 0.0
 
+        
         if op == ConditionOperatorEnum.EQUALS:
             return _to_set(actual_val) == _to_set(target_val)
             
@@ -120,11 +129,21 @@ class AutomationEngine:
         if op == ConditionOperatorEnum.NOT_CONTAINS:
             return not _to_set(target_val).issubset(_to_set(actual_val))
 
-        if op == ConditionOperatorEnum.GREATER_THAN:
-            return _to_float(actual_val) > _to_float(target_val)
-            
-        if op == ConditionOperatorEnum.LESS_THAN:
-            return _to_float(actual_val) < _to_float(target_val)
+        # --- COMPARACIÓN INTELIGENTE (Números y Fechas) ---
+        if op in (ConditionOperatorEnum.GREATER_THAN, ConditionOperatorEnum.LESS_THAN):
+            try:
+                # 1. Intentamos comparar numéricamente (vital para que 10 sea mayor que 2)
+                val_a = float(actual_val)
+                val_t = float(target_val)
+                if op == ConditionOperatorEnum.GREATER_THAN: return val_a > val_t
+                if op == ConditionOperatorEnum.LESS_THAN: return val_a < val_t
+            except (ValueError, TypeError):
+                # 2. Fallback a String. 
+                # ¡Las fechas en formato YYYY-MM-DD se ordenan y comparan perfectamente así!
+                str_a = str(actual_val).strip()
+                str_t = str(target_val).strip()
+                if op == ConditionOperatorEnum.GREATER_THAN: return str_a > str_t
+                if op == ConditionOperatorEnum.LESS_THAN: return str_a < str_t
 
         return False
 
@@ -147,7 +166,10 @@ class AutomationEngine:
                 new_value = None
 
             elif action.type == ActionTypeEnum.SET_CURRENT_DATE:
-                new_value = datetime.utcnow().strftime("%Y-%m-%d")
+                new_value = datetime.utcnow().strftime(DATE_FORMAT)
+
+            elif action.type == ActionTypeEnum.SET_CURRENT_DATETIME: 
+                new_value = datetime.utcnow().strftime(DATE_TIME_FORMAT)
 
             elif action.type == ActionTypeEnum.COPY_FROM_FIELD:
                 # Solo copiamos si el origen existe y no está vacío

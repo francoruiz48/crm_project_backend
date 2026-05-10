@@ -26,12 +26,23 @@ class ConditionOperatorEnum(str, Enum):
     LESS_THAN = "LESS_THAN"
     IS_EMPTY = "IS_EMPTY"
     IS_NOT_EMPTY = "IS_NOT_EMPTY"
+    STARTS_WITH = "STARTS_WITH"
+    ENDS_WITH = "ENDS_WITH"
+    IS_PAST = "IS_PAST"         
+    IS_FUTURE = "IS_FUTURE"
 
 class ActionTypeEnum(str, Enum):
     SET_VALUE = "SET_VALUE"
     CLEAR_VALUE = "CLEAR_VALUE"
     COPY_FROM_FIELD = "COPY_FROM_FIELD"
     SET_CURRENT_DATE = "SET_CURRENT_DATE"
+    SET_CURRENT_DATETIME = "SET_CURRENT_DATETIME"
+
+    INCREMENT = "INCREMENT"
+    DECREMENT = "DECREMENT"      
+    
+    APPEND_TO_LIST = "APPEND_TO_LIST"    # Agrega un ID sin pisar los que ya tiene
+    REMOVE_FROM_LIST = "REMOVE_FROM_LIST"
 
 # ==========================================
 # 2. ESQUEMAS DEL ÁRBOL JSONB

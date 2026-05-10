@@ -86,7 +86,7 @@ def get_global_nomenclator(name: str) -> tuple[list, int | None]:
     if name in _nom_cache:
         return _nom_cache[name]
 
-    r = api_get("/nomenclators", params={"search": name, "global_nomenclator": "true", "page_size": 50})
+    r = api_get("/nomenclators", params={"search": name, "search_fields": "name", "page_size": 50})
     if r.status_code != 200:
         log(f"Error buscando nomenclador global '{name}': {r.text}", "ERR")
         return [], None
@@ -614,12 +614,12 @@ def build_org_salud():
         f["nombre"]       = create_field(camp_pacientes, sec_personal, template_code="FIRST_NAME",   required=True,  is_primary=True, title_order=1)
         f["apellido"]     = create_field(camp_pacientes, sec_personal, template_code="LAST_NAME",    required=True,  is_primary=True, title_order=2)
         f["dni"]          = create_field(camp_pacientes, sec_personal, template_code="DNI_ARG",       required=True,  is_primary=True)
-        f["fecha_nac"]    = create_field(camp_pacientes, sec_personal, template_code="BIRTH_DATE",    required=True)
+        f["fecha_nac"]    = create_field(camp_pacientes, sec_personal, name="Fecha de Nacimiento", type_code="DATE", subtype_code="BIRTH_DATE",    required=True)
         _, _gnom = get_global_nomenclator("Genero")
         f["genero"]       = create_field(camp_pacientes, sec_personal, name="Género", type_code="SELECTOR",
                                           subtype_code="SELECTOR_SIMPLE", nom_id=_gnom)
-        f["email"]        = create_field(camp_pacientes, sec_personal, name="Email",   type_code="EMAIL",  required=True)
-        f["telefono"]     = create_field(camp_pacientes, sec_personal, name="Teléfono",type_code="PHONE",  subtype_code="MOBILE")
+        f["email"]        = create_field(camp_pacientes, sec_personal, name="Email",   type_code="STRING", subtype_code="EMAIL", required=True)
+        f["telefono"]     = create_field(camp_pacientes, sec_personal, name="Teléfono",type_code="STRING",  subtype_code="MOBILE", required=True)
 
         items_os_camp, nom_os_camp = get_or_create_campaign_nomenclator(
             "Cobertura Médica", ["OSDE", "Swiss Medical", "Galeno", "PAMI", "Particular", "Sancor Salud"], camp_pacientes
@@ -759,21 +759,21 @@ def build_org_salud():
     if camp_estetica:
         fe["nombre"]      = create_field(camp_estetica, sec_est_1, template_code="FIRST_NAME", required=True, is_primary=True, title_order=1)
         fe["apellido"]    = create_field(camp_estetica, sec_est_1, template_code="LAST_NAME",  required=True, title_order=2)
-        fe["email"]       = create_field(camp_estetica, sec_est_1, name="Email",    type_code="EMAIL",  required=True, is_primary=True)
-        fe["telefono"]    = create_field(camp_estetica, sec_est_1, name="Teléfono", type_code="PHONE",  subtype_code="MOBILE", required=True)
+        fe["email"]       = create_field(camp_estetica, sec_est_1, name="Email",    type_code="STRING", subtype_code="EMAIL", required=True, is_primary=True)
+        fe["telefono"]    = create_field(camp_estetica, sec_est_1, name="Teléfono", type_code="STRING",  subtype_code="MOBILE", required=True)
         fe["edad"]        = create_field(camp_estetica, sec_est_1, template_code="AGE")
         fe["instagram"]   = create_field(camp_estetica, sec_est_1, template_code="INSTAGRAM_USER")
         fe["tratamiento"] = create_field(camp_estetica, sec_est_2, name="Tratamiento Solicitado",
                                           type_code="SELECTOR", subtype_code="SELECTOR_MULTIPLE", nom_id=nom_trat)
         fe["zona"]        = create_field(camp_estetica, sec_est_2, name="Zona a Tratar",
                                           type_code="SELECTOR", subtype_code="SELECTOR_SIMPLE", nom_id=nom_zona)
-        fe["presupuesto"] = create_field(camp_estetica, sec_est_2, name="Presupuesto Aprobado (USD)", type_code="MONEY")
+        fe["presupuesto"] = create_field(camp_estetica, sec_est_2, name="Presupuesto Aprobado (USD)", type_code="NUMBER", subtype_code="MONEY")
         fe["fecha_trat"]  = create_field(camp_estetica, sec_est_2, name="Fecha Tratamiento",          type_code="DATE_TIME")
         fe["sesiones"]    = create_field(camp_estetica, sec_est_2, name="Nro Sesiones",                type_code="INT",    default_value="1")
-        fe["costo_ses"]   = create_field(camp_estetica, sec_est_2, name="Costo por Sesión (USD)",      type_code="MONEY")
+        fe["costo_ses"]   = create_field(camp_estetica, sec_est_2, name="Costo por Sesión (USD)",      type_code="NUMBER", subtype_code="MONEY")
         fe["costo_total"] = create_field(camp_estetica, sec_est_2, name="Costo Total (USD)",           type_code="CALCULATED",
                                           expression='{Nro Sesiones} * {Costo por Sesión (USD)}')
-        fe["satisfaccion"]= create_field(camp_estetica, sec_est_3, name="Satisfacción",               type_code="RATING",  subtype_code="STAR_RATING")
+        fe["satisfaccion"]= create_field(camp_estetica, sec_est_3, name="Satisfacción",               type_code="NUMBER",  subtype_code="STAR_RATING")
         fe["notas_post"]  = create_field(camp_estetica, sec_est_3, name="Notas Post-Tratamiento",      type_code="STRING")
         fe["foto_antes"]  = create_field(camp_estetica, sec_est_3, name="Foto Antes",                  type_code="FILE",   subtype_code="FILE_IMAGE", is_visible=True)
 
@@ -958,9 +958,9 @@ def build_org_inmobiliaria():
         flds = {}
         flds["nombre"]     = create_field(camp_id, sec_contacto, template_code="FIRST_NAME", required=True, is_primary=True, title_order=1)
         flds["apellido"]   = create_field(camp_id, sec_contacto, template_code="LAST_NAME",  required=True, title_order=2)
-        flds["email"]      = create_field(camp_id, sec_contacto, name="Email",    type_code="EMAIL",  required=True, is_primary=True)
-        flds["telefono"]   = create_field(camp_id, sec_contacto, name="Teléfono", type_code="PHONE",  subtype_code="MOBILE", required=True)
-        flds["whatsapp"]   = create_field(camp_id, sec_contacto, name="WhatsApp", type_code="PHONE",  subtype_code="WHATSAPP")
+        flds["email"]      = create_field(camp_id, sec_contacto, name="Email",    type_code="STRING", subtype_code="EMAIL", required=True, is_primary=True)
+        flds["telefono"]   = create_field(camp_id, sec_contacto, name="Teléfono", type_code="STRING",  subtype_code="MOBILE", required=True)
+        flds["whatsapp"]   = create_field(camp_id, sec_contacto, name="WhatsApp", type_code="STRING",  subtype_code="WHATSAPP")
         flds["dni"]        = create_field(camp_id, sec_contacto, template_code="DNI_ARG")
         flds["tipo_prop"]  = create_field(camp_id, sec_busqueda, name="Tipo de Propiedad",
                                            type_code="SELECTOR", subtype_code="SELECTOR_MULTIPLE", nom_id=nom_tipo_prop)
@@ -974,23 +974,23 @@ def build_org_inmobiliaria():
                                            type_code="SELECTOR", subtype_code="SELECTOR_SIMPLE", nom_id=nom_estado_prop)
 
         if tipo_operacion in ("venta", "inversores"):
-            flds["presup_usd"]  = create_field(camp_id, sec_finanzas, name="Presupuesto (USD)",     type_code="MONEY")
+            flds["presup_usd"]  = create_field(camp_id, sec_finanzas, name="Presupuesto (USD)",     type_code="NUMBER", subtype_code="MONEY")
             flds["financiado"]  = create_field(camp_id, sec_finanzas, name="Busca Financiamiento",  type_code="BOOL", default_value="false")
             flds["cuotas"]      = create_field(camp_id, sec_finanzas, name="Cuotas Disponibles",    type_code="INT")
             flds["rentabilidad"]= create_field(camp_id, sec_finanzas, name="Rentabilidad Esperada (%)", type_code="CALCULATED",
                                                expression='IF({Presupuesto (USD)} > 0, ROUND(({Presupuesto (USD)} * 0.06), 0), 0)')
         else:
-            flds["alquiler_max"]= create_field(camp_id, sec_finanzas, name="Alquiler Máximo (ARS)", type_code="MONEY")
-            flds["expensas_max"]= create_field(camp_id, sec_finanzas, name="Expensas Máximas (ARS)",type_code="MONEY")
+            flds["alquiler_max"]= create_field(camp_id, sec_finanzas, name="Alquiler Máximo (ARS)", type_code="NUMBER", subtype_code="MONEY")
+            flds["expensas_max"]= create_field(camp_id, sec_finanzas, name="Expensas Máximas (ARS)",type_code="NUMBER", subtype_code="MONEY")
             flds["total_max"]   = create_field(camp_id, sec_finanzas, name="Total Máximo (ARS)",    type_code="CALCULATED",
                                                expression='{Alquiler Máximo (ARS)} + {Expensas Máximas (ARS)}')
 
         flds["canal_origen"] = create_field(camp_id, sec_seguimiento, name="Canal de Origen",  type_code="STRING")
         flds["primer_cont"]  = create_field(camp_id, sec_seguimiento, name="Primer Contacto",   type_code="DATE_TIME")
         flds["ult_seguim"]   = create_field(camp_id, sec_seguimiento, name="Último Seguimiento",type_code="DATE_TIME")
-        flds["rating_cli"]   = create_field(camp_id, sec_seguimiento, name="Calidad del Lead",  type_code="RATING",  subtype_code="NPS")
+        flds["rating_cli"]   = create_field(camp_id, sec_seguimiento, name="Calidad del Lead",  type_code="NUMBER",  subtype_code="NPS")
         flds["notas"]        = create_field(camp_id, sec_seguimiento, name="Notas Comerciales", type_code="STRING")
-        flds["website_ref"]  = create_field(camp_id, sec_seguimiento, name="Sitio Web Referido",type_code="URL",  subtype_code="WEBSITE")
+        flds["website_ref"]  = create_field(camp_id, sec_seguimiento, name="Sitio Web Referido",type_code="STRING",  subtype_code="WEBSITE")
 
         # Validaciones
         if flds.get("ambientes"):
@@ -1072,7 +1072,7 @@ def build_org_inmobiliaria():
         give_team_campaign_access(team_ventas, camp_ventas)
     flds_v = setup_camp_inmob(camp_ventas, "venta") if camp_ventas else {}
     create_lead_view(camp_ventas, "Pipeline Ventas", "KANBAN", "PUBLIC") if camp_ventas else None
-    lead_ids_v = gen_leads_inmob(camp_ventas, flds_v, 500, "venta") if camp_ventas and flds_v else []
+    lead_ids_v = gen_leads_inmob(camp_ventas, flds_v, 120, "venta") if camp_ventas and flds_v else []
     log(f"    {len(lead_ids_v)} leads ventas", indent=4)
 
     # Campaña B: Alquileres
@@ -1082,7 +1082,7 @@ def build_org_inmobiliaria():
         give_team_campaign_access(team_alq, camp_alq)
     flds_a = setup_camp_inmob(camp_alq, "alquiler") if camp_alq else {}
     create_lead_view(camp_alq, "Pipeline Alquileres", "KANBAN", "PUBLIC") if camp_alq else None
-    lead_ids_a = gen_leads_inmob(camp_alq, flds_a, 500, "alquiler") if camp_alq and flds_a else []
+    lead_ids_a = gen_leads_inmob(camp_alq, flds_a, 120, "alquiler") if camp_alq and flds_a else []
     log(f"    {len(lead_ids_a)} leads alquileres", indent=4)
 
     # Campaña C: Inversores
@@ -1213,25 +1213,25 @@ def build_org_fintech():
         fc["dni"]         = create_field(camp_cred, sec_sol, template_code="DNI_ARG",     required=True, is_primary=True)
         fc["cuit"]        = create_field(camp_cred, sec_sol, template_code="CUIT_CUIL")
         fc["fecha_nac"]   = create_field(camp_cred, sec_sol, template_code="BIRTH_DATE_ADULT")
-        fc["email"]       = create_field(camp_cred, sec_sol, name="Email",    type_code="EMAIL",  required=True)
-        fc["telefono"]    = create_field(camp_cred, sec_sol, name="Teléfono", type_code="PHONE",  subtype_code="MOBILE", required=True)
+        fc["email"]       = create_field(camp_cred, sec_sol, name="Email",    type_code="STRING", subtype_code="EMAIL", required=True)
+        fc["telefono"]    = create_field(camp_cred, sec_sol, name="Teléfono", type_code="STRING",  subtype_code="MOBILE", required=True)
         _, _gnom = get_global_nomenclator("Genero")
         fc["genero"]      = create_field(camp_cred, sec_sol, name="Género",   type_code="SELECTOR", subtype_code="SELECTOR_SIMPLE", nom_id=_gnom)
         fc["situacion"]   = create_field(camp_cred, sec_sol, name="Situación Laboral",
                                           type_code="SELECTOR", subtype_code="SELECTOR_SIMPLE", nom_id=nom_situacion)
 
-        fc["monto_solic"] = create_field(camp_cred, sec_cred, name="Monto Solicitado (ARS)", type_code="MONEY",  required=True)
+        fc["monto_solic"] = create_field(camp_cred, sec_cred, name="Monto Solicitado (ARS)", type_code="NUMBER", subtype_code="MONEY",  required=True)
         fc["plazo"]       = create_field(camp_cred, sec_cred, name="Plazo (meses)",          type_code="INT",    required=True)
         fc["destino"]     = create_field(camp_cred, sec_cred, name="Destino del Crédito",
                                           type_code="SELECTOR", subtype_code="SELECTOR_SIMPLE", nom_id=nom_destino)
-        fc["ingreso"]     = create_field(camp_cred, sec_cred, name="Ingreso Mensual (ARS)",  type_code="MONEY")
+        fc["ingreso"]     = create_field(camp_cred, sec_cred, name="Ingreso Mensual (ARS)",  type_code="NUMBER", subtype_code="MONEY")
         fc["relacion"]    = create_field(camp_cred, sec_anal, name="Relación Cuota/Ingreso (%)", type_code="CALCULATED",
                                           expression='IF(AND({Ingreso Mensual (ARS)} > 0, {Plazo (meses)} > 0), ROUND(({Monto Solicitado (ARS)} / {Plazo (meses)}) / {Ingreso Mensual (ARS)} * 100, 1), 0)')
         fc["riesgo"]      = create_field(camp_cred, sec_anal, name="Nivel de Riesgo",         type_code="CALCULATED",
                                           expression='IF({Relación Cuota/Ingreso (%)} = 0, "Sin datos", IF({Relación Cuota/Ingreso (%)} <= 25, "Bajo", IF({Relación Cuota/Ingreso (%)} <= 40, "Medio", "Alto")))')
         fc["score"]       = create_field(camp_cred, sec_anal, name="Score Crediticio",         type_code="INT")
-        fc["aprobado"]    = create_field(camp_cred, sec_anal, name="Monto Aprobado (ARS)",     type_code="MONEY")
-        fc["tasa"]        = create_field(camp_cred, sec_anal, name="Tasa Aplicada (%)",        type_code="NUMBER")
+        fc["aprobado"]    = create_field(camp_cred, sec_anal, name="Monto Aprobado (ARS)",     type_code="NUMBER", subtype_code="MONEY")
+        fc["tasa"]        = create_field(camp_cred, sec_anal, name="Tasa Aplicada (%)",        type_code="NUMBER", subtype_code="PERCENTAGE")
         fc["obs"]         = create_field(camp_cred, sec_anal, name="Observaciones Analista",   type_code="STRING")
 
         if fc.get("monto_solic"):
@@ -1396,23 +1396,23 @@ def build_org_concesionaria():
         fa["nombre"]   = create_field(camp_id, sec_comp, template_code="FIRST_NAME", required=True, is_primary=True, title_order=1)
         fa["apellido"] = create_field(camp_id, sec_comp, template_code="LAST_NAME",  required=True, title_order=2)
         fa["dni"]      = create_field(camp_id, sec_comp, template_code="DNI_ARG",     required=True, is_primary=True)
-        fa["email"]    = create_field(camp_id, sec_comp, name="Email",    type_code="EMAIL",  required=True)
-        fa["telefono"] = create_field(camp_id, sec_comp, name="Teléfono", type_code="PHONE",  subtype_code="MOBILE", required=True)
+        fa["email"]    = create_field(camp_id, sec_comp, name="Email",    type_code="STRING", subtype_code="EMAIL", required=True)
+        fa["telefono"] = create_field(camp_id, sec_comp, name="Teléfono", type_code="STRING",  subtype_code="MOBILE", required=True)
         fa["marca"]    = create_field(camp_id, sec_veh,  name="Marca",    type_code="SELECTOR", subtype_code="SELECTOR_SIMPLE", nom_id=nom_marca)
         fa["tipo_veh"] = create_field(camp_id, sec_veh,  name="Tipo de Vehículo",
                                        type_code="SELECTOR", subtype_code="SELECTOR_SIMPLE", nom_id=nom_tipo_veh)
         fa["comb"]     = create_field(camp_id, sec_veh,  name="Combustible",
                                        type_code="SELECTOR", subtype_code="SELECTOR_MULTIPLE", nom_id=nom_comb)
         fa["color_pref"]=create_field(camp_id, sec_veh,  name="Color Preferido",  type_code="STRING")
-        fa["presup"]   = create_field(camp_id, sec_veh,  name="Presupuesto (USD)", type_code="MONEY")
+        fa["presup"]   = create_field(camp_id, sec_veh,  name="Presupuesto (USD)", type_code="NUMBER", subtype_code="MONEY")
         fa["fin"]      = create_field(camp_id, sec_neg,  name="Forma de Financiación",
                                        type_code="SELECTOR", subtype_code="SELECTOR_SIMPLE", nom_id=nom_fin_veh)
         fa["entrega"]  = create_field(camp_id, sec_neg,  name="Fecha Estimada de Entrega", type_code="DATE")
-        fa["descuento"]= create_field(camp_id, sec_neg,  name="Descuento Ofrecido (%)",    type_code="NUMBER")
-        fa["precio_final"]=create_field(camp_id, sec_neg, name="Precio Final (USD)",       type_code="MONEY")
+        fa["descuento"]= create_field(camp_id, sec_neg,  name="Descuento Ofrecido (%)",    type_code="NUMBER", subtype_code="PERCENTAGE")
+        fa["precio_final"]=create_field(camp_id, sec_neg, name="Precio Final (USD)",       type_code="NUMBER", subtype_code="MONEY")
         fa["margen"]   = create_field(camp_id, sec_neg,  name="Margen Bruto (%)",          type_code="CALCULATED",
                                        expression='IF({Presupuesto (USD)} > 0, ROUND((1 - ({Precio Final (USD)} / {Presupuesto (USD)})) * 100, 1), 0)')
-        fa["satisf"]   = create_field(camp_id, sec_neg,  name="Satisfacción del Cliente",  type_code="RATING", subtype_code="STAR_RATING")
+        fa["satisf"]   = create_field(camp_id, sec_neg,  name="Satisfacción del Cliente",  type_code="NUMBER", subtype_code="STAR_RATING")
         fa["notas"]    = create_field(camp_id, sec_neg,  name="Notas del Vendedor",         type_code="STRING")
         if tipo == "usado":
             fa["km"]   = create_field(camp_id, sec_veh, name="Kilometraje Máximo (km)", type_code="INT")
@@ -1586,26 +1586,26 @@ def build_org_marketing_b2b():
         fb["rubro"]        = create_field(camp_b2b, sec_empresa, name="Rubro",
                                            type_code="SELECTOR", subtype_code="SELECTOR_MULTIPLE", nom_id=nom_rubro)
         fb["empleados"]    = create_field(camp_b2b, sec_empresa, name="Cantidad de Empleados", type_code="INT")
-        fb["website"]      = create_field(camp_b2b, sec_empresa, name="Sitio Web",             type_code="URL",  subtype_code="WEBSITE")
+        fb["website"]      = create_field(camp_b2b, sec_empresa, name="Sitio Web",             type_code="STRING",  subtype_code="WEBSITE")
         _, _pnom = get_global_nomenclator("Países")
         fb["pais"]         = create_field(camp_b2b, sec_empresa, name="País",
                                            type_code="SELECTOR", subtype_code="SELECTOR_SIMPLE", nom_id=_pnom)
 
         fb["contacto_nombre"] = create_field(camp_b2b, sec_contacto, template_code="FIRST_NAME", required=True, title_order=2)
         fb["contacto_cargo"]  = create_field(camp_b2b, sec_contacto, name="Cargo del Contacto", type_code="STRING")
-        fb["email"]           = create_field(camp_b2b, sec_contacto, name="Email",    type_code="EMAIL",  required=True)
-        fb["telefono"]        = create_field(camp_b2b, sec_contacto, name="Teléfono", type_code="PHONE",  subtype_code="MOBILE")
-        fb["linkedin"]        = create_field(camp_b2b, sec_contacto, name="LinkedIn", type_code="URL",    subtype_code="SOCIAL_MEDIA")
+        fb["email"]           = create_field(camp_b2b, sec_contacto, name="Email",    type_code="STRING", subtype_code="EMAIL", required=True)
+        fb["telefono"]        = create_field(camp_b2b, sec_contacto, name="Teléfono", type_code="STRING",  subtype_code="MOBILE")
+        fb["linkedin"]        = create_field(camp_b2b, sec_contacto, name="LinkedIn", type_code="STRING",    subtype_code="SOCIAL_MEDIA")
 
         fb["servicios"]    = create_field(camp_b2b, sec_prop, name="Servicios de Interés",
                                            type_code="SELECTOR", subtype_code="SELECTOR_MULTIPLE", nom_id=nom_servicio)
-        fb["presup_mens"]  = create_field(camp_b2b, sec_prop, name="Presupuesto Mensual (USD)", type_code="MONEY")
+        fb["presup_mens"]  = create_field(camp_b2b, sec_prop, name="Presupuesto Mensual (USD)", type_code="NUMBER", subtype_code="MONEY")
         fb["contrato_meses"]=create_field(camp_b2b, sec_prop, name="Duración del Contrato (meses)", type_code="INT")
         fb["valor_contrato"]= create_field(camp_b2b, sec_prop, name="Valor Total del Contrato (USD)", type_code="CALCULATED",
                                             expression='{Presupuesto Mensual (USD)} * {Duración del Contrato (meses)}')
-        fb["prox_reunion"]  = create_field(camp_b2b, sec_prop, name="Próxima Reunión",    type_code="DATE_TIME")
+        fb["prox_reunion"]  = create_field(camp_b2b, sec_prop, name="Próxima Reunión",    type_code="DATE_TIME", subtype_code="DATE_EVENT")
         fb["propuesta_file"]= create_field(camp_b2b, sec_prop, name="Propuesta Comercial",type_code="FILE",  subtype_code="FILE_DOCUMENT")
-        fb["nps"]           = create_field(camp_b2b, sec_prop, name="NPS del Cliente",    type_code="RATING",subtype_code="NPS")
+        fb["nps"]           = create_field(camp_b2b, sec_prop, name="NPS del Cliente",    type_code="NUMBER",subtype_code="NPS")
         fb["notas"]         = create_field(camp_b2b, sec_prop, name="Notas Internas",     type_code="STRING")
 
         if fb.get("empleados"):

@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func, inspect, or_
 from app.core.context import TENANT_ORG_ID
 from app.core.security import UserContext
+from fastapi.encoders import jsonable_encoder
 
 class BaseRepository:
     model = None
@@ -138,17 +139,17 @@ class BaseRepository:
 
     @staticmethod
     def _normalize_data(obj_data) -> Dict[str, Any]:
-        """Convierte obj_data a dict (compatible con Pydantic u dict normal)"""
+        """
+        Convierte obj_data a dict puramente nativo (compatible con Postgres JSONB).
+        Utiliza jsonable_encoder para asegurar un 'deep dump' que transforma 
+        Enums, Datetimes y modelos Pydantic anidados en tipos primitivos puros.
+        """
         if obj_data is None:
             return {}
-        # Soporte para Pydantic V2
-        if hasattr(obj_data, "model_dump"):
-            return obj_data.model_dump(exclude_unset=True)
             
-        # Soporte Legacy / Pydantic V1
-        if hasattr(obj_data, "dict"):
-            return obj_data.dict(exclude_unset=True)
-        return dict(obj_data)
+        # jsonable_encoder hace todo el trabajo sucio automáticamente, 
+        # sin importar si es Pydantic V1, V2, o un simple diccionario.
+        return jsonable_encoder(obj_data, exclude_unset=True)
     
     @staticmethod
     def _handle_integrity_error(e: IntegrityError):
