@@ -1,4 +1,4 @@
-from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
+from app.schemas.base_schema import BaseDetailedResponse, BaseCreate, BaseResponse
 from pydantic import BaseModel, computed_field, Field
 from typing import List, Dict, Any, Optional
 from app.schemas.security_schemas.user_schema import UserResponse
@@ -18,7 +18,7 @@ class TeamMemberUpdate(BaseModel):
 class TeamMemberResponse(TeamMemberBase, BaseResponse):
     pass
 
-class TeamMemberDetailedResponse(TeamMemberBase, BaseDetailResponse):
+class TeamMemberDetailedResponse(TeamMemberBase, BaseDetailedResponse):
     user: UserResponse
 
 class BulkAssignRequest(BaseModel):

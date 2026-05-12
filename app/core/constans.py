@@ -29,12 +29,12 @@ ALLOWED_DOCUMENT_TYPES = [
 
 
 INITIAL_STATES = [
-    {"name": "Ingresado", "category": "OPEN", "is_initial": True, "order": 1},
-    {"name": "Contactado", "category": "OPEN", "is_initial": False, "order": 2},
-    {"name": "Reunión Agendada", "category": "OPEN", "is_initial": False, "order": 3},
-    {"name": "Propuesta enviada", "category": "OPEN", "is_initial": False, "order": 4},
-    {"name": "Venta concretada", "category": "WON", "is_initial": False, "order": None},
-    {"name": "No interesado", "category": "LOST", "is_initial": False, "order": None},
+    {"name": "Ingresado", "category": "OPEN", "is_initial": True, "order": 1, "color": "#3b82f6", "position_x": 159, "position_y": -114.5},
+    {"name": "Contactado", "category": "OPEN", "is_initial": False, "order": 2, "color": "#3b82f6", "position_x": 122, "position_y": 56},
+    {"name": "Reunión Agendada", "category": "OPEN", "is_initial": False, "order": 3, "color": "#3b82f6", "position_x": 113, "position_y": 207},
+    {"name": "Propuesta enviada", "category": "OPEN", "is_initial": False, "order": 4, "color": "#3b82f6", "position_x": 131, "position_y": 353},
+    {"name": "Venta concretada", "category": "WON", "is_initial": False, "order": None, "color": "#22c55e", "position_x": 177, "position_y": 512},
+    {"name": "No interesado", "category": "LOST", "is_initial": False, "order": None, "color": "#ef4444", "position_x": 601, "position_y": 240},
 ]
 
 INITIAL_ROUTES_STATES = [

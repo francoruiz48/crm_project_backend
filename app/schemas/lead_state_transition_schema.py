@@ -1,5 +1,5 @@
 
-from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
+from app.schemas.base_schema import BaseDetailedResponse, BaseCreate, BaseResponse
 from pydantic import BaseModel, computed_field, Field
 from typing import List, Dict, Any, Optional
 from app.schemas.lead_state_schema import LeadStateDetailedResponse
@@ -19,10 +19,9 @@ class LeadStateTransitionUpdate(BaseModel):
 class LeadStateTransitionResponse(LeadStateTransitionBase, BaseResponse):
     pass
 
-class LeadStateTransitionDetailedResponse(LeadStateTransitionBase, BaseDetailResponse):
-    from_state : LeadStateDetailedResponse
+class LeadStateTransitionDetailedResponse(LeadStateTransitionBase, BaseDetailedResponse):
+    from_state : Optional[LeadStateDetailedResponse]
     to_state : LeadStateDetailedResponse
-
 
 class TransitionPair(BaseModel):
     from_state_id: int = Field(gt=0)

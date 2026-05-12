@@ -16,7 +16,7 @@ class BaseService:
     # ---------- helpers internos ----------
     @classmethod
     def _model_name(cls):
-        return cls.repository.model.__name__
+        return cls.repository.model.__name__ if cls.repository else "General"
 
     @classmethod
     def _not_found(cls, obj_id):
@@ -127,12 +127,13 @@ class BaseService:
                 cls._not_found(obj_id)
 
             payload = cls.repository._normalize_data(obj_data)
+            old_data = cls.repository._normalize_data(old_obj)
             
             # 2. Armar el diff (viejo vs nuevo)
             changes = {}
             for key, new_val in payload.items():
-                if hasattr(old_obj, key):
-                    old_val = getattr(old_obj, key)
+                if hasattr(old_data, key):
+                    old_val = getattr(old_data, key)
                     if old_val != new_val:
                         changes[key] = {"old": old_val, "new": new_val}
             

@@ -5,6 +5,7 @@ from app.core.constans import ALLOWED_DOCUMENT_TYPES, ALLOWED_IMAGE_TYPES, DATE_
 from app.core.exceptions.exceptions import ValidationError 
 from app.models.lead import Lead
 from app.models.audit.lead_activity_history import LeadActivityHistory
+from app.services.automation_engine import AutomationEngine
 from app.services.base_service import BaseService
 from app.db.repository.lead_repository import LeadRepository
 from app.db.repository.lead_field_repository import LeadFieldRepository
@@ -433,7 +434,15 @@ class LeadService(BaseService):
 
     @classmethod
     def _enrich_lead_with_urls(cls, lead):
-        if not lead or not lead.field_values: return lead
+        if not lead: return lead
+        
+        # 1. Enriquecer la URL de la foto de perfil nativa
+        if hasattr(lead, 'picture_url') and lead.picture_url:
+            # Asumiendo que get_public_url no duplica el dominio si ya lo tiene
+            lead.picture_url = StorageService.get_public_url(lead.picture_url)
+
+        # 2. Enriquecer los campos dinámicos tipo FILE
+        if not lead.field_values: return lead
         for fv in lead.field_values:
             if fv.field and fv.field.field_type_code == "FILE":
                 if fv.value: 
@@ -486,13 +495,22 @@ class LeadService(BaseService):
         context_data = cls._fill_missing_fields(context_data, current_campaign_defs)
         context_data = cls._apply_defaults(context_data, current_campaign_defs)
 
-        # 5. Calcular (Los cálculos suelen ser seguros, si fallan dan None)
+        # 5. INYECCIÓN DEL MOTOR DE AUTOMATIZACIÓN
+        event = "ON_CREATE" if not is_simulation else "SIMULATION" 
+        context_data, automation_audit = AutomationEngine.run(
+            session=uow.session, 
+            campaign_id=campaign_id, 
+            context_data=context_data, 
+            event=event
+        )
+
+        # 6. Calcular (Los cálculos suelen ser seguros, si fallan dan None)
         context_data = cls._evaluate_calculated_fields(context_data, current_campaign_defs)
 
-        # 6. Chequear Duplicados (Agrega a errors si falla)
+        # 7. Chequear Duplicados (Agrega a errors si falla)
         cls._check_duplicates(uow.session, campaign_id, context_data, current_campaign_defs, errors)
         
-        # 7. Validar Reglas y Tipos (Agrega a errors si falla)
+        # 8. Validar Reglas y Tipos (Agrega a errors si falla)
         cls._validate_processed_data(uow, context_data, current_campaign_defs, errors, current_lead_id=None)
         
         # --- VERIFICACIÓN FINAL ---
@@ -500,7 +518,7 @@ class LeadService(BaseService):
             # Lanzamos la excepción con la LISTA de errores
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
 
-        # 8. Preparar estructura
+        # 9. Preparar estructura
         clean_values = cls._reconstruct_items_for_repo(context_data, current_campaign_defs)
         
         return clean_values, context_data, current_campaign_defs
@@ -510,7 +528,7 @@ class LeadService(BaseService):
     # ---------------------------------------------------------
 
     @classmethod
-    def create(cls, obj_in, user_context: Optional[UserContext] = None, files_map: dict = None):
+    def create(cls, obj_in, user_context: Optional[UserContext] = None, files_map: dict = None, avatar_file: UploadFile = None):
         # NOTA: Ya no necesitamos try/except ValidationError globales envolventes, 
         # porque _prepare_creation_data gestiona la lista y lanza HTTPException.
         with UnitOfWork() as uow:
@@ -549,12 +567,20 @@ class LeadService(BaseService):
                 lead_obj = None, # Aún no existe, se asigna antes de crear
             )
 
+            # Si el frontend manda un string directo (ej. URL ya subida)
+            picture_url = getattr(obj_in, 'picture_url', None)
+
+            if avatar_file:
+                StorageService.validate_file(avatar_file, ALLOWED_IMAGE_TYPES)
+                picture_url = StorageService.upload_file(avatar_file, folder="avatars")
+
             # Persistencia Real (Ahora inyectamos el current_state_id)
             lead_data = {
                 'campaign_id': obj_in.campaign_id,
                 'current_state_id': initial_state.id,
                 'contact_state_id': initial_contact_state.id if initial_contact_state else None,
-                'team_id': assigned_team_id
+                'team_id': assigned_team_id,
+                'picture_url': picture_url
             }
 
             lead = cls.repository.create(uow.session, lead_data, user_context=user_context)
@@ -748,7 +774,7 @@ class LeadService(BaseService):
             }
 
     @classmethod
-    def update(cls, obj_id: int, obj_in, files_map: dict = None, user_context: Optional[UserContext] = None):
+    def update(cls, obj_id: int, obj_in, files_map: dict = None, user_context: Optional[UserContext] = None, avatar_file: UploadFile = None):
         errors = [] 
         
         with UnitOfWork() as uow:
@@ -767,6 +793,12 @@ class LeadService(BaseService):
 
             # Update base
             lead_data = obj_in.model_dump(exclude_unset=True, exclude={"values", "tag_ids"})
+
+            if avatar_file:
+                StorageService.validate_file(avatar_file, ALLOWED_IMAGE_TYPES)
+                picture_url = StorageService.upload_file(avatar_file, folder="avatars")
+                lead_data["picture_url"] = picture_url
+
             if lead_data:
                 cls.repository.update(uow.session, obj_id, lead_data, user_context=user_context)
 
@@ -807,7 +839,18 @@ class LeadService(BaseService):
                     db_values[v.field_id] = val
                 
                 full_context = {**db_values, **incoming_data}
+
+                #INYECCIÓN DEL MOTOR DE AUTOMATIZACIÓN (ON_UPDATE)
+                full_context, automation_audit = AutomationEngine.run(
+                    session=uow.session,
+                    campaign_id=current_lead.campaign_id,
+                    context_data=full_context,
+                    event="ON_UPDATE"
+                )
+
+                #Calcular los campos calculados con el contexto completo (DB + incoming)
                 full_context = cls._evaluate_calculated_fields(full_context, current_campaign_defs)
+                #Validar reglas 
                 cls._validate_processed_data(uow, full_context, current_campaign_defs, errors, current_lead_id=obj_id)
                 
                 if errors:
@@ -816,6 +859,9 @@ class LeadService(BaseService):
                 for field in current_campaign_defs:
                     if field.field_type_code == "CALCULATED" and field.id in full_context:
                         incoming_data[field.id] = full_context[field.id]
+
+                for auto_fid, auto_data in automation_audit.items():
+                    incoming_data[auto_fid] = auto_data["new_value"]
 
 
                 # --- HISTORIAL DEL LEAD ---
@@ -847,11 +893,16 @@ class LeadService(BaseService):
                         display_old = cls._translate_value_for_history(uow.session, field_def, old_val)
                         display_new = cls._translate_value_for_history(uow.session, field_def, new_val)
                         
-                        history_changes[fid] = {
+                        history_change_data = {
                             "field_name": field_def.name,
                             "old_value": display_old,
                             "new_value": display_new
                         }
+
+                        if fid in automation_audit:
+                            history_change_data["source_rule"] = automation_audit[fid]["source_rule"]
+
+                        history_changes[fid] = history_change_data
 
                 # Persistencia
                 clean_values = cls._reconstruct_items_for_repo(incoming_data, current_campaign_defs)

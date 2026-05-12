@@ -1,4 +1,4 @@
-from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
+from app.schemas.base_schema import BaseDetailedResponse, BaseCreate, BaseResponse
 from pydantic import BaseModel, computed_field, Field
 from typing import List, Dict, Any, Optional
 from app.schemas.team_member_schema import TeamMemberResponse
@@ -18,7 +18,7 @@ class TeamUpdate(TeamBase):
 class TeamResponse(TeamBase, BaseResponse):
     organization_id: Optional[int] = Field(default=None, gt=0)
 
-class TeamDetailedResponse(TeamBase, BaseDetailResponse):
+class TeamDetailedResponse(TeamBase, BaseDetailedResponse):
     organization_id: Optional[int] = Field(default=None, gt=0)
     members: List[TeamMemberResponse]
 

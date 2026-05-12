@@ -54,10 +54,13 @@ class StorageService:
 
     @classmethod
     def get_public_url(cls, path: str) -> str:
-        # Si el path es nulo o vacío, devolver None
-        if not path: return None
-        # Si ya es una URL completa (migración antigua), devolverla
-        if path.startswith("http"): return path
+        # Si el path es nulo, vacío, o puros espacios, devolver None
+        if not path or not str(path).strip(): 
+            return None
+            
+        # Si ya es una URL completa (migración antigua o re-inyección), devolverla
+        if str(path).startswith("http"): 
+            return path
         
         client = cls.get_client()
         return client.storage.from_(settings.SUPABASE_BUCKET).get_public_url(path)

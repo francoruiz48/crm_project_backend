@@ -1,5 +1,5 @@
 
-from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
+from app.schemas.base_schema import BaseDetailedResponse, BaseCreate, BaseResponse
 from pydantic import BaseModel, computed_field, Field
 from typing import List, Dict, Any, Optional
 from app.schemas.lead_field_value_schema import LeadFieldValueCreate, LeadFieldValueDetailedResponse, LeadFieldValueResponse
@@ -20,7 +20,7 @@ class LeadCommentUpdate(BaseModel):
 class LeadCommentResponse(LeadCommentBase, BaseResponse):
     pass
 
-class LeadCommentDetailedResponse(LeadCommentBase, BaseDetailResponse):
+class LeadCommentDetailedResponse(LeadCommentBase, BaseDetailedResponse):
     pass
 
 

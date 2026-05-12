@@ -8,7 +8,7 @@ class BaseResponse():
         "from_attributes": True
     }
 
-class BaseDetailResponse(BaseResponse):
+class BaseDetailedResponse(BaseResponse):
     created_at: datetime
     updated_at: datetime
     active: bool

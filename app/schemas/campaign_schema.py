@@ -1,5 +1,5 @@
 
-from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
+from app.schemas.base_schema import BaseDetailedResponse, BaseCreate, BaseResponse
 from pydantic import BaseModel, computed_field, Field
 from typing import Optional
 
@@ -12,7 +12,10 @@ class CampaignBase(BaseModel):
     is_public: bool = Field(default=True)
 
 class CampaignCreate(CampaignBase, BaseCreate):
-    pass
+    target_audience: Optional[str] = Field(
+        default="", 
+        description="Puede ser 'B2B' o 'B2C'."
+    )
 
 class CampaignUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=3, max_length=100)
@@ -23,7 +26,7 @@ class CampaignUpdate(BaseModel):
 class CampaignResponse(CampaignBase, BaseResponse):
     organization_id : int
 
-class CampaignDetailedResponse(CampaignBase, BaseDetailResponse):
+class CampaignDetailedResponse(CampaignBase, BaseDetailedResponse):
     organization_id : int
 
 
