@@ -239,6 +239,33 @@ class BaseRepository:
                     end_date_str += " 23:59:59.999999"
                 query = query.filter(column <= end_date_str)
 
+        creator_name = kwargs.pop('creator_name', None)
+        creator_email = kwargs.pop('creator_email', None)
+        updater_name = kwargs.pop('updater_name', None)
+        updater_email = kwargs.pop('updater_email', None)
+
+        if creator_name or creator_email:
+            # Importación local para evitar dependencias circulares en la inicialización
+            from app.models.security_models import User 
+            
+            # Hacemos un OUTER JOIN con la tabla de usuarios
+            query = query.outerjoin(User, cls.model.created_by == User.id)
+
+            if creator_name:
+                query = query.filter(User.name.ilike(f"%{creator_name}%"))
+            if creator_email:
+                query = query.filter(User.email.ilike(f"%{creator_email}%"))
+
+        if updater_name or updater_email:
+            from app.models.security_models import User 
+            
+            query = query.outerjoin(User, cls.model.updated_by == User.id)
+
+            if updater_name:
+                query = query.filter(User.name.ilike(f"%{updater_name}%"))
+            if updater_email:
+                query = query.filter(User.email.ilike(f"%{updater_email}%"))
+
         for key, value in kwargs.items():
             if value is None:
                 continue

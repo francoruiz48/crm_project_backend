@@ -70,10 +70,14 @@ class BaseController:
                 start_date: str = Query(None, description="Fecha inicio (YYYY-MM-DD)"),
                 end_date: str = Query(None, description="Fecha fin (YYYY-MM-DD)"),
                 date_field: str = Query("created_at", description="Campo de fecha a filtrar (default: created_at)"),
+                creator_name: str = Query(None, description="Filtrar por nombre del creador"),
+                creator_email: str = Query(None, description="Filtrar por email del creador"),
+                updater_name: str = Query(None, description="Filtrar por nombre del actualizador"),
+                updater_email: str = Query(None, description="Filtrar por email del actualizador"),
                 user_context = Depends(get_current_user_roles)
             ):
                 # Definimos los parámetros reservados que no deben tratarse como filtros de columna
-                reserved_params = {"page", "page_size", "only_active", "detailed", "search", "search_fields", "order_by", "ascending", "start_date", "end_date", "date_field"}
+                reserved_params = {"page", "page_size", "only_active", "detailed", "search", "search_fields", "order_by", "ascending", "start_date", "end_date", "date_field", "creator_name", "creator_email", "updater_name", "updater_email"}
 
                 # Convertimos el string "field1,field2" en una lista ["field1", "field2"]
                 search_fields = [f.strip() for f in search_fields.split(",")] if search_fields else None
@@ -97,6 +101,10 @@ class BaseController:
                     start_date=start_date,
                     end_date=end_date,
                     date_field=date_field,
+                    creator_name=creator_name,
+                    creator_email=creator_email,
+                    updater_name=updater_name,
+                    updater_email=updater_email,
                     **dynamic_filters
                 )
 
