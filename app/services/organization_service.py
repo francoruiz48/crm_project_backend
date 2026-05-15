@@ -1,5 +1,5 @@
 from typing import Optional
-from app.core.constans import INITIAL_ROUTES_STATES, INITIAL_STATES
+from app.core.constans import INITIAL_ROUTES_STATES, INITIAL_STATES, SystemAuditLogAction
 from app.models.lead_contact_state import LeadContactState
 from app.models.lead_field_section import LeadFieldSection
 from app.services.base_service import BaseService
@@ -112,7 +112,7 @@ class OrganizationService(BaseService):
             # ----------------------------------------
 
             # LOG DE AUDITORÍA
-            cls._log_audit(uow.session, org, action="CREATE", changes=org_data, user_id=user_id)
+            cls._log_audit(uow.session, org, action=SystemAuditLogAction.CREATED, changes=org_data, user_id=user_id)
             
             return org
 

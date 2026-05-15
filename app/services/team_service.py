@@ -6,6 +6,7 @@ from app.db.repository.team_member_repository import TeamMemberRepository
 from app.models.team import Team
 from app.models.team_member import TeamMember
 from app.services.base_service import BaseService
+from app.core.constans import SystemAuditLogAction
 
 
 class TeamService(BaseService):
@@ -47,7 +48,7 @@ class TeamService(BaseService):
                 ))
                 uow.session.flush()
  
-            cls._log_audit(uow.session, new_team, action="CREATE", changes=data,
+            cls._log_audit(uow.session, new_team, action=SystemAuditLogAction.CREATED, changes=data,
                            user_id=user_context.user.id if user_context and user_context.user else None)
             return new_team
  

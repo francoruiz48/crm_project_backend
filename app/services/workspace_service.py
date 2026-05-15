@@ -1,9 +1,8 @@
 from typing import Optional
-
 from app.services.base_service import BaseService
 from app.db.repository.workspace_repository import WorkspaceRepository
 from fastapi import status, HTTPException
-from app.core.constans import DEFAULT_PAGE_SIZE
+from app.core.constans import SystemAuditLogAction
 from app.core.security import UserContext
 
 class WorkspaceService(BaseService):
@@ -33,7 +32,7 @@ class WorkspaceService(BaseService):
             uow.session.flush()
 
             # LOG DE AUDITORÍA
-            cls._log_audit(uow.session, new_ws, action="CREATE", changes=data, user_id=user_context.user.id if user_context and user_context.user else None)
+            cls._log_audit(uow.session, new_ws, action=SystemAuditLogAction.CREATED, changes=data, user_id=user_context.user.id if user_context and user_context.user else None)
 
             return new_ws
 

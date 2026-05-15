@@ -1,7 +1,7 @@
 from datetime import date, datetime
 import re
 from fastapi import HTTPException, UploadFile, status
-from app.core.constans import ALLOWED_DOCUMENT_TYPES, ALLOWED_IMAGE_TYPES, DATE_FORMAT, DATE_TIME_FORMAT, DEFAULT_PAGE_SIZE, NOMENCLATOR_FIELD_TYPES
+from app.core.constans import ALLOWED_DOCUMENT_TYPES, ALLOWED_IMAGE_TYPES, DATE_FORMAT, DATE_TIME_FORMAT, DEFAULT_PAGE_SIZE, NOMENCLATOR_FIELD_TYPES, SystemAuditLogAction
 from app.core.exceptions.exceptions import ValidationError 
 from app.models.lead import Lead
 from app.models.audit.lead_activity_history import LeadActivityHistory
@@ -611,7 +611,7 @@ class LeadService(BaseService):
                 user_id=created_by
             )
 
-            cls._log_audit(uow.session, lead, action="CREATE", changes=None, user_id=created_by)
+            cls._log_audit(uow.session, lead, action=SystemAuditLogAction.CREATED, changes=None, user_id=created_by)
         
         return cls.get_by_id(lead_id, detailed=True)
 
@@ -650,7 +650,7 @@ class LeadService(BaseService):
                 cls._log_audit(
                     session=uow.session,
                     obj=lead,
-                    action="UPDATE",
+                    action=SystemAuditLogAction.UPDATED,
                     changes={
                         "team_id": {"old": old_team, "new": lead.team_id},
                         "assigned_to_user_id": {"old": old_user, "new": lead.assigned_to_user_id}
@@ -714,7 +714,7 @@ class LeadService(BaseService):
 
             # Pasamos 'lead' y formateamos el old vs new
             diff_state = {"current_state_id": {"old": current_state_id, "new": new_state_id}}
-            cls._log_audit(uow.session, lead, action="UPDATE", changes=diff_state, user_id=user_context.user.id if user_context else None)
+            cls._log_audit(uow.session, lead, action=SystemAuditLogAction.UPDATED, changes=diff_state, user_id=user_context.user.id if user_context else None)
 
         # Devolvemos el Lead actualizado para el Frontend
         return cls.get_by_id(obj_id, detailed=True)
@@ -911,7 +911,7 @@ class LeadService(BaseService):
                 user_id = user_context.user.id if user_context else None
 
                 # Registro duro del sistema (con IDs)
-                cls._log_audit(uow.session, current_lead, action="UPDATE", changes=changes, user_id=user_id)
+                cls._log_audit(uow.session, current_lead, action=SystemAuditLogAction.UPDATED, changes=changes, user_id=user_id)
 
                 # Registro visual del front (Nombres legibles, "Juan Pérez" en lugar de [14])
                 if history_changes:

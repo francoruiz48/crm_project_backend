@@ -67,10 +67,13 @@ class BaseController:
                 search_fields: str = Query(None, description="Campos para búsqueda global, separados por comas"),
                 order_by: str = Query(None, description="Campo por el cual ordenar"), 
                 ascending: bool = Query(True, description="Orden ascendente (true) o descendente (false)"),
+                start_date: str = Query(None, description="Fecha inicio (YYYY-MM-DD)"),
+                end_date: str = Query(None, description="Fecha fin (YYYY-MM-DD)"),
+                date_field: str = Query("created_at", description="Campo de fecha a filtrar (default: created_at)"),
                 user_context = Depends(get_current_user_roles)
             ):
                 # Definimos los parámetros reservados que no deben tratarse como filtros de columna
-                reserved_params = {"page", "page_size", "only_active", "detailed", "search", "search_fields", "order_by", "ascending"}
+                reserved_params = {"page", "page_size", "only_active", "detailed", "search", "search_fields", "order_by", "ascending", "start_date", "end_date", "date_field"}
 
                 # Convertimos el string "field1,field2" en una lista ["field1", "field2"]
                 search_fields = [f.strip() for f in search_fields.split(",")] if search_fields else None
@@ -91,6 +94,9 @@ class BaseController:
                     search_fields=search_fields, 
                     order_by=order_by,
                     ascending=ascending,
+                    start_date=start_date,
+                    end_date=end_date,
+                    date_field=date_field,
                     **dynamic_filters
                 )
 
