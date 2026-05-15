@@ -9,6 +9,7 @@ from app.core.error_messages import (
 from app.db.unit_of_work import UnitOfWork
 from sqlalchemy.exc import SQLAlchemyError
 from app.core.security import UserContext
+from app.core.constans import SystemAuditLogAction
 
 class BaseService:
     repository = None  # Subclases deben definirlo
@@ -112,7 +113,7 @@ class BaseService:
             payload = cls.repository._normalize_data(obj_data)
             
             # LOG DE AUDITORÍA
-            cls._log_audit(uow.session, new_obj, action="CREATE", changes=payload, user_id=user_context.user.id if user_context else None)
+            cls._log_audit(uow.session, new_obj, action=SystemAuditLogAction.CREATED, changes=payload, user_id=user_context.user.id if user_context else None)
             
             return new_obj
             
@@ -143,7 +144,7 @@ class BaseService:
             
             # 4. LOG DE AUDITORÍA (Solo si realmente hubo cambios)
             if changes:
-                cls._log_audit(uow.session, updated_obj, action="UPDATE", changes=changes, user_id=user_context.user.id if user_context else None)
+                cls._log_audit(uow.session, updated_obj, action=SystemAuditLogAction.UPDATED, changes=changes, user_id=user_context.user.id if user_context else None)
             
             return updated_obj
 
@@ -161,7 +162,7 @@ class BaseService:
             result = cls.repository.delete(uow.session, obj_id, user_context=user_context)
             
             # LOG DE AUDITORÍA
-            action = "SOFT_DELETE" if result.get("action") == "disabled" else "DELETE"
+            action = SystemAuditLogAction.DISABLED if result.get("action") == "disabled" else SystemAuditLogAction.DELETED
             cls._log_audit(uow.session, obj_to_delete, action=action, changes=None, user_id=user_context.user.id if user_context else None)
             
             return result
@@ -188,9 +189,9 @@ class BaseService:
             
             for obj in objs_to_delete:
                 if obj.id in result["deleted"]:
-                    cls._log_audit(uow.session, obj, action="DELETE", changes=None, user_id=user_id)
+                    cls._log_audit(uow.session, obj, action=SystemAuditLogAction.DELETED, changes=None, user_id=user_id)
                 elif obj.id in result["disabled"]:
-                    cls._log_audit(uow.session, obj, action="SOFT_DELETE", changes=None, user_id=user_id)
+                    cls._log_audit(uow.session, obj, action=SystemAuditLogAction.DISABLED, changes=None, user_id=user_id)
 
             return result
 
@@ -214,7 +215,7 @@ class BaseService:
                 cls._log_audit(
                     session=uow.session, 
                     obj=updated_obj, 
-                    action="ACTIVATE", 
+                    action=SystemAuditLogAction.ACTIVATED, 
                     changes={"active": {"old": False, "new": True}}, 
                     user_id=user_context.user.id if user_context else None
                 )
@@ -253,7 +254,7 @@ class BaseService:
                     cls._log_audit(
                         session=uow.session, 
                         obj=obj, 
-                        action="ACTIVATE", 
+                        action=SystemAuditLogAction.ACTIVATED, 
                         changes={"active": {"old": False, "new": True}}, 
                         user_id=user_id
                     )

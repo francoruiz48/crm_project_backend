@@ -27,6 +27,16 @@ ALLOWED_DOCUMENT_TYPES = [
     "text/csv"
 ]
 
+class SystemAuditLogAction:
+    CREATED = "CREATED"
+    UPDATED = "UPDATED"
+    DELETED = "DELETED"
+    DISABLED = "DISABLED"
+    ACTIVATED = "ACTIVATED"
+    PATCHED = "PATCHED"
+    PROMOTE_SUPERUSER = "PROMOTE_SUPERUSER"
+    PROMOTE_OWNER = "PROMOTE_OWNER"
+
 
 INITIAL_STATES = [
     {"name": "Ingresado", "category": "OPEN", "is_initial": True, "order": 1, "color": "#3b82f6", "position_x": 159, "position_y": -114.5},

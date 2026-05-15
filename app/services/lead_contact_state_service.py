@@ -6,6 +6,7 @@ from app.db.unit_of_work import UnitOfWork
 from app.models.lead_contact_state import LeadContactState
 from app.db.repository.lead_contact_state_repository import LeadContactStateRepository
 from app.services.base_service import BaseService
+from app.core.constans import SystemAuditLogAction
 
 class LeadContactStateService(BaseService):
     repository = LeadContactStateRepository
@@ -43,7 +44,7 @@ class LeadContactStateService(BaseService):
             uow.session.flush()
             
             user_id = user_context.user.id if user_context and getattr(user_context, 'user', None) else None
-            cls._log_audit(uow.session, new_obj, action="CREATE", changes=obj_in.model_dump(), user_id=user_id)
+            cls._log_audit(uow.session, new_obj, action=SystemAuditLogAction.CREATED, changes=obj_in.model_dump(), user_id=user_id)
             return new_obj
 
         return cls._execute(action="Crear Estado de Contacto", func=do_create)
@@ -94,7 +95,7 @@ class LeadContactStateService(BaseService):
             uow.session.flush()
             
             user_id = user_context.user.id if user_context and getattr(user_context, 'user', None) else None
-            cls._log_audit(uow.session, updated_obj, action="UPDATE", changes=obj_in.model_dump(exclude_unset=True), user_id=user_id)
+            cls._log_audit(uow.session, updated_obj, action=SystemAuditLogAction.UPDATED, changes=obj_in.model_dump(exclude_unset=True), user_id=user_id)
             return updated_obj
 
         return cls._execute(action="Actualizar Estado de Contacto", obj_id=obj_id, func=do_update)

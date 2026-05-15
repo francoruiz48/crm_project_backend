@@ -3,6 +3,7 @@ from app.db.repository.security_repositories.user_repository import UserReposito
 from app.models.security_models import User, UserOrganization
 from fastapi import HTTPException, status
 from app.core.security import UserContext
+from app.core.constans import SystemAuditLogAction
 
 class UserService(BaseService):
     repository = UserRepository
@@ -26,7 +27,7 @@ class UserService(BaseService):
 
             target_user.is_superuser = True
             
-            cls._log_audit(uow.session, target_user, action="PROMOTE_SUPERUSER", changes={"is_superuser": True}, user_id=user_context.user.id)
+            cls._log_audit(uow.session, target_user, action=SystemAuditLogAction.PROMOTE_SUPERUSER, changes={"is_superuser": True}, user_id=user_context.user.id)
             return target_user
 
         return cls._execute(action="Promover a Super usuario", obj_id=target_user_id, func=do_promote)
@@ -70,7 +71,7 @@ class UserService(BaseService):
 
             uow.session.flush()
 
-            cls._log_audit(uow.session, link, action="PROMOTE_OWNER", changes={"is_owner": True}, user_id=user_context.user.id)
+            cls._log_audit(uow.session, link, action=SystemAuditLogAction.PROMOTE_OWNER, changes={"is_owner": True}, user_id=user_context.user.id)
             return link
 
         return cls._execute(action="Promover a Propietario", obj_id=target_user_id, func=do_promote)

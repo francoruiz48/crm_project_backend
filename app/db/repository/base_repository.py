@@ -223,6 +223,22 @@ class BaseRepository:
         search_query = kwargs.pop('search', None)
         search_fields = kwargs.pop('search_fields', [])
 
+        start_date = kwargs.pop('start_date', None)
+        end_date = kwargs.pop('end_date', None)
+        date_field = kwargs.pop('date_field', 'created_at')
+
+        if (start_date or end_date) and date_field and hasattr(cls.model, date_field):
+            column = getattr(cls.model, date_field)
+            if start_date:
+                query = query.filter(column >= start_date)
+            if end_date:
+                end_date_str = end_date
+                # Si envían solo la fecha (ej: "2026-05-14"), le sumamos la hora tope 
+                # para que abarque todo el día completo y no corte a las 00:00:00.
+                if len(end_date_str) == 10:
+                    end_date_str += " 23:59:59.999999"
+                query = query.filter(column <= end_date_str)
+
         for key, value in kwargs.items():
             if value is None:
                 continue

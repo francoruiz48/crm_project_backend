@@ -3,6 +3,7 @@ from app.services.base_service import BaseService
 from app.db.repository.team_access_repository import TeamWorkspaceAccessRepository, TeamCampaignAccessRepository
 from fastapi import HTTPException, status
 from app.core.security import UserContext
+from app.core.constans import SystemAuditLogAction
 
 class TeamWorkspaceAccessService(BaseService):
     repository = TeamWorkspaceAccessRepository
@@ -26,7 +27,7 @@ class TeamWorkspaceAccessService(BaseService):
             new_member = cls.repository.create(uow.session, data, user_context=user_context)
             uow.session.flush()
             
-            cls._log_audit(uow.session, new_member, action="CREATE", changes=data, user_id=user_context.user.id if user_context and user_context.user else None)
+            cls._log_audit(uow.session, new_member, action=SystemAuditLogAction.CREATED, changes=data, user_id=user_context.user.id if user_context and user_context.user else None)
             return new_member
 
         return cls._execute(action="Dar acceso a Workspace", func=do_create)
@@ -53,7 +54,7 @@ class TeamCampaignAccessService(BaseService):
             new_member = cls.repository.create(uow.session, data, user_context=user_context)
             uow.session.flush()
             
-            cls._log_audit(uow.session, new_member, action="CREATE", changes=data, user_id=user_context.user.id if user_context and user_context.user else None)
+            cls._log_audit(uow.session, new_member, action=SystemAuditLogAction.CREATED, changes=data, user_id=user_context.user.id if user_context and user_context.user else None)
             return new_member
 
         return cls._execute(action="Dar acceso a Campaña", func=do_create)
