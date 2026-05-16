@@ -5,6 +5,7 @@ from app.db.repository.team_member_repository import TeamMemberRepository
 from app.models.team import Team
 from app.models.team_member import TeamMember
 from app.services.base_service import BaseService
+from app.core.constans import SystemAuditLogAction
  
  
 def _caller_role(session, user_context, team_id: int) -> str:
@@ -64,7 +65,7 @@ class TeamMemberService(BaseService):
             data       = obj_in.model_dump()
             new_member = cls.repository.create(uow.session, data, user_context=user_context)
             uow.session.flush()
-            cls._log_audit(uow.session, new_member, action="CREATE", changes=data,
+            cls._log_audit(uow.session, new_member, action=SystemAuditLogAction.CREATED, changes=data,
                            user_id=user_context.user.id if user_context and user_context.user else None)
             return new_member
  
@@ -95,7 +96,7 @@ class TeamMemberService(BaseService):
             updated = cls.repository.update(uow.session, obj_id, data, user_context=user_context)
             uow.session.flush()
             if changes:
-                cls._log_audit(uow.session, updated, action="UPDATE", changes=changes,
+                cls._log_audit(uow.session, updated, action=SystemAuditLogAction.UPDATED, changes=changes,
                                user_id=user_context.user.id if user_context and user_context.user else None)
             return updated
  

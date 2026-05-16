@@ -9,6 +9,7 @@ from app.schemas.lead_state_transition_schema import LeadStateTransitionBulkCrea
 from app.core.security import UserContext
 from app.models.lead_state import LeadState
 from app.models.lead_state_transition import LeadStateTransition
+from app.core.constans import SystemAuditLogAction
 
 class LeadStateTransitionService(BaseService):
     repository = LeadStateTransitionRepository()
@@ -56,7 +57,7 @@ class LeadStateTransitionService(BaseService):
             created_obj = cls.repository.create(uow.session, transition_data, user_context=user_context)
             uow.session.flush()
 
-            cls._log_audit(uow.session, created_obj, action="CREATE", changes=transition_data, user_id=created_by)
+            cls._log_audit(uow.session, created_obj, action=SystemAuditLogAction.CREATED, changes=transition_data, user_id=created_by)
 
             return created_obj
         
@@ -127,7 +128,7 @@ class LeadStateTransitionService(BaseService):
                 new_obj = cls.repository.create(uow.session, transition_data, user_context=user_context)
                 uow.session.flush()
                 
-                cls._log_audit(uow.session, new_obj, action="CREATE", changes=transition_data, user_id=created_by)
+                cls._log_audit(uow.session, new_obj, action=SystemAuditLogAction.CREATED, changes=transition_data, user_id=created_by)
                 
                 created_transitions.append(new_obj)
                 
@@ -207,7 +208,7 @@ class LeadStateTransitionService(BaseService):
             # 6. Ejecutar Eliminaciones
             for et in to_delete:
                 uow.session.delete(et) # Ahora sí funciona porque et es un objeto SQLAlchemy
-                cls._log_audit(uow.session, et, action="DELETE", changes=None, user_id=created_by)
+                cls._log_audit(uow.session, et, action=SystemAuditLogAction.DELETED, changes=None, user_id=created_by)
 
             # 7. Ejecutar Creaciones
             for pair in to_create:
@@ -219,7 +220,7 @@ class LeadStateTransitionService(BaseService):
                 transition_data.update(kwargs)
                 new_obj = cls.repository.create(uow.session, transition_data, user_context=user_context)
                 
-                cls._log_audit(uow.session, new_obj, action="CREATE", changes=transition_data, user_id=created_by)
+                cls._log_audit(uow.session, new_obj, action=SystemAuditLogAction.CREATED, changes=transition_data, user_id=created_by)
 
             uow.session.flush()
 
@@ -258,7 +259,7 @@ class LeadStateTransitionService(BaseService):
                         detail=[{"field": "general", "message": f"No se puede eliminar esta transición. El estado '{origin_state.name}' quedaría sin ninguna ruta de salida."}]
                     )
 
-            cls._log_audit(uow.session, transition, action="DELETE", changes=None, user_id=user_context.user.id if user_context and user_context.user else None)
+            cls._log_audit(uow.session, transition, action=SystemAuditLogAction.DELETED, changes=None, user_id=user_context.user.id if user_context and user_context.user else None)
             return result
 
         return cls._execute(action="Eliminar Transición", obj_id=obj_id, func=do_delete)

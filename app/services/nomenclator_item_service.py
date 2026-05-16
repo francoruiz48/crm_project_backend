@@ -6,6 +6,7 @@ from app.db.unit_of_work import UnitOfWork
 from app.models.nomenclator import Nomenclator
 from app.models.nomenclator_item import NomenclatorItem
 from app.services.base_service import BaseService
+from app.core.constans import SystemAuditLogAction
 
 class NomenclatorItemService(BaseService):
     repository = NomenclatorItemRepository
@@ -60,7 +61,7 @@ class NomenclatorItemService(BaseService):
             
             # Auditoría
             user_id = user_context.user.id if user_context and user_context.user else None
-            cls._log_audit(uow.session, new_item_response, action="CREATE", changes=obj_in.model_dump(), user_id=user_id)
+            cls._log_audit(uow.session, new_item_response, action=SystemAuditLogAction.CREATED, changes=obj_in.model_dump(), user_id=user_id)
             
             return new_item_response
 
@@ -101,7 +102,7 @@ class NomenclatorItemService(BaseService):
 
             # Auditoría
             user_id = user_context.user.id if user_context and user_context.user else None
-            cls._log_audit(uow.session, updated_item, action="UPDATE", changes=obj_in.model_dump(exclude_unset=True), user_id=user_id)
+            cls._log_audit(uow.session, updated_item, action=SystemAuditLogAction.UPDATED, changes=obj_in.model_dump(exclude_unset=True), user_id=user_id)
             
             return updated_item
 
@@ -127,7 +128,7 @@ class NomenclatorItemService(BaseService):
             
             # Auditoría
             user_id = user_context.user.id if user_context and user_context.user else None
-            cls._log_audit(uow.session, current_item, action="DELETE", changes=None, user_id=user_id)
+            cls._log_audit(uow.session, current_item, action=SystemAuditLogAction.DELETED, changes=None, user_id=user_id)
             
             return result
 

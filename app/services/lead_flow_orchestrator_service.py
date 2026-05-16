@@ -9,6 +9,7 @@ from app.models.lead_flow import LeadFlow
 from app.models.lead_state import LeadState
 from app.models.lead_state_transition import LeadStateTransition
 from app.db.repository.lead_flow_repository import LeadFlowRepository
+from app.core.constans import SystemAuditLogAction
 
 class LeadFlowOrchestratorService(BaseService):
     repository = LeadFlowRepository()
@@ -159,7 +160,7 @@ class LeadFlowOrchestratorService(BaseService):
                         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "transitions", "message": f"Diseño inválido: El estado '{state.name}' es un callejón sin salida (no tiene rutas hacia adelante)."}])
 
             # Auditoría y Retorno
-            cls._log_audit(uow.session, flow_obj, action="GRAPH_SAVED", changes=None, user_id=created_by)
+            cls._log_audit(uow.session, flow_obj, action=SystemAuditLogAction.UPDATED, changes=None, user_id=created_by)
             
             return flow_obj.id
 

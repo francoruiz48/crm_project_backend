@@ -7,6 +7,7 @@ from app.db.repository.lead_flow_repository import LeadFlowRepository
 from app.models.lead_flow import LeadFlow
 from app.core.security import UserContext
 from app.core.context import TENANT_ORG_ID
+from app.core.constans import SystemAuditLogAction
 
 class LeadFlowService(BaseService):
     repository = LeadFlowRepository()
@@ -30,7 +31,7 @@ class LeadFlowService(BaseService):
             
             new_obj = cls.repository.create(uow.session, obj_in, user_context=user_context)
             uow.session.flush()
-            cls._log_audit(uow.session, new_obj, action="CREATE", changes=obj_in.model_dump(), user_id=user_context.user.id if user_context and user_context.user else None)
+            cls._log_audit(uow.session, new_obj, action=SystemAuditLogAction.CREATED, changes=obj_in.model_dump(), user_id=user_context.user.id if user_context and user_context.user else None)
             return new_obj
 
         return cls._execute(action="Crear Flujo de Leads", func=do_create)
@@ -58,7 +59,7 @@ class LeadFlowService(BaseService):
 
             updated_obj = cls.repository.update(uow.session, obj_id, obj_in, user_context=user_context)
             uow.session.flush()
-            cls._log_audit(uow.session, updated_obj, action="UPDATE", changes=obj_in.model_dump(exclude_unset=True), user_id=user_context.user.id if user_context and user_context.user else None)
+            cls._log_audit(uow.session, updated_obj, action=SystemAuditLogAction.UPDATED, changes=obj_in.model_dump(exclude_unset=True), user_id=user_context.user.id if user_context and user_context.user else None)
             return updated_obj
 
         return cls._execute(action="Actualizar Flujo de Leads", obj_id=obj_id, func=do_update)

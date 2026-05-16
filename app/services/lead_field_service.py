@@ -10,7 +10,7 @@ from app.db.repository.lead_field_repository import LeadFieldRepository
 from app.db.repository.lead_repository import LeadRepository
 from app.db.repository.lead_field_value_repository import LeadFieldValueRepository
 from app.models.lead_field_type import LeadFieldType
-from app.core.constans import NOMENCLATOR_FIELD_TYPES
+from app.core.constans import NOMENCLATOR_FIELD_TYPES, SystemAuditLogAction
 from app.models.lead_field_value import LeadFieldValue
 from app.core.error_messages import SUCCESS_UPDATE
 from app.models.lead_field import LeadField
@@ -310,7 +310,7 @@ class LeadFieldService(BaseService):
                         field_type_code=new_field.field_type_code
                     )
 
-            cls._log_audit(session, new_field, action="CREATE", changes=data, user_id=user_context.user.id if user_context and user_context.user else None)
+            cls._log_audit(session, new_field, action=SystemAuditLogAction.CREATED, changes=data, user_id=user_context.user.id if user_context and user_context.user else None)
             return new_field
 
         except Exception as e:
@@ -399,7 +399,7 @@ class LeadFieldService(BaseService):
                 cls._recalculate_leads_formula(uow, updated_field)
             
             if changes:
-                cls._log_audit(uow.session, updated_field, action="UPDATE", changes=changes, user_id=user_context.user.id if user_context else None)
+                cls._log_audit(uow.session, updated_field, action=SystemAuditLogAction.UPDATED, changes=changes, user_id=user_context.user.id if user_context else None)
 
             return updated_field
 
@@ -454,7 +454,7 @@ class LeadFieldService(BaseService):
                 cls._log_audit(
                     uow.session, 
                     field_db, 
-                    action="ACTIVATE", 
+                    action=SystemAuditLogAction.ACTIVATED, 
                     changes={"active": {"old": False, "new": True}}, 
                     user_id=user_context.user.id if user_context and user_context.user else None
                 )
@@ -604,7 +604,7 @@ class LeadFieldService(BaseService):
                     cls._log_audit(
                         uow.session, 
                         field_instance, 
-                        action="UPDATE", 
+                        action=SystemAuditLogAction.UPDATED, 
                         changes={"order": {"old": old_val, "new": new_order}},
                         user_id=user_context.user.id if user_context and user_context.user else None
                     )

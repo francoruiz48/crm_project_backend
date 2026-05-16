@@ -11,6 +11,7 @@ from app.core.security import UserContext
 from app.models.lead import Lead
 from app.schemas.lead_field_schema import LeadFieldCreate
 from app.services.lead_field_service import LeadFieldService
+from app.core.constans import SystemAuditLogAction
 
 class CampaignService(BaseService):
     repository = CampaignRepository
@@ -113,7 +114,7 @@ class CampaignService(BaseService):
             cls._log_audit(
                 session=uow.session,
                 obj=new_campaign,
-                action="CREATE",
+                action=SystemAuditLogAction.CREATED,
                 changes=data,
                 user_id=user_context.user.id
             )
@@ -156,7 +157,7 @@ class CampaignService(BaseService):
             cls._log_audit(
                 session=uow.session,
                 obj=updated_campaign,
-                action="UPDATE",
+                action=SystemAuditLogAction.UPDATED,
                 changes=obj_in.model_dump(exclude_unset=True),
                 user_id=user_context.user.id if user_context and user_context.user else None
             )

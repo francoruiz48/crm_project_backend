@@ -5,7 +5,7 @@ from app.core.dictionaries import SYSTEM_DICTIONARIES
 
 router = APIRouter(prefix="/metadata", tags=["Metadata & Dictionaries"])
 
-@router.get("/dictionaries", response_model=Dict[str, List[Dict[str, Any]]])
+@router.get("/dictionaries", response_model=Dict[str, Any])
 def get_dictionaries(
     # Permite al frontend pedir solo lo que necesita separando por comas
     # Ejemplo: ?keys=team_roles,routing_condition_types

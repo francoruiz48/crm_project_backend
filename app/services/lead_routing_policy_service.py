@@ -20,6 +20,7 @@ from app.schemas.lead_routing_policy_schema import (
 )
 from app.services.base_service import BaseService
 from app.services.routing_rule_evaluator_service import RoutingRuleEvaluatorService
+from app.core.constans import SystemAuditLogAction
 
 
 class LeadRoutingPolicyRepository(BaseRepository):
@@ -134,7 +135,7 @@ class LeadRoutingPolicyService(BaseService):
 
             _build_conditions(uow.session, obj_in.conditions, policy.id, org_id)
 
-            cls._log_audit(uow.session, policy, action="CREATE",
+            cls._log_audit(uow.session, policy, action=SystemAuditLogAction.CREATED,
                            changes=obj_in.model_dump(exclude={"conditions"}),
                            user_id=user_context.user.id if user_context else None)
 
@@ -181,7 +182,7 @@ class LeadRoutingPolicyService(BaseService):
 
             uow.session.flush()
 
-            cls._log_audit(uow.session, policy, action="UPDATE",
+            cls._log_audit(uow.session, policy, action=SystemAuditLogAction.UPDATED,
                            changes=obj_in.model_dump(exclude_unset=True, exclude={"conditions"}),
                            user_id=user_context.user.id if user_context else None)
 
