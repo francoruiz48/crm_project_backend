@@ -51,14 +51,14 @@ def export_leads(
     """
     Descarga un Excel con todos los leads de la campaña.
     """
-    excel_file = LeadImportExportService.export_leads(db, campaign_id, user_context=user_context)
-    
-    headers = {
-        'Content-Disposition': f'attachment; filename="leads_campaign_{campaign_id}.xlsx"'
-    }
+    file_bytes, campaign_name = LeadImportExportService.export_leads(db, campaign_id, user_context)
+
+    filename = f"leads_{campaign_name}.xlsx"
+
+    print("Exportando leads, nombre del archivo:", filename)
     
     return StreamingResponse(
-        excel_file, 
-        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 
-        headers=headers
+        file_bytes, 
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
