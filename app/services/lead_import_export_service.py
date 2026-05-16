@@ -215,7 +215,11 @@ class LeadImportExportService:
                     else:
                         if "__value__" in col_map:
                             val = row[col_map["__value__"]].strip()
-                            if val:
+
+                            if val.endswith(".0"):
+                                val = val[:-2]
+
+                            if val and val.lower() not in ["nan", "none", "null"]:
                                 final_val = val
 
                     if final_val is not None:
