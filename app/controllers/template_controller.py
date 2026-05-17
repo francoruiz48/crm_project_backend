@@ -58,6 +58,7 @@ class TemplateController:
                     "name_spanish": t.name_spanish,
                     "name_english": t.name_english,
                     "description": t.description,
+                    "syntax": t.syntax,
                     "example": t.example,
                     "category": t.category,
                     "note": t.note
