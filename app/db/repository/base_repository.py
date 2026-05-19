@@ -15,6 +15,8 @@ class BaseRepository:
     schema_out = None
     schema_out_detail = None
     relationships: list = []
+    default_sort_column = "id"
+    default_sort_asc = False
 
     # ===============================================================
     # Inyección automática de Tenant (Multi-empresa)
@@ -239,6 +241,33 @@ class BaseRepository:
                     end_date_str += " 23:59:59.999999"
                 query = query.filter(column <= end_date_str)
 
+        creator_name = kwargs.pop('creator_name', None)
+        creator_email = kwargs.pop('creator_email', None)
+        updater_name = kwargs.pop('updater_name', None)
+        updater_email = kwargs.pop('updater_email', None)
+
+        if creator_name or creator_email:
+            # Importación local para evitar dependencias circulares en la inicialización
+            from app.models.security_models import User 
+            
+            # Hacemos un OUTER JOIN con la tabla de usuarios
+            query = query.outerjoin(User, cls.model.created_by == User.id)
+
+            if creator_name:
+                query = query.filter(User.name.ilike(f"%{creator_name}%"))
+            if creator_email:
+                query = query.filter(User.email.ilike(f"%{creator_email}%"))
+
+        if updater_name or updater_email:
+            from app.models.security_models import User 
+            
+            query = query.outerjoin(User, cls.model.updated_by == User.id)
+
+            if updater_name:
+                query = query.filter(User.name.ilike(f"%{updater_name}%"))
+            if updater_email:
+                query = query.filter(User.email.ilike(f"%{updater_email}%"))
+
         for key, value in kwargs.items():
             if value is None:
                 continue
@@ -268,6 +297,18 @@ class BaseRepository:
             # Si encontramos campos válidos, aplicamos un OR (uno u otro)
             if search_conditions:
                 query = query.filter(or_(*search_conditions))
+
+        # Si el Frontend NO envió un campo específico por el cual ordenar...
+        if not order_by:
+            order_by = cls.default_sort_column
+            # Usamos la dirección por defecto del repositorio si no enviaron una
+            if ascending is None:
+                ascending = cls.default_sort_asc
+        else:
+            # Si el Frontend SÍ envió un campo (ej: order_by=name), pero no la dirección,
+            # por convención general de APIs asumimos ascendente.
+            if ascending is None:
+                ascending = True
 
         if order_by and hasattr(cls.model, order_by):
             column = getattr(cls.model, order_by)

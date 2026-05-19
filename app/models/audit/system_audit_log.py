@@ -1,6 +1,8 @@
 from app.db.base_sql import Base
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, func
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import relationship
+from sqlalchemy.ext.declarative import declared_attr
 
 class SystemAuditLog(Base):
     __tablename__ = "system_audit_log"
@@ -21,3 +23,7 @@ class SystemAuditLog(Base):
     
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     created_by = Column(Integer, ForeignKey("user.id"), nullable=True)
+
+    @declared_attr
+    def creator(cls):
+        return relationship("User", primaryjoin="User.id == %s.created_by" % cls.__name__, foreign_keys=[cls.created_by], viewonly=True)

@@ -143,6 +143,26 @@ class LeadRepository(BaseRepository):
             query = cls.apply_security_filter(session, query, user_context)
 
         for f in search_params.filters:
+
+            # Si el field_id es un string y existe directamente en el modelo (Lead)
+            if isinstance(f.field_id, str) and hasattr(cls.model, f.field_id):
+                column = getattr(cls.model, f.field_id)
+                val = f.value
+                
+                if f.operator == "eq": query = query.filter(column == val)
+                elif f.operator == "neq": query = query.filter(column != val)
+                elif f.operator == "in" and isinstance(val, list): query = query.filter(column.in_(val))
+                elif f.operator == "between" and isinstance(val, list) and len(val) == 2: query = query.filter(column.between(val[0], val[1]))
+                elif f.operator == "gt": query = query.filter(column > val)
+                elif f.operator == "lt": query = query.filter(column < val)
+                elif f.operator == "gte": query = query.filter(column >= val)
+                elif f.operator == "lte": query = query.filter(column <= val)
+                elif f.operator == "like": query = query.filter(column.contains(val))
+                elif f.operator == "ilike": query = query.filter(column.ilike(f"%{val}%"))
+                
+                # Continuamos con el siguiente filtro, ignorando la lógica EAV para este
+                continue
+
             lv_alias = aliased(LeadFieldValue)
             query = query.join(lv_alias, cls.model.field_values)
             

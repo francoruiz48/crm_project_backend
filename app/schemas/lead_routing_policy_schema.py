@@ -156,12 +156,12 @@ class LeadRoutingPolicyUpdate(BaseModel):
     Actualización completa. Si se envía 'conditions', reemplaza todas las anteriores.
     Si no se envía, las condiciones quedan intactas.
     """
-    name:             Optional[str]                          = Field(default=None, min_length=3, max_length=150)
-    description:      Optional[str]                          = Field(default=None, max_length=500)
-    priority:         Optional[int]                          = Field(default=None, gt=0)
-    logical_operator: Optional[Literal["AND", "OR"]]        = None
-    target_team_id:   Optional[int]                          = Field(default=None, gt=0)
-    conditions:       Optional[List[LeadRoutingConditionCreate]] = None
+    name: Optional[str] = Field(default=None, min_length=3, max_length=150)
+    description: Optional[str] = Field(default=None, max_length=500)
+    priority: Optional[int] = Field(default=None, gt=0)
+    logical_operator: Optional[Literal["AND", "OR"]] = None
+    target_team_id: Optional[int] = Field(default=None, gt=0)
+    conditions: Optional[List[LeadRoutingConditionCreate]] = None
 
 
 class LeadRoutingPolicyResponse(LeadRoutingPolicyBase, BaseResponse):
@@ -178,10 +178,10 @@ class LeadRoutingPolicyDetailedResponse(LeadRoutingPolicyBase, BaseDetailedRespo
 # ===========================================================================
 
 class LeadRoutingPolicyValidateRequest(BaseModel):
-    campaign_id:      Optional[int] = Field(default=None, gt=0)
-    target_team_id:   int           = Field(..., gt=0)
+    campaign_id: Optional[int] = Field(default=None, gt=0)
+    target_team_id: int = Field(..., gt=0)
     logical_operator: Literal["AND", "OR"] = "AND"
-    conditions:       List[LeadRoutingConditionCreate] = Field(default_factory=list)
+    conditions: List[LeadRoutingConditionCreate] = Field(default_factory=list)
 
 
 class LeadRoutingPolicyValidateResponse(BaseModel):

@@ -348,18 +348,22 @@ class LeadService(BaseService):
 
                 # Paso 2: Reglas complejas (Solo si el tipo básico es válido)
                 if is_valid_type:
-                    try:
-                        LeadValidationLogic.validate_rules(
-                            current_field=field,
-                            raw_value=val,
-                            all_values=full_context,
-                            all_fields_defs=all_defs
-                        )
-                    except ValidationError as ve:
-                        # Atrapamos el error individual y lo agregamos a la lista
-                        errors.append({"field": field.name, "message": ve.message})
-                    except ValueError as ve:
-                        errors.append({"field": field.name, "message": str(ve)})
+
+                    is_empty = val is None or (isinstance(val, str) and not str(val).strip())
+
+                    if not is_empty:
+                        try:
+                            LeadValidationLogic.validate_rules(
+                                current_field=field,
+                                raw_value=val,
+                                all_values=full_context,
+                                all_fields_defs=all_defs
+                            )
+                        except ValidationError as ve:
+                            # Atrapamos el error individual y lo agregamos a la lista
+                            errors.append({"field": field.name, "message": ve.message})
+                        except ValueError as ve:
+                            errors.append({"field": field.name, "message": str(ve)})
 
     @classmethod
     def _reconstruct_items_for_repo(cls, processed_data: dict, field_defs_list: list):
