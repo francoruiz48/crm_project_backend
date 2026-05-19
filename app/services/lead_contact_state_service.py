@@ -2,7 +2,7 @@ from typing import Optional
 from fastapi import HTTPException, status
 from app.core.context import TENANT_ORG_ID
 from app.core.security import UserContext
-from app.db.unit_of_work import UnitOfWork
+from sqlalchemy import func
 from app.models.lead_contact_state import LeadContactState
 from app.db.repository.lead_contact_state_repository import LeadContactStateRepository
 from app.services.base_service import BaseService
@@ -39,6 +39,13 @@ class LeadContactStateService(BaseService):
                         status.HTTP_400_BAD_REQUEST,
                         detail=[{"field": "is_initial", "message": "Ya existe un estado inicial en la organización. Desmarque el actual antes de asignar uno nuevo."}]
                     )
+                
+            max_order = uow.session.query(func.max(cls.repository.model.order)).filter(
+                cls.repository.model.organization_id == org_id
+            ).scalar()
+
+            # 4. Lógica de incremento: Si max_order es None (no hay estados), da 0. +1 = 1.
+            obj_in["order"] = (max_order or 0) + 1
 
             new_obj = cls.repository.create(uow.session, obj_in, user_context=user_context)
             uow.session.flush()

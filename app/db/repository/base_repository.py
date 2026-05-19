@@ -15,6 +15,8 @@ class BaseRepository:
     schema_out = None
     schema_out_detail = None
     relationships: list = []
+    default_sort_column = "id"
+    default_sort_asc = False
 
     # ===============================================================
     # Inyección automática de Tenant (Multi-empresa)
@@ -295,6 +297,18 @@ class BaseRepository:
             # Si encontramos campos válidos, aplicamos un OR (uno u otro)
             if search_conditions:
                 query = query.filter(or_(*search_conditions))
+
+        # Si el Frontend NO envió un campo específico por el cual ordenar...
+        if not order_by:
+            order_by = cls.default_sort_column
+            # Usamos la dirección por defecto del repositorio si no enviaron una
+            if ascending is None:
+                ascending = cls.default_sort_asc
+        else:
+            # Si el Frontend SÍ envió un campo (ej: order_by=name), pero no la dirección,
+            # por convención general de APIs asumimos ascendente.
+            if ascending is None:
+                ascending = True
 
         if order_by and hasattr(cls.model, order_by):
             column = getattr(cls.model, order_by)

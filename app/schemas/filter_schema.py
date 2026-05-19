@@ -15,7 +15,7 @@ class FilterOperator(str, Enum):
     BETWEEN = "between"   # Entre dos valores (rangos)
 
 class LeadFilter(BaseModel):
-    field_id: int = Field(..., description="ID del campo dinámico (LeadField)")
+    field_id: Union[int, str] = Field(..., description="ID del campo dinámico (LeadField)")
     operator: FilterOperator = Field(..., description="Operador de comparación")
     value: Union[Any, List[Any]] = Field(..., description="Valor único o [min, max]")
 

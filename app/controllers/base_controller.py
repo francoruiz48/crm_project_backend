@@ -1,4 +1,4 @@
-from typing import Dict, Union
+from typing import Dict, Optional, Union
 from fastapi import APIRouter, Body, HTTPException, Query, Depends, Request
 from app.core.constans import DEFAULT_PAGE_SIZE
 from app.core.security import PermissionChecker, get_current_user_roles
@@ -66,7 +66,7 @@ class BaseController:
                 search: str = Query(None, description="Búsqueda global"),
                 search_fields: str = Query(None, description="Campos para búsqueda global, separados por comas"),
                 order_by: str = Query(None, description="Campo por el cual ordenar"), 
-                ascending: bool = Query(True, description="Orden ascendente (true) o descendente (false)"),
+                ascending: Optional[bool] = Query(None, description="Orden ascendente (true) o descendente (false)"),
                 start_date: str = Query(None, description="Fecha inicio (YYYY-MM-DD)"),
                 end_date: str = Query(None, description="Fecha fin (YYYY-MM-DD)"),
                 date_field: str = Query("created_at", description="Campo de fecha a filtrar (default: created_at)"),

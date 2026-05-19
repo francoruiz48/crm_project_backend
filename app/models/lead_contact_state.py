@@ -10,3 +10,4 @@ class LeadContactState(BaseModelDB):
     is_initial = Column(Boolean, default=False)
     organization_id = Column(Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False)
     leads = relationship("Lead", back_populates="contact_state")
+    order = Column(Integer, nullable=False, default=1)
