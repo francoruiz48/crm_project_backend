@@ -18,12 +18,10 @@ class OrganizationService(BaseService):
 
         """Crea estados de contacto predeterminados para la organización"""
         default_contact_states = [
-            {"name": "No Contactado", "color": "#6B7280", "is_initial": True},       
-            {"name": "En Conversación", "color": "#3B82F6", "is_initial": False},     
-            {"name": "No Responde", "color": "#F59E0B", "is_initial": False},         
-            {"name": "Número Equivocado", "color": "#EF4444", "is_initial": False},
-            {"name": "Esperando Respuesta", "color": "#8B5CF6", "is_initial": False},
-            {"name": "Rechazado", "color": "#BE0D0D", "is_initial": False},
+            {"name": "No Contactado", "color": "#6B7280", "is_initial": True, "order": 1},   
+            {"name": "Esperando Respuesta", "color": "#8B5CF6", "is_initial": False, "order": 2},    
+            {"name": "En Conversación", "color": "#3B82F6", "is_initial": False, "order": 3},     
+            {"name": "Rechazado", "color": "#BE0D0D", "is_initial": False, "order": 4},
         ]
         
         for state_data in default_contact_states:
@@ -31,6 +29,7 @@ class OrganizationService(BaseService):
                 name=state_data["name"],
                 color=state_data["color"],
                 is_initial=state_data["is_initial"],
+                order=state_data["order"],
                 organization_id=org_id
             )
             session.add(new_state)

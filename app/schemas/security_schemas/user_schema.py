@@ -2,7 +2,7 @@ from typing import List, Optional, Any
 from pydantic import BaseModel, Field, field_validator
 from app.schemas.base_schema import BaseCreate, BaseDetailedResponse
 from app.schemas.security_schemas.permission_schema import PermissionResponse
-from app.schemas.security_schemas.role_schema import RoleDetailedResponse, RoleResponse
+from app.schemas.security_schemas.role_schema import RoleResponse
 
 class UserOrganizationResponse(BaseModel, BaseDetailedResponse):
     organization_id: int

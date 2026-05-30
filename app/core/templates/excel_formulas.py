@@ -6,6 +6,7 @@ class ExcelFormula:
     name_spanish: str
     name_english: str
     description: str
+    syntax: str
     example: str
     category: str
     note: str = ""
@@ -18,6 +19,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="SI",
         name_english="IF",
         description="Evalúa una condición. Si es verdadera devuelve el primer valor, si no, el segundo.",
+        syntax="IF(prueba_logica, valor_si_verdadero, valor_si_falso)",
         example='IF(Edad >= 18, "Mayor", "Menor")',
         category="Lógica",
         note="Puedes anidar varios IF dentro de otros."
@@ -26,6 +28,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="Y",
         name_english="AND",
         description="Devuelve VERDADERO si todos los argumentos son verdaderos.",
+        syntax="AND(valor_logico1, [valor_logico2], ...)",
         example="AND(Edad > 18, Tiene_Licencia = TRUE)",
         category="Lógica",
         note="Separa las condiciones con comas."
@@ -34,6 +37,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="O",
         name_english="OR",
         description="Devuelve VERDADERO si al menos uno de los argumentos es verdadero.",
+        syntax="OR(valor_logico1, [valor_logico2], ...)",
         example="OR(Es_VIP = TRUE, Compra_Total > 10000)",
         category="Lógica"
     ),
@@ -41,6 +45,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="NO",
         name_english="NOT",
         description="Invierte el valor lógico (Verdadero -> Falso).",
+        syntax="NOT(valor_logico)",
         example="NOT(Es_Cliente_Activo)",
         category="Lógica"
     ),
@@ -52,6 +57,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="CONCAT",
         name_english="CONCAT",
         description="Une dos o más cadenas de texto.",
+        syntax="CONCAT(texto1, [texto2], ...)",
         example='CONCAT(Nombre, " ", Apellido)',
         category="Texto",
         note="Ignora valores vacíos automáticamente."
@@ -60,6 +66,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="LARGO",
         name_english="LEN",
         description="Devuelve la cantidad de caracteres de un texto.",
+        syntax="LEN(texto)",
         example="LEN(DNI)",
         category="Texto"
     ),
@@ -67,6 +74,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="MINUSCULA",
         name_english="LOWER",
         description="Convierte todo el texto a minúsculas.",
+        syntax="LOWER(texto)",
         example="LOWER(Email)",
         category="Texto"
     ),
@@ -74,6 +82,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="MAYUSCULA",
         name_english="UPPER",
         description="Convierte todo el texto a mayúsculas.",
+        syntax="UPPER(texto)",
         example="UPPER(Apellido)",
         category="Texto"
     ),
@@ -81,6 +90,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="NOMPROPIO",
         name_english="PROPER",
         description="Pone en mayúscula la primera letra de cada palabra.",
+        syntax="PROPER(texto)",
         example='PROPER("juan perez") -> "Juan Perez"',
         category="Texto"
     ),
@@ -92,6 +102,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="ESPACIOS",
         name_english="TRIM",
         description="Elimina espacios vacíos al principio y al final del texto.",
+        syntax="TRIM(texto)",
         example="TRIM(Nombre)",
         category="Texto",
         note="Ideal para limpiar datos copiados de otras webs."
@@ -100,6 +111,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="SUSTITUIR",
         name_english="SUBSTITUTE",
         description="Reemplaza un texto específico por otro.",
+        syntax="SUBSTITUTE(texto, texto_original, texto_nuevo, [num_de_ocurrencia])",
         example='SUBSTITUTE(Telefono, "-", "")',
         category="Texto",
         note="Distingue entre mayúsculas y minúsculas."
@@ -108,6 +120,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="ENCONTRAR",
         name_english="FIND",
         description="Devuelve la posición donde empieza un texto dentro de otro.",
+        syntax="FIND(texto_buscado, dentro_del_texto, [num_inicial])",
         example='FIND("@", Email)',
         category="Texto",
         note="Devuelve 0 si no encuentra el texto (a diferencia de Excel que da error)."
@@ -116,6 +129,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="IZQUIERDA",
         name_english="LEFT",
         description="Extrae los primeros X caracteres de un texto.",
+        syntax="LEFT(texto, [num_caracteres])",
         example="LEFT(Codigo_Postal, 4)",
         category="Texto"
     ),
@@ -123,6 +137,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="DERECHA",
         name_english="RIGHT",
         description="Extrae los últimos X caracteres de un texto.",
+        syntax="RIGHT(texto, [num_caracteres])",
         example="RIGHT(Telefono, 4)",
         category="Texto"
     ),
@@ -130,6 +145,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="EXTRAE",
         name_english="MID",
         description="Extrae caracteres desde una posición inicial.",
+        syntax="MID(texto, posicion_inicial, num_caracteres)",
         example="MID(Patente, 1, 3)",
         category="Texto",
         note="La posición inicial es 1 (no 0)."
@@ -138,6 +154,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="REGEX",
         name_english="REGEXMATCH",
         description="Devuelve VERDADERO si el texto cumple con el patrón (Expresión Regular).",
+        syntax="REGEXMATCH(texto, expresion_regular)",
         example='REGEXMATCH(Email, "^[a-z0-9]+@")',
         category="Texto",
         note="IMPORTANTE: El patrón debe estar siempre entre comillas dobles (\")."
@@ -150,6 +167,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="SUMA",
         name_english="SUM",
         description="Suma una lista de números.",
+        syntax="SUM(numero1, [numero2], ...)",
         example="SUM(Subtotal, Impuestos, Envio)",
         category="Matemáticas",
         note="Ignora textos o valores vacíos."
@@ -158,6 +176,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="PROMEDIO",
         name_english="AVERAGE",
         description="Calcula el promedio aritmético.",
+        syntax="AVERAGE(numero1, [numero2], ...)",
         example="AVERAGE(Nota_1, Nota_2, Nota_3)",
         category="Matemáticas"
     ),
@@ -165,6 +184,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="MAX",
         name_english="MAX",
         description="Devuelve el valor más alto de la lista.",
+        syntax="MAX(numero1, [numero2], ...)",
         example="MAX(Oferta_1, Oferta_2)",
         category="Matemáticas"
     ),
@@ -172,6 +192,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="MIN",
         name_english="MIN",
         description="Devuelve el valor más bajo de la lista.",
+        syntax="MIN(numero1, [numero2], ...)",
         example="MIN(Precio_Lista, Precio_Promo)",
         category="Matemáticas"
     ),
@@ -179,6 +200,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="REDONDEAR",
         name_english="ROUND",
         description="Redondea un número a una cantidad de decimales.",
+        syntax="ROUND(numero, num_decimales)",
         example="ROUND(Total_Calculado, 2)",
         category="Matemáticas",
         note="Si omites los decimales, redondea al entero más cercano."
@@ -187,6 +209,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="ENTERO",
         name_english="INT",
         description="Devuelve solo la parte entera de un número.",
+        syntax="INT(numero)",
         example="INT(4.9) -> 4",
         category="Matemáticas"
     ),
@@ -194,6 +217,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="RESIDUO",
         name_english="MOD",
         description="Devuelve el resto de la división.",
+        syntax="MOD(numero, divisor)",
         example="MOD(Cantidad, 2)",
         category="Matemáticas",
         note="Útil para saber si un número es par (resultado 0) o impar (resultado 1)."
@@ -202,6 +226,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="ABS",
         name_english="ABS",
         description="Valor absoluto (convierte negativos a positivos).",
+        syntax="ABS(numero)",
         example="ABS(Saldo_Pendiente)",
         category="Matemáticas"
     ),
@@ -209,6 +234,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="ESNUMERO",
         name_english="ISNUMBER",
         description="Devuelve True si es un número.",
+        syntax="ISNUMBER(valor)",
         example="ISNUMBER(5)",
         category="Matemáticas"
     ),
@@ -220,6 +246,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="HOY",
         name_english="TODAY",
         description="Devuelve la fecha actual (sin hora).",
+        syntax="TODAY()",
         example="TODAY()",
         category="Fecha",
         note="No requiere argumentos dentro de los paréntesis."
@@ -228,6 +255,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="AHORA",
         name_english="NOW",
         description="Devuelve la fecha y hora actual.",
+        syntax="NOW()",
         example="NOW()",
         category="Fecha"
     ),
@@ -235,6 +263,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="AÑO",
         name_english="YEAR",
         description="Extrae el año de una fecha.",
+        syntax="YEAR(fecha)",
         example="YEAR(Fecha_Nacimiento)",
         category="Fecha"
     ),
@@ -242,6 +271,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="MES",
         name_english="MONTH",
         description="Extrae el mes de una fecha (1-12).",
+        syntax="MONTH(fecha)",
         example="MONTH(TODAY())",
         category="Fecha"
     ),
@@ -249,6 +279,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="DIA",
         name_english="DAY",
         description="Extrae el día del mes (1-31).",
+        syntax="DAY(fecha)",
         example="DAY(Fecha_Factura)",
         category="Fecha"
     ),
@@ -256,6 +287,7 @@ EXCEL_FORMULAS: Dict[str, ExcelFormula] = {
         name_spanish="DIASEM",
         name_english="WEEKDAY",
         description="Devuelve el día de la semana numérico.",
+        syntax="WEEKDAY(fecha, [tipo_de_retorno])",
         example="WEEKDAY(Fecha_Cita)",
         category="Fecha",
         note="0 = Lunes, 6 = Domingo (Formato Python)."
