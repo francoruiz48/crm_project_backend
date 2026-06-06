@@ -238,7 +238,7 @@ class LeadService(BaseService):
             else: regex_pattern += re.escape(char)
         regex_pattern += "$"
 
-        val_str = str(value)
+        val_str = str(value).strip()
         if not re.match(regex_pattern, val_str):
             errors.append({
                 "field": field_name,
@@ -714,6 +714,18 @@ class LeadService(BaseService):
                         detail=[{"field": "target_user_id", "message": "El usuario destino no existe o no pertenece a esta organización."}]
                     )
 
+            # Validar que el usuario destino pertenezca al equipo destino (si se envían ambos)
+            if target_team_id is not None and target_user_id is not None:
+                from app.models.team_member import TeamMember as TM
+                member_in_team = uow.session.query(TM).filter_by(
+                    team_id=target_team_id, user_id=target_user_id
+                ).first()
+                if not member_in_team:
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST,
+                        detail=[{"field": "target_user_id", "message": "El usuario destino no pertenece al equipo destino."}]
+                    )
+
             # --- Filtrar leads por tenant y permisos de usuario para prevenir IDOR ---
             leads_query = uow.session.query(Lead).filter(
                 Lead.id.in_(lead_ids),
@@ -771,6 +783,9 @@ class LeadService(BaseService):
             if not lead:
                 cls._not_found(obj_id)
 
+            # Lock de fila para evitar race conditions en cambios concurrentes
+            uow.session.query(Lead).filter(Lead.id == obj_id).with_for_update().first()
+
             current_state_id = lead.current_state_id
 
             # 1. Validar que no estemos moviéndolo al mismo estado
@@ -826,6 +841,19 @@ class LeadService(BaseService):
             diff_state = {"current_state_id": {"old": current_state_id, "new": new_state_id}}
             cls._log_audit(uow.session, lead, action=SystemAuditLogAction.UPDATED, changes=diff_state, user_id=user_context.user.id if user_context else None)
 
+            # Registrar en la línea de tiempo visible del lead
+            cls._log_activity(
+                session=uow.session,
+                lead_id=obj_id,
+                activity_type="STATE_CHANGED",
+                details={
+                    "from_state_id": current_state_id,
+                    "to_state_id": new_state_id,
+                    "notes": notes
+                },
+                user_id=user_context.user.id if user_context else None
+            )
+
         # Devolvemos el Lead actualizado para el Frontend
         return cls.get_by_id(obj_id, detailed=True)
 
@@ -840,6 +868,19 @@ class LeadService(BaseService):
             campaign = cls.campaign_repository.get_by_id(uow.session, obj_in.campaign_id, user_context=user_context)
             if not campaign:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "campaign_id", "message": "La campaña no existe."}])
+
+            # Validar org membership de team_id y assigned_to_user_id (igual que en create)
+            from app.models.team import Team
+            from app.models.security_models import UserOrganization
+            org_id = campaign.organization_id
+            if obj_in.team_id is not None:
+                team = uow.session.query(Team).filter_by(id=obj_in.team_id, organization_id=org_id).first()
+                if not team:
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "team_id", "message": "El equipo no existe o no pertenece a esta organización."}])
+            if obj_in.assigned_to_user_id is not None:
+                membership = uow.session.query(UserOrganization).filter_by(user_id=obj_in.assigned_to_user_id, organization_id=org_id, active=True).first()
+                if not membership:
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "assigned_to_user_id", "message": "El usuario no existe o no pertenece a esta organización."}])
 
             clean_values, context_data, field_defs = cls._prepare_creation_data(uow, obj_in, files_map, created_by, campaign=campaign, is_simulation=True)
 
@@ -1143,17 +1184,15 @@ class LeadService(BaseService):
         # Buscamos solo las etiquetas que coinciden con los IDs y pertenecen a la empresa
         tags = session.query(Tag).filter(
             Tag.id.in_(tag_ids),
-            Tag.organization_id == org_id,
-            Tag.active == True
+            Tag.organization_id == org_id
         ).all()
-        
-        # Validación de seguridad: ¿Encontró la misma cantidad de etiquetas que enviaron?
-        # Usamos set() por si el front mandó IDs duplicados por error en el array
+
         if len(tags) != len(set(tag_ids)):
+            found_ids = {t.id for t in tags}
+            missing_ids = [i for i in tag_ids if i not in found_ids]
             raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, 
-                detail=[{"field": "tag_ids", "message": "Una o más etiquetas no existen o no pertenecen a tu organización."}]
+                status_code=400,
+                detail=[{"field": "tag_ids", "message": f"Las etiquetas {missing_ids} no existen o no pertenecen a tu organización."}]
             )
-            
-        # Asignación directa: SQLAlchemy se encarga de hacer los INSERT/DELETE en la tabla intermedia
+
         lead_obj.tags = tags

@@ -213,6 +213,12 @@ class LeadFieldService(BaseService):
         elif rel_campaign_id and field_type_code != "LEAD":
             errors.append({"field": "field_type_code", "message": "No puede asignar 'related_campaign_id' si el tipo no es LEAD."})
 
+        # Proteger default_value: no tiene sentido para campos de selección o relacionales
+        if data.get("default_value") is not None:
+            if field_type_code in NOMENCLATOR_FIELD_TYPES or field_type_code == "LEAD":
+                errors.append({"field": "default_value", "message": f"El campo tipo '{field_type_code}' no acepta valor por defecto. Los valores seleccionables se gestionan desde el nomenclador."})
+                data.pop("default_value", None)
+
         if field_type_code == "CALCULATED":
             if not calc_expr:
                 errors.append({"field": "calculation_expression", "message": "Requerido para campos CALCULATED."})
@@ -385,6 +391,13 @@ class LeadFieldService(BaseService):
             if current_field.field_type_code == "CALCULATED" and "calculation_expression" in data:
                 if not new_expr:
                     errors.append({"field": "calculation_expression", "message": "No se puede eliminar la expresión de un campo calculado."})
+
+            # 6. Proteger default_value para tipos que no lo soportan
+            if "default_value" in data and data["default_value"] is not None:
+                field_type_code = current_field.field_type_code
+                if field_type_code in NOMENCLATOR_FIELD_TYPES or field_type_code == "LEAD":
+                    errors.append({"field": "default_value", "message": f"El campo tipo '{field_type_code}' no acepta valor por defecto. Los valores seleccionables se gestionan desde el nomenclador."})
+                    data.pop("default_value", None)
 
             # --- CHECK FINAL ---
             if errors:
