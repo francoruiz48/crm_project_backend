@@ -11,6 +11,13 @@ from app.models.lead_field_value import LeadFieldValue, lead_field_value_leads_a
 from app.models.lead_field import LeadField
 from app.core.security import UserContext
 
+# Atributos nativos del modelo Lead que pueden usarse como filtro en /search.
+# No incluir campos sensibles de infraestructura (organization_id, created_by, etc.)
+LEAD_NATIVE_FILTER_FIELDS = {
+    "campaign_id", "current_state_id", "contact_state_id",
+    "team_id", "assigned_to_user_id", "active",
+}
+
 class LeadRepository(BaseRepository):
     model = Lead
     schema_out = LeadResponse
@@ -144,8 +151,8 @@ class LeadRepository(BaseRepository):
 
         for f in search_params.filters:
 
-            # Si el field_id es un string y existe directamente en el modelo (Lead)
-            if isinstance(f.field_id, str) and hasattr(cls.model, f.field_id):
+            # Si el field_id es un string y está en la whitelist de campos nativos filtrables
+            if isinstance(f.field_id, str) and f.field_id in LEAD_NATIVE_FILTER_FIELDS:
                 column = getattr(cls.model, f.field_id)
                 val = f.value
                 
@@ -282,11 +289,12 @@ class LeadRepository(BaseRepository):
 
 
     @classmethod
-    def find_duplicate(cls, session, campaign_id: int, primary_values: dict) -> bool:
+    def find_duplicate(cls, session, campaign_id: int, primary_values: dict, exclude_id: int = None) -> bool:
         """
         Busca si existe algún Lead en la campaña que coincida EXACTAMENTE
         con TODOS los valores primarios pasados.
         primary_values = {field_id: 'valor', field_id_2: 'valor_2'}
+        exclude_id: ID del lead actual (para no marcarse a sí mismo como duplicado en updates)
         """
         if not primary_values:
             return False
@@ -295,6 +303,10 @@ class LeadRepository(BaseRepository):
         query = session.query(cls.model).filter(cls.model.campaign_id == campaign_id)
 
         query = cls._apply_tenant_filter(query)
+
+        # Excluimos el lead actual (útil en updates)
+        if exclude_id is not None:
+            query = query.filter(cls.model.id != exclude_id)
 
         # Iteramos dinámicamente sobre cada campo primario (AND lógico)
         for f_id, val in primary_values.items():

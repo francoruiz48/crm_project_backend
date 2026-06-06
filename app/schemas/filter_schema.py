@@ -23,4 +23,3 @@ class LeadSearchRequest(BaseModel):
     campaign_id: Optional[int] = None
     filters: List[LeadFilter] = []
     page: int = 1
-    page_size: int = 50
