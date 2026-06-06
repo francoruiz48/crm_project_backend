@@ -359,7 +359,7 @@ class LeadFieldService(BaseService):
                 cls._check_historic_constraints(uow.session, current_field, check_req, check_pri, errors)
 
             # --- 4. NUEVA SEGURIDAD: Validar Sección si cambia ---
-            if "lead_field_section_id" in data and data["lead_field_section_id"] != current_field.lead_field_section_id:
+            if "lead_field_section_id" in data and data["lead_field_section_id"] != current_field.lead_field_section.id:
                 org_id = user_context.organization_id if user_context else TENANT_ORG_ID.get()
                 section = uow.session.query(LeadFieldSection).filter(
                     LeadFieldSection.id == data["lead_field_section_id"],
