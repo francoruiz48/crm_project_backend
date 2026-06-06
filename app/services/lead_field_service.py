@@ -41,8 +41,8 @@ class LeadFieldService(BaseService):
         """
         Verifica duplicados de nombre. Agrega error a la lista si falla.
         """
-        if not name: return 
-        existing = cls.repository.get_all(session=session, only_active=True, detailed=True, campaign_id=campaign_id, name=name)
+        if not name: return
+        existing = cls.repository.get_all(session=session, only_active=True, detailed=False, campaign_id=campaign_id, name=name)
         
         if existing:
             if exclude_id is None or existing[0].id != exclude_id:
@@ -54,7 +54,7 @@ class LeadFieldService(BaseService):
         Verifica colisión de orden. Agrega error a la lista si falla.
         """
         if order is None: return
-        collision = cls.repository.get_all(session=session, only_active=True, detailed=True, campaign_id=campaign_id, order=order)
+        collision = cls.repository.get_all(session=session, only_active=True, detailed=False, campaign_id=campaign_id, order=order)
         
         if collision:
             if exclude_id is None or collision[0].id != exclude_id:
@@ -67,8 +67,11 @@ class LeadFieldService(BaseService):
         """
         # A. Validación de REQUIRED retroactivo
         if new_required is True and not field.required:
-            has_nulls = session.query(LeadFieldValue).filter(
+            has_nulls = session.query(LeadFieldValue).join(
+                Lead, LeadFieldValue.lead_id == Lead.id
+            ).filter(
                 LeadFieldValue.field_id == field.id,
+                Lead.active == True,
                 (LeadFieldValue.value == None) | (LeadFieldValue.value == "")
             ).first()
 
@@ -119,7 +122,8 @@ class LeadFieldService(BaseService):
         else:
             # Buscamos la sección más antigua (ID más bajo) de la organización
             section = session.query(LeadFieldSection).filter(
-                LeadFieldSection.organization_id == org_id
+                LeadFieldSection.organization_id == org_id,
+                LeadFieldSection.active == True
             ).order_by(LeadFieldSection.id.asc()).first()
             
             if section:
@@ -313,6 +317,8 @@ class LeadFieldService(BaseService):
             cls._log_audit(session, new_field, action=SystemAuditLogAction.CREATED, changes=data, user_id=user_context.user.id if user_context and user_context.user else None)
             return new_field
 
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, detail=[{"field": "general", "message": f"Error interno: {str(e)}"}])
 
@@ -368,6 +374,24 @@ class LeadFieldService(BaseService):
                 if not section:
                     errors.append({"field": "lead_field_section_id", "message": "La sección no existe o no pertenece a su empresa."})
 
+            # 4b. Validar restricciones de campo CALCULATED
+            if current_field.field_type_code == "CALCULATED":
+                if data.get("required") is True:
+                    errors.append({"field": "required", "message": "Un campo CALCULATED no puede ser obligatorio."})
+                if data.get("is_primary") is True:
+                    errors.append({"field": "is_primary", "message": "Un campo CALCULATED no puede ser identificador principal."})
+
+            # 4c. Validar combinación is_visible + required/is_primary
+            effective_visible = data["is_visible"] if "is_visible" in data else current_field.is_visible
+            effective_required = data["required"] if "required" in data else current_field.required
+            effective_primary = data["is_primary"] if "is_primary" in data else current_field.is_primary
+
+            if not effective_visible:
+                if effective_required:
+                    errors.append({"field": "required", "message": "Un campo oculto (is_visible=False) no puede ser obligatorio."})
+                if effective_primary:
+                    errors.append({"field": "is_primary", "message": "Un campo oculto no puede marcarse como identificador principal."})
+
             # 5. Validación de cálculo (La estructura nos protege, solo re-evaluamos)
             new_expr = data.get("calculation_expression")
             if new_expr and current_field.field_type_code != "CALCULATED":
@@ -387,7 +411,11 @@ class LeadFieldService(BaseService):
 
             changes = {}
             for key, new_val in data.items():
-                if hasattr(current_field, key):
+                if key == "lead_field_section_id":
+                    old_val = current_field.lead_field_section.id
+                    if old_val != new_val:
+                        changes[key] = {"old": old_val, "new": new_val}
+                elif hasattr(current_field, key):
                     old_val = getattr(current_field, key)
                     if old_val != new_val:
                         changes[key] = {"old": old_val, "new": new_val}
