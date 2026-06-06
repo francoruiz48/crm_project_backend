@@ -78,9 +78,8 @@ class LeadRepository(BaseRepository):
                      .outerjoin(TeamMember, and_(Team.id == TeamMember.team_id, TeamMember.user_id == consulted_by))
 
         security_condition = or_(
-            cls.model.team_id.is_(None),                 # 1. Huérfano general
-            cls.model.assigned_to_user_id == consulted_by,    # 2. Es mi lead directo
-            cls.model.created_by == consulted_by,             # 3. Yo mismo lo creé
+            cls.model.assigned_to_user_id == consulted_by,    # 1. Es mi lead directo
+            cls.model.created_by == consulted_by,             # 2. Yo mismo lo creé
             and_(
                 TeamMember.id.isnot(None),               # 4. Pertenezco al equipo del lead
                 or_(
