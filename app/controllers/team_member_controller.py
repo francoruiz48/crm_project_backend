@@ -12,4 +12,6 @@ class TeamMemberController(BaseController):
     schema_out_detail = TeamMemberDetailedResponse
     enabled_methods = READ_WRITE
 
+    allowed_filter_fields = {"team_id", "user_id", "role"}
+
 router = TeamMemberController.get_router()

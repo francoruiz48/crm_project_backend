@@ -45,7 +45,7 @@ class LeadContactStateService(BaseService):
             ).scalar()
 
             # 4. Lógica de incremento: Si max_order es None (no hay estados), da 0. +1 = 1.
-            obj_in["order"] = (max_order or 0) + 1
+            obj_in.order = (max_order or 0) + 1
 
             new_obj = cls.repository.create(uow.session, obj_in, user_context=user_context)
             uow.session.flush()

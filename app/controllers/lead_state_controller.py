@@ -17,6 +17,8 @@ class LeadStateController(BaseController):
     schema_out_detail = LeadStateDetailedResponse
     enabled_methods = READ_WRITE
 
+    allowed_filter_fields = {"name", "lead_flow_id", "category", "is_initial"}
+
     @classmethod
     def get_router(cls):
         # Generamos el router con los métodos base (GET_ONE, POST, etc.)

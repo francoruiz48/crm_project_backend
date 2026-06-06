@@ -29,9 +29,9 @@ class CampaignService(BaseService):
             default_fields = [
                 {"name": "Nombre", "field_type_code": "STRING", "required": True, "is_primary": False, "order": 1, "title_order": 1},
                 {"name": "Razón Social", "field_type_code": "STRING", "required": True, "is_primary": False, "order": 2},
-                {"name": "Teléfono", "field_type_code": "STRING", "field_subtype_code": "PHONE", "required": False, "order": 4},
-                {"name": "Email", "field_type_code": "STRING", "field_subtype_code": "EMAIL", "required": False, "order": 5},
-                {"name": "Sitio Web", "field_type_code": "STRING", "field_subtype_code": "WEBSITE", "required": False, "order": 6},
+                {"name": "Teléfono", "field_type_code": "STRING", "field_subtype_code": "PHONE", "required": False, "order": 3},
+                {"name": "Email", "field_type_code": "STRING", "field_subtype_code": "EMAIL", "required": False, "order": 4},
+                {"name": "Sitio Web", "field_type_code": "STRING", "field_subtype_code": "WEBSITE", "required": False, "order": 5},
             ]
         elif target_audience == "B2C":
                 # Campos para Venta a Personas
@@ -57,42 +57,45 @@ class CampaignService(BaseService):
         
         def do_create(uow):
             errors = []
+            target_lead_flow_id = obj_in.lead_flow_id
 
             workspace = cls.workspace_repository.get_by_id(uow.session, obj_in.workspace_id, user_context=user_context)
             if not workspace:
                 errors.append({"field": "workspace_id", "message": "El espacio de trabajo especificado no existe."})
             else:
+                # Validación de nombre único (activas e inactivas para no chocar con UniqueConstraint)
                 existing = cls.repository.get_all(
                     session=uow.session,
                     name=obj_in.name,
                     workspace_id=obj_in.workspace_id,
-                    only_active=True,
+                    only_active=False,
                     user_context=user_context
                 )
-                
                 if existing:
-                    errors.append({"field": "name", "message": f"Ya existe una campaña llamada '{obj_in.name}' en este espacio de trabajo."})
-            
-            
-            target_lead_flow_id = obj_in.lead_flow_id
-            
-            if not target_lead_flow_id:
-                # Si no envía ID, buscamos el flujo predeterminado (el más antiguo de la org)
-                default_flow = uow.session.query(LeadFlow).filter_by(
-                    organization_id=workspace.organization_id
-                ).order_by(LeadFlow.created_at.asc()).first()
-                
-                if not default_flow:
-                    errors.append({"field": "lead_flow_id", "message": "La organización no tiene flujos de leads. Especifique uno manualmente."})
+                    active_ones = [e for e in existing if e.active]
+                    if active_ones:
+                        errors.append({"field": "name", "message": f"Ya existe una campaña llamada '{obj_in.name}' en este espacio de trabajo."})
+                    else:
+                        errors.append({"field": "name", "message": f"Ya existe una campaña desactivada llamada '{obj_in.name}' en este espacio de trabajo. Reactívela o use otro nombre."})
+
+                # Validación/resolución del lead_flow_id (requiere workspace para obtener org)
+                if not target_lead_flow_id:
+                    # Si no envía ID, buscamos el flujo predeterminado (el más antiguo de la org)
+                    default_flow = uow.session.query(LeadFlow).filter_by(
+                        organization_id=workspace.organization_id
+                    ).order_by(LeadFlow.created_at.asc()).first()
+
+                    if not default_flow:
+                        errors.append({"field": "lead_flow_id", "message": "La organización no tiene flujos de leads. Especifique uno manualmente."})
+                    else:
+                        target_lead_flow_id = default_flow.id
                 else:
-                    target_lead_flow_id = default_flow.id
-            else:
-                # Si envía ID, validamos que exista y pertenezca a su org
-                lead_flow = cls.lead_flow_repository.get_by_id(uow.session, target_lead_flow_id, user_context=user_context)
-                if not lead_flow:
-                    errors.append({"field": "lead_flow_id", "message": "El flujo de leads especificado no existe."})
-                elif lead_flow.organization_id != workspace.organization_id:
-                    errors.append({"field": "lead_flow_id", "message": "El flujo de leads no pertenece a la misma organización."})
+                    # Si envía ID, validamos que exista y pertenezca a su org
+                    lead_flow = cls.lead_flow_repository.get_by_id(uow.session, target_lead_flow_id, user_context=user_context)
+                    if not lead_flow:
+                        errors.append({"field": "lead_flow_id", "message": "El flujo de leads especificado no existe."})
+                    elif lead_flow.organization_id != workspace.organization_id:
+                        errors.append({"field": "lead_flow_id", "message": "El flujo de leads no pertenece a la misma organización."})
 
             if errors:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
@@ -116,7 +119,7 @@ class CampaignService(BaseService):
                 obj=new_campaign,
                 action=SystemAuditLogAction.CREATED,
                 changes=data,
-                user_id=user_context.user.id
+                user_id=user_context.user.id if user_context and user_context.user else None
             )
 
             return new_campaign
@@ -130,7 +133,35 @@ class CampaignService(BaseService):
             if not campaign:
                 cls._not_found(obj_id)
 
+            # SEGURIDAD: Solo el creador, owner o superadmin pueden editar
+            if user_context and user_context.user:
+                is_superuser = getattr(user_context, 'is_superuser', False)
+                is_owner = getattr(user_context, 'is_owner', False)
+                is_creator = campaign.created_by == user_context.user.id
+                if not (is_superuser or is_owner or is_creator):
+                    raise HTTPException(
+                        status.HTTP_403_FORBIDDEN,
+                        detail="No tenés permiso para editar esta campaña."
+                    )
+
             errors = []
+
+            # Validación de nombre único en update
+            if obj_in.name and obj_in.name != campaign.name:
+                existing = cls.repository.get_all(
+                    session=uow.session,
+                    name=obj_in.name,
+                    workspace_id=campaign.workspace_id,
+                    only_active=False,
+                    user_context=user_context
+                )
+                existing = [e for e in existing if e.id != obj_id]
+                if existing:
+                    active_ones = [e for e in existing if e.active]
+                    if active_ones:
+                        errors.append({"field": "name", "message": f"Ya existe una campaña llamada '{obj_in.name}' en este espacio de trabajo."})
+                    else:
+                        errors.append({"field": "name", "message": f"Ya existe una campaña desactivada llamada '{obj_in.name}' en este espacio de trabajo. Reactívela o use otro nombre."})
 
             # Validación Crítica: No cambiar lead_flow_id si ya tiene leads
             if obj_in.lead_flow_id and obj_in.lead_flow_id != campaign.lead_flow_id:

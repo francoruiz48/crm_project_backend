@@ -18,6 +18,8 @@ class NomenclatorController(BaseController):
     # Quitamos "GET_ALL" de aquí para que BaseController NO genere el default
     enabled_methods = {"GET_ONE", "POST", "PUT", "DELETE", "ACTIVE", "PATCH"}
 
+    allowed_filter_fields = {"name", "parent_nomenclator_id"}
+
     @classmethod
     def get_router(cls):
         router = super().get_router()

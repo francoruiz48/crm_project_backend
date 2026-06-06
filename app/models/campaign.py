@@ -6,6 +6,9 @@ from sqlalchemy.orm import relationship
 
 class Campaign(BaseModelDB):
     __tablename__ = "campaign"
+    __table_args__ = (
+        UniqueConstraint('name', 'workspace_id', name='uq_campaign_name_workspace'),
+    )
     name = Column(String, nullable=False)
     description = Column(String, nullable=True)
     is_public = Column(Boolean, default=True, nullable=False)

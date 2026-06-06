@@ -12,4 +12,6 @@ class WebFormController(BaseController):
     schema_out_detail = WebFormDetailedResponse
     enabled_methods = READ_WRITE
 
+    allowed_filter_fields = {"campaign_id", "name", "description"}
+
 router = WebFormController.get_router()

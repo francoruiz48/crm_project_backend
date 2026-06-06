@@ -728,53 +728,70 @@ class LeadService(BaseService):
         with UnitOfWork() as uow:
             created_by = user_context.user.id if user_context else None
             clean_values, context_data, field_defs = cls._prepare_creation_data(uow, obj_in, files_map, created_by, is_simulation=True)
-            
-            # Para la simulación (que no guarda en DB), podemos usar el ContextVar directamente 
-            # para armar el objeto dummy con el ID correcto.
+
             from app.core.context import TENANT_ORG_ID
             dummy_org_id = TENANT_ORG_ID.get() or 0
 
-            simulated_values = []
-            fields_map = {f.id: f for f in field_defs}
-            dummy_lead_id = -1 
+            # Obtener el estado inicial real de la campaña (igual que create)
+            campaign = cls.campaign_repository.get_by_id(uow.session, obj_in.campaign_id, user_context=user_context)
+            if not campaign:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "campaign_id", "message": "La campaña no existe."}])
 
+            states = cls.state_repository.get_all(uow.session, user_context=user_context, lead_flow_id=campaign.lead_flow_id, is_initial=True)
+            initial_state = states[0] if states else None
+            if not initial_state:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "general", "message": "La campaña no tiene un estado inicial configurado."}])
+
+            dummy_lead_id = -1
+            fields_map = {f.id: f for f in field_defs}
+
+            simulated_values = []
             for item_proxy in clean_values:
                 data = item_proxy._data
                 fid = data['field_id']
                 field_def = fields_map.get(fid)
-                val_display = data.get('value')
-                
+
                 simulated_values.append({
                     "id": -1 * fid,
+                    "active": True,
                     "lead_id": dummy_lead_id,
                     "field_id": fid,
-                    "value": val_display,
-                    "nomenclator_items": [], 
+                    "value": data.get('value'),
+                    "nomenclator_items": [],
                     "related_leads": [],
                     "field": {
                         "id": field_def.id,
+                        "active": True,
                         "name": field_def.name,
-                        "field_type": {"code": field_def.field_type_code},
-                        "campaign_id": field_def.campaign_id,
-                        "organization_id": dummy_org_id,
-                        "lead_field_section": {
-                            "id": field_def.lead_field_section_id,
-                            "name": "Simulated Section",
-                            "organization_id": dummy_org_id
-                        } if field_def.lead_field_section_id else None,
-                        "active": True
-                    }
+                        "order": field_def.order,
+                        "field_type_code": field_def.field_type_code,
+                        "field_subtype_code": getattr(field_def, 'field_subtype_code', None),
+                        "title_order": getattr(field_def, 'title_order', None),
+                    } if field_def else None
                 })
 
             return {
                 "id": dummy_lead_id,
+                "active": True,
                 "campaign_id": obj_in.campaign_id,
                 "organization_id": dummy_org_id,
-                "active": True,
-                "created_at": datetime.now(),
-                "updated_at": datetime.now(),
+                "current_state_id": initial_state.id,
+                "current_state": {
+                    "id": initial_state.id,
+                    "active": True,
+                    "lead_flow_id": initial_state.lead_flow_id,
+                    "name": initial_state.name,
+                    "color": getattr(initial_state, 'color', None),
+                    "category": initial_state.category,
+                    "is_initial": initial_state.is_initial,
+                    "order": getattr(initial_state, 'order', None),
+                    "position_x": getattr(initial_state, 'position_x', 0.0),
+                    "position_y": getattr(initial_state, 'position_y', 0.0),
+                    "organization_id": dummy_org_id,
+                },
+                "contact_state": None,
+                "tags": [],
                 "field_values": simulated_values,
-                "created_by": created_by
             }
 
     @classmethod

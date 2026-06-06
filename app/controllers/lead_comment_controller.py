@@ -11,5 +11,6 @@ class LeadCommentController(BaseController):
     schema_out = LeadCommentResponse
     schema_out_detail = LeadCommentDetailedResponse
     enabled_methods = READ_WRITE
+    allowed_filter_fields = {"lead_id"}
 
 router = LeadCommentController.get_router()

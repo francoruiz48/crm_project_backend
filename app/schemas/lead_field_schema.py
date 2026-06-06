@@ -29,7 +29,7 @@ class LeadFieldCreate(LeadFieldBase, BaseCreate):
     field_template_code: Optional[str] = Field(default=None, min_length=2, max_length=100)
     nomenclator_id: Optional[int] = Field(default=None, gt=0)
     related_campaign_id: Optional[int] = Field(default=None, gt=0)
-    lead_field_section_id: int = Field(default=None, gt=0)
+    lead_field_section_id: Optional[int] = Field(default=None, gt=0)
     mask_template_code: Optional[str] = Field(
         default=None, 
         description="Código de máscara predefinida (Ej: DNI_ARG, MOBILE_AR)"
@@ -50,8 +50,8 @@ class LeadFieldUpdate(BaseModel):
 
 class LeadFieldResponse(LeadFieldBase, BaseResponse):
     field_template_name: Optional[str] = None
-    field_type: Optional[LeadFieldTypeResponse]
-    field_subtype: Optional[LeadFieldSubtypeResponse]
+    field_type: Optional[LeadFieldTypeResponse] = None
+    field_subtype: Optional[LeadFieldSubtypeResponse] = None
     lead_field_section: LeadFieldSectionResponse
     nomenclator_id: Optional[int] = None
     related_campaign_id: Optional[int] = None
@@ -67,12 +67,12 @@ class LeadFieldLiteResponse(BaseModel, BaseResponse):
 
 class LeadFieldDetailedResponse(LeadFieldBase, BaseDetailedResponse):
     field_template_name: Optional[str] = None
-    field_type: Optional[LeadFieldTypeResponse]
-    field_subtype: Optional[LeadFieldSubtypeResponse]
+    field_type: Optional[LeadFieldTypeResponse] = None
+    field_subtype: Optional[LeadFieldSubtypeResponse] = None
     lead_field_section: LeadFieldSectionDetailedResponse
     validation_rules: List[ValidationRuleResponse] = []
-    nomenclator: Optional[NomenclatorResponse]
-    related_campaign: Optional[CampaignResponse]
+    nomenclator: Optional[NomenclatorResponse] = None
+    related_campaign: Optional[CampaignResponse] = None
     organization_id : int
     
 class LeadFieldOrderUpdate(BaseModel):

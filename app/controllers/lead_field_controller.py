@@ -14,6 +14,8 @@ class LeadFieldController(BaseController):
     schema_out_detail = LeadFieldDetailedResponse
     enabled_methods = READ_WRITE
 
+    allowed_filter_fields = {"name", "required", "is_primary", "order", "is_visible", "campaign_id", "nomenclator_id", "related_campaign_id", "field_type_code", "lead_field_section_id", "field_subtype_code"}
+
     @classmethod
     def get_router(cls):
         # Obtenemos el router base (GET, POST, etc.)

@@ -11,4 +11,6 @@ class TeamCampaignAccessController(BaseController):
     schema_out_detail = TeamCampaignAccessDetailedResponse
     enabled_methods = {"GET_ALL", "GET_ONE", "POST", "DELETE"}
 
+    allowed_filter_fields = {"team_id", "campaign_id"}
+
 router = TeamCampaignAccessController.get_router()
