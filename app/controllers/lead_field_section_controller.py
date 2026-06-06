@@ -12,4 +12,6 @@ class LeadFieldSectionController(BaseController):
     schema_out_detail = LeadFieldSectionDetailedResponse
     enabled_methods = READ_WRITE
 
+    allowed_filter_fields = {"name"}
+
 router = LeadFieldSectionController.get_router()

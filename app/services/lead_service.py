@@ -108,6 +108,7 @@ class LeadService(BaseService):
     @classmethod
     def _prepare_context_dict(cls, values_in):
         data = {}
+        seen_ids = set()
         for v in values_in:
             if isinstance(v, dict):
                 fid = v.get('field_id')
@@ -115,6 +116,12 @@ class LeadService(BaseService):
             else:
                 fid = getattr(v, 'field_id', None)
                 val = getattr(v, 'nomenclator_item_id', None) or getattr(v, 'value', None)
+            if fid in seen_ids:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    detail=[{"field": f"ID_{fid}", "message": "El campo fue enviado más de una vez en el mismo request."}]
+                )
+            seen_ids.add(fid)
             data[fid] = val
         return data
 
@@ -136,9 +143,10 @@ class LeadService(BaseService):
         return input_data
 
     @classmethod
-    def _check_duplicates(cls, session, campaign_id: int, input_data: dict, field_defs_list: list, errors: list):
+    def _check_duplicates(cls, session, campaign_id: int, input_data: dict, field_defs_list: list, errors: list, exclude_lead_id: int = None):
         """
         Verifica duplicados y agrega el error a la lista si encuentra uno.
+        exclude_lead_id: excluye el lead actual de la búsqueda (para updates).
         """
         primary_fields = [f for f in field_defs_list if f.is_primary and f.nomenclator_id is None]
         if not primary_fields: return
@@ -146,12 +154,12 @@ class LeadService(BaseService):
         values_to_check = {}
         for field in primary_fields:
             val = input_data.get(field.id)
-            if val is not None and val != "":
+            if val is not None and val != "" and not isinstance(val, bool):
                 values_to_check[field.id] = val
-        
-        if len(values_to_check) < len(primary_fields): return 
 
-        is_dup = cls.repository.find_duplicate(session, campaign_id, values_to_check)
+        if not values_to_check: return
+
+        is_dup = cls.repository.find_duplicate(session, campaign_id, values_to_check, exclude_id=exclude_lead_id)
         if is_dup:
             # Reportamos el error en el primer campo primary para referencia visual
             first_primary = primary_fields[0]
@@ -230,7 +238,7 @@ class LeadService(BaseService):
             else: regex_pattern += re.escape(char)
         regex_pattern += "$"
 
-        val_str = str(value)
+        val_str = str(value).strip()
         if not re.match(regex_pattern, val_str):
             errors.append({
                 "field": field_name,
@@ -315,6 +323,20 @@ class LeadService(BaseService):
                     errors.append({"field": field.name, "message": "IDs de opción inválidos."})
                     continue
 
+                # Validar que los IDs pertenecen al nomenclador del campo
+                if field.nomenclator_id is not None:
+                    from app.models.nomenclator_item import NomenclatorItem
+                    valid_items = uow.session.query(NomenclatorItem.id).filter(
+                        NomenclatorItem.id.in_(items_ids),
+                        NomenclatorItem.nomenclator_id == field.nomenclator_id,
+                        NomenclatorItem.active == True
+                    ).all()
+                    valid_ids = {row.id for row in valid_items}
+                    invalid_ids = [x for x in items_ids if x not in valid_ids]
+                    if invalid_ids:
+                        errors.append({"field": field.name, "message": "Una o más opciones seleccionadas no son válidas para este campo."})
+                        continue
+
             # --- Validaciones de Leads Relacionados ---
             elif field.field_type_code == "LEAD":
                 if val is None: 
@@ -331,12 +353,15 @@ class LeadService(BaseService):
                     continue
 
                 for x in val_list:
-                    if not isinstance(x, int): 
+                    if not isinstance(x, int):
                         errors.append({"field": field.name, "message": "ID de lead inválido."})
                         continue
-                    
-                    related_lead = uow.session.query(Lead).filter_by(id=x).first()
+
+                    from app.core.context import TENANT_ORG_ID
+                    org_id = TENANT_ORG_ID.get()
+                    related_lead = uow.session.query(Lead).filter_by(id=x, organization_id=org_id).first()
                     if related_lead is None:
+                        # Respuesta genérica: no revelamos si el lead existe en otro tenant
                         errors.append({"field": field.name, "message": f"El lead relacionado ({x}) no existe."})
                     elif field.related_campaign_id != related_lead.campaign_id:
                         errors.append({"field": field.name, "message": f"El lead ({x}) no pertenece a la campaña correcta."})
@@ -391,26 +416,31 @@ class LeadService(BaseService):
         return items_for_repo
 
     # ---------------------------------------------------------
-    # HELPER DE ARCHIVOS (Con manejo de errores en lista)
+    # HELPER DE ARCHIVOS (Dos fases: validar primero, subir después)
     # ---------------------------------------------------------
     @classmethod
-    def _handle_file_uploads(cls, context_data: dict, files_map: dict[int, UploadFile], field_defs_list: list, errors: list, is_simulation: bool = False):
-        if not files_map: return context_data
+    def _validate_file_uploads(cls, context_data: dict, files_map: dict, field_defs_list: list, errors: list) -> dict:
+        """
+        Fase 1: valida tipo y tamaño de cada archivo sin subirlos.
+        Marca context_data con un placeholder para que las validaciones de requerido pasen.
+        Retorna un dict {field_id: file} con los archivos que pasaron validación.
+        """
+        if not files_map: return {}
 
         fields_by_id = {f.id: f for f in field_defs_list}
+        pending = {}
 
         for field_id, file in files_map.items():
             field_def = fields_by_id.get(field_id)
-            
+
             if not field_def:
                 errors.append({"field": f"ID_{field_id}", "message": "Se intentó subir archivo para un campo inexistente."})
                 continue
-            
+
             if field_def.field_type_code != "FILE":
                 errors.append({"field": field_def.name, "message": "Este campo no acepta archivos."})
                 continue
 
-            allowed_types = []
             if field_def.field_subtype_code == "FILE_IMAGE":
                 allowed_types = ALLOWED_IMAGE_TYPES
             elif field_def.field_subtype_code == "FILE_DOCUMENT":
@@ -419,21 +449,25 @@ class LeadService(BaseService):
                 allowed_types = ALLOWED_IMAGE_TYPES + ALLOWED_DOCUMENT_TYPES
 
             try:
-                # Validar
                 StorageService.validate_file(file, allowed_types)
-                
-                if is_simulation:
-                    context_data[field_id] = f"simulated_path/{file.filename}"
-                else:
-                    path = StorageService.upload_file(file, folder="leads")
-                    context_data[field_id] = path
-                
+                context_data[field_id] = "__pending_upload__"  # placeholder: campo no vacío
+                pending[field_id] = file
             except ValidationError as ve:
                 errors.append({"field": field_def.name, "message": ve.message})
             except Exception as e:
-                # Errores técnicos los reportamos como genéricos o asociados al campo
-                errors.append({"field": field_def.name, "message": f"Error técnico subiendo archivo: {str(e)}"})
+                errors.append({"field": field_def.name, "message": f"Archivo inválido: {str(e)}"})
 
+        return pending
+
+    @classmethod
+    def _execute_file_uploads(cls, context_data: dict, pending_files: dict, folder: str = "leads"):
+        """
+        Fase 2: sube los archivos pre-validados y reemplaza los placeholders con paths reales.
+        Solo llamar después de que todas las validaciones de negocio hayan pasado.
+        """
+        for field_id, file in pending_files.items():
+            path = StorageService.upload_file(file, folder=folder)
+            context_data[field_id] = path
         return context_data
 
     @classmethod
@@ -458,25 +492,26 @@ class LeadService(BaseService):
     # LÓGICA CENTRAL DE PREPARACIÓN
     # ---------------------------------------------------------
     @classmethod
-    def _prepare_creation_data(cls, uow, obj_in, files_map, created_by, is_simulation=False):
+    def _prepare_creation_data(cls, uow, obj_in, files_map, created_by, campaign, is_simulation=False):
         """
         Ejecuta lógica. Retorna tuple. Si hay errores, lanza HTTPException con la lista.
+        Recibe el objeto 'campaign' ya validado para evitar re-queries y errores semánticos.
         """
         errors = [] # ACUMULADOR DE ERRORES
 
         campaign_id = obj_in.campaign_id
         all_field_defs = cls.field_repository.get_all_active_with_rules(uow.session, campaign_id=campaign_id)
-        
+
         # 1. Validación inicial de existencia de campos
         defs_map = {f.id: f for f in all_field_defs}
         incoming_field_ids = [v.get('field_id') if isinstance(v, dict) else v.field_id for v in obj_in.values]
-        
+
         for fid in incoming_field_ids:
             field_def = defs_map.get(fid)
-            if not field_def: 
+            if not field_def:
                 errors.append({"field": f"ID_{fid}", "message": "El campo no existe en el sistema."})
                 continue
-            if field_def.campaign_id != campaign_id: 
+            if field_def.campaign_id != campaign_id:
                 errors.append({"field": field_def.name, "message": "Este campo no pertenece a la campaña seleccionada."})
 
         # Si hay errores estructurales graves, fallamos antes de seguir
@@ -487,24 +522,29 @@ class LeadService(BaseService):
 
         if not current_campaign_defs:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "general", "message": "La campaña no tiene campos configurados."}])
-        
+
         # 2. Input -> Dict
         context_data = cls._prepare_context_dict(obj_in.values)
 
-        # 3. Archivos (Pasamos la lista de errores)
+        # 3. Archivos — Fase 1: solo validar, no subir todavía
+        pending_files = {}
         if files_map:
-            context_data = cls._handle_file_uploads(context_data, files_map, current_campaign_defs, errors, is_simulation=is_simulation)
+            if is_simulation:
+                for fid, file in files_map.items():
+                    context_data[fid] = f"simulated_path/{file.filename}"
+            else:
+                pending_files = cls._validate_file_uploads(context_data, files_map, current_campaign_defs, errors)
 
         # 4. Completar y Default
         context_data = cls._fill_missing_fields(context_data, current_campaign_defs)
         context_data = cls._apply_defaults(context_data, current_campaign_defs)
 
         # 5. INYECCIÓN DEL MOTOR DE AUTOMATIZACIÓN
-        event = "ON_CREATE" if not is_simulation else "SIMULATION" 
+        event = "ON_CREATE" if not is_simulation else "SIMULATION"
         context_data, automation_audit = AutomationEngine.run(
-            session=uow.session, 
-            campaign_id=campaign_id, 
-            context_data=context_data, 
+            session=uow.session,
+            campaign_id=campaign_id,
+            context_data=context_data,
             event=event
         )
 
@@ -513,18 +553,21 @@ class LeadService(BaseService):
 
         # 7. Chequear Duplicados (Agrega a errors si falla)
         cls._check_duplicates(uow.session, campaign_id, context_data, current_campaign_defs, errors)
-        
+
         # 8. Validar Reglas y Tipos (Agrega a errors si falla)
         cls._validate_processed_data(uow, context_data, current_campaign_defs, errors, current_lead_id=None)
-        
+
         # --- VERIFICACIÓN FINAL ---
         if errors:
-            # Lanzamos la excepción con la LISTA de errores
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
 
-        # 9. Preparar estructura
+        # 9. Archivos — Fase 2: subir ahora que todo está validado
+        if pending_files:
+            cls._execute_file_uploads(context_data, pending_files, folder="leads")
+
+        # 10. Preparar estructura
         clean_values = cls._reconstruct_items_for_repo(context_data, current_campaign_defs)
-        
+
         return clean_values, context_data, current_campaign_defs
 
     # ---------------------------------------------------------
@@ -533,42 +576,54 @@ class LeadService(BaseService):
 
     @classmethod
     def create(cls, obj_in, user_context: Optional[UserContext] = None, files_map: dict = None, avatar_file: UploadFile = None):
-        # NOTA: Ya no necesitamos try/except ValidationError globales envolventes, 
-        # porque _prepare_creation_data gestiona la lista y lanza HTTPException.
         with UnitOfWork() as uow:
-            # Usamos la lógica compartida
             created_by = user_context.user.id if user_context else None
 
-            clean_values, context_data, current_campaign_defs = cls._prepare_creation_data(uow, obj_in, files_map, created_by=created_by, is_simulation=False)
-            
+            # 1. Validar campaña primero para dar el error correcto si no existe
             campaign = cls.campaign_repository.get_by_id(uow.session, obj_in.campaign_id, user_context=user_context)
             if not campaign:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "campaign_id", "message": "La campaña no existe."}])
 
-            #Validamos y obtenemos el estado inicial para asignarlo al lead. Si no hay estado inicial, la campaña no tiene un flujo válido.
+            # 2. Validar que team_id y assigned_to_user_id pertenecen al org
+            from app.models.team import Team
+            from app.models.security_models import UserOrganization
+            org_id = campaign.organization_id
+            if obj_in.team_id is not None:
+                team = uow.session.query(Team).filter_by(id=obj_in.team_id, organization_id=org_id).first()
+                if not team:
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "team_id", "message": "El equipo no existe o no pertenece a esta organización."}])
+            if obj_in.assigned_to_user_id is not None:
+                membership = uow.session.query(UserOrganization).filter_by(user_id=obj_in.assigned_to_user_id, organization_id=org_id, active=True).first()
+                if not membership:
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "assigned_to_user_id", "message": "El usuario no existe o no pertenece a esta organización."}])
+
+            # 3. Procesar campos y validaciones (recibe campaign para evitar re-queries)
+            clean_values, context_data, current_campaign_defs = cls._prepare_creation_data(uow, obj_in, files_map, created_by=created_by, campaign=campaign, is_simulation=False)
+
+            # 4. Validar flujo de estados
             initial_state = cls.state_repository.get_all(uow.session, user_context=user_context, lead_flow_id=campaign.lead_flow_id, is_initial=True)
             initial_state = initial_state[0] if initial_state else None
             if not initial_state:
                 raise HTTPException(
-                    status.HTTP_400_BAD_REQUEST, 
+                    status.HTTP_400_BAD_REQUEST,
                     detail=[{"field": "general", "message": "La campaña no tiene un flujo de estados válido (falta configurar un estado inicial)."}]
                 )
-            
+
             from app.models.lead_contact_state import LeadContactState
             initial_contact_state = uow.session.query(LeadContactState).filter_by(
                 organization_id=campaign.organization_id,
                 is_initial=True,
                 active=True
             ).first()
-            
-            #Ejecución de Motor de enrutamiento
+
+            # 5. Motor de enrutamiento (determina equipo automático)
             assigned_team_id = RoutingRuleEvaluatorService.evaluate(
-                session = uow.session,
-                campaign_id = campaign.id,
-                organization_id = campaign.organization_id,
-                context_data = context_data,
-                field_defs_list = current_campaign_defs,
-                lead_obj = None, # Aún no existe, se asigna antes de crear
+                session=uow.session,
+                campaign_id=campaign.id,
+                organization_id=campaign.organization_id,
+                context_data=context_data,
+                field_defs_list=current_campaign_defs,
+                lead_obj=None,
             )
 
             # Si el frontend manda un string directo (ej. URL ya subida)
@@ -578,12 +633,13 @@ class LeadService(BaseService):
                 StorageService.validate_file(avatar_file, ALLOWED_IMAGE_TYPES)
                 picture_url = StorageService.upload_file(avatar_file, folder="avatars")
 
-            # Persistencia Real (Ahora inyectamos el current_state_id)
+            # El routing engine tiene prioridad; si no asignó equipo, se usa el del frontend
             lead_data = {
                 'campaign_id': obj_in.campaign_id,
                 'current_state_id': initial_state.id,
                 'contact_state_id': initial_contact_state.id if initial_contact_state else None,
-                'team_id': assigned_team_id,
+                'team_id': assigned_team_id if assigned_team_id is not None else obj_in.team_id,
+                'assigned_to_user_id': obj_in.assigned_to_user_id,
                 'picture_url': picture_url
             }
 
@@ -624,13 +680,63 @@ class LeadService(BaseService):
         """
         Reasigna un lote de leads a un equipo o usuario específico.
         """
+        from app.models.team import Team
+        from app.models.security_models import UserOrganization
+        from app.core.context import TENANT_ORG_ID
+
+        # --- Límite de tamaño para prevenir DoS ---
+        MAX_BULK_ASSIGN = 200
+        if len(lead_ids) > MAX_BULK_ASSIGN:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=[{"field": "lead_ids", "message": f"No se pueden reasignar más de {MAX_BULK_ASSIGN} leads a la vez."}]
+            )
 
         def do_bulk(uow):
-            leads = uow.session.query(Lead).filter(Lead.id.in_(lead_ids)).all()
+            org_id = TENANT_ORG_ID.get()
+
+            # --- Validar que team y user destino pertenecen al org del contexto ---
+            if target_team_id is not None:
+                team = uow.session.query(Team).filter_by(id=target_team_id, organization_id=org_id).first()
+                if not team:
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST,
+                        detail=[{"field": "target_team_id", "message": "El equipo destino no existe o no pertenece a esta organización."}]
+                    )
+
+            if target_user_id is not None:
+                membership = uow.session.query(UserOrganization).filter_by(
+                    user_id=target_user_id, organization_id=org_id, active=True
+                ).first()
+                if not membership:
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST,
+                        detail=[{"field": "target_user_id", "message": "El usuario destino no existe o no pertenece a esta organización."}]
+                    )
+
+            # Validar que el usuario destino pertenezca al equipo destino (si se envían ambos)
+            if target_team_id is not None and target_user_id is not None:
+                from app.models.team_member import TeamMember as TM
+                member_in_team = uow.session.query(TM).filter_by(
+                    team_id=target_team_id, user_id=target_user_id
+                ).first()
+                if not member_in_team:
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST,
+                        detail=[{"field": "target_user_id", "message": "El usuario destino no pertenece al equipo destino."}]
+                    )
+
+            # --- Filtrar leads por tenant y permisos de usuario para prevenir IDOR ---
+            leads_query = uow.session.query(Lead).filter(
+                Lead.id.in_(lead_ids),
+                Lead.organization_id == org_id
+            )
+            leads_query = cls.repository.apply_security_filter(uow.session, leads_query, user_context)
+            leads = leads_query.all()
             updated_by = user_context.user.id if user_context and user_context.user else None
             if not leads:
                 return []
-            
+
             for lead in leads:
                 old_team = lead.team_id
                 old_user = lead.assigned_to_user_id
@@ -677,6 +783,9 @@ class LeadService(BaseService):
             if not lead:
                 cls._not_found(obj_id)
 
+            # Lock de fila para evitar race conditions en cambios concurrentes
+            uow.session.query(Lead).filter(Lead.id == obj_id).with_for_update().first()
+
             current_state_id = lead.current_state_id
 
             # 1. Validar que no estemos moviéndolo al mismo estado
@@ -689,18 +798,30 @@ class LeadService(BaseService):
             campaign = cls.campaign_repository.get_by_id(uow.session, lead.campaign_id, user_context=user_context)
 
             # 2. Validar que el salto esté permitido en la campaña
-            if current_state_id is not None:
+            if current_state_id is None:
+                # Si el lead no tiene estado, solo puede ir al estado inicial del flujo
+                initial_states = cls.state_repository.get_all(
+                    uow.session, user_context=user_context,
+                    lead_flow_id=campaign.lead_flow_id, is_initial=True
+                )
+                initial_state = initial_states[0] if initial_states else None
+                if not initial_state or new_state_id != initial_state.id:
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST,
+                        detail=[{"field": "new_state_id", "message": "Un lead sin estado solo puede transicionar al estado inicial del flujo."}]
+                    )
+            else:
                 transition = cls.state_transition_repository.get_all(
-                    uow.session, 
-                    lead_flow_id=campaign.lead_flow_id, 
-                    from_state_id=current_state_id, 
+                    uow.session,
+                    lead_flow_id=campaign.lead_flow_id,
+                    from_state_id=current_state_id,
                     to_state_id=new_state_id,
                     user_context=user_context
                 )
 
                 if not transition:
                     raise HTTPException(
-                        status.HTTP_400_BAD_REQUEST, 
+                        status.HTTP_400_BAD_REQUEST,
                         detail=[{"field": "new_state_id", "message": "Transición no permitida. No hay una ruta válida hacia este estado."}]
                     )
 
@@ -720,6 +841,19 @@ class LeadService(BaseService):
             diff_state = {"current_state_id": {"old": current_state_id, "new": new_state_id}}
             cls._log_audit(uow.session, lead, action=SystemAuditLogAction.UPDATED, changes=diff_state, user_id=user_context.user.id if user_context else None)
 
+            # Registrar en la línea de tiempo visible del lead
+            cls._log_activity(
+                session=uow.session,
+                lead_id=obj_id,
+                activity_type="STATE_CHANGED",
+                details={
+                    "from_state_id": current_state_id,
+                    "to_state_id": new_state_id,
+                    "notes": notes
+                },
+                user_id=user_context.user.id if user_context else None
+            )
+
         # Devolvemos el Lead actualizado para el Frontend
         return cls.get_by_id(obj_id, detailed=True)
 
@@ -727,54 +861,84 @@ class LeadService(BaseService):
     def simulate_create(cls, obj_in, user_context: Optional[UserContext] = None, files_map: dict = None):
         with UnitOfWork() as uow:
             created_by = user_context.user.id if user_context else None
-            clean_values, context_data, field_defs = cls._prepare_creation_data(uow, obj_in, files_map, created_by, is_simulation=True)
-            
-            # Para la simulación (que no guarda en DB), podemos usar el ContextVar directamente 
-            # para armar el objeto dummy con el ID correcto.
+
             from app.core.context import TENANT_ORG_ID
             dummy_org_id = TENANT_ORG_ID.get() or 0
 
-            simulated_values = []
-            fields_map = {f.id: f for f in field_defs}
-            dummy_lead_id = -1 
+            campaign = cls.campaign_repository.get_by_id(uow.session, obj_in.campaign_id, user_context=user_context)
+            if not campaign:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "campaign_id", "message": "La campaña no existe."}])
 
+            # Validar org membership de team_id y assigned_to_user_id (igual que en create)
+            from app.models.team import Team
+            from app.models.security_models import UserOrganization
+            org_id = campaign.organization_id
+            if obj_in.team_id is not None:
+                team = uow.session.query(Team).filter_by(id=obj_in.team_id, organization_id=org_id).first()
+                if not team:
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "team_id", "message": "El equipo no existe o no pertenece a esta organización."}])
+            if obj_in.assigned_to_user_id is not None:
+                membership = uow.session.query(UserOrganization).filter_by(user_id=obj_in.assigned_to_user_id, organization_id=org_id, active=True).first()
+                if not membership:
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "assigned_to_user_id", "message": "El usuario no existe o no pertenece a esta organización."}])
+
+            clean_values, context_data, field_defs = cls._prepare_creation_data(uow, obj_in, files_map, created_by, campaign=campaign, is_simulation=True)
+
+            states = cls.state_repository.get_all(uow.session, user_context=user_context, lead_flow_id=campaign.lead_flow_id, is_initial=True)
+            initial_state = states[0] if states else None
+            if not initial_state:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "general", "message": "La campaña no tiene un estado inicial configurado."}])
+
+            dummy_lead_id = -1
+            fields_map = {f.id: f for f in field_defs}
+
+            simulated_values = []
             for item_proxy in clean_values:
                 data = item_proxy._data
                 fid = data['field_id']
                 field_def = fields_map.get(fid)
-                val_display = data.get('value')
-                
+
                 simulated_values.append({
                     "id": -1 * fid,
+                    "active": True,
                     "lead_id": dummy_lead_id,
                     "field_id": fid,
-                    "value": val_display,
-                    "nomenclator_items": [], 
+                    "value": data.get('value'),
+                    "nomenclator_items": [],
                     "related_leads": [],
                     "field": {
                         "id": field_def.id,
+                        "active": True,
                         "name": field_def.name,
-                        "field_type": {"code": field_def.field_type_code},
-                        "campaign_id": field_def.campaign_id,
-                        "organization_id": dummy_org_id,
-                        "lead_field_section": {
-                            "id": field_def.lead_field_section_id,
-                            "name": "Simulated Section",
-                            "organization_id": dummy_org_id
-                        } if field_def.lead_field_section_id else None,
-                        "active": True
-                    }
+                        "order": field_def.order,
+                        "field_type_code": field_def.field_type_code,
+                        "field_subtype_code": getattr(field_def, 'field_subtype_code', None),
+                        "title_order": getattr(field_def, 'title_order', None),
+                    } if field_def else None
                 })
 
             return {
                 "id": dummy_lead_id,
+                "active": True,
                 "campaign_id": obj_in.campaign_id,
                 "organization_id": dummy_org_id,
-                "active": True,
-                "created_at": datetime.now(),
-                "updated_at": datetime.now(),
+                "current_state_id": initial_state.id,
+                "current_state": {
+                    "id": initial_state.id,
+                    "active": True,
+                    "lead_flow_id": initial_state.lead_flow_id,
+                    "name": initial_state.name,
+                    "color": getattr(initial_state, 'color', None),
+                    "category": initial_state.category,
+                    "is_initial": initial_state.is_initial,
+                    "order": getattr(initial_state, 'order', None),
+                    "position_x": getattr(initial_state, 'position_x', 0.0),
+                    "position_y": getattr(initial_state, 'position_y', 0.0),
+                    "organization_id": dummy_org_id,
+                },
+                "contact_state": None,
+                "tags": [],
                 "field_values": simulated_values,
-                "created_by": created_by
             }
 
     @classmethod
@@ -784,19 +948,30 @@ class LeadService(BaseService):
         with UnitOfWork() as uow:
             current_lead = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
             if not current_lead: cls._not_found(obj_id)
-            
+
+            # Validar que contact_state_id pertenece al org
+            if obj_in and obj_in.contact_state_id is not None:
+                from app.models.lead_contact_state import LeadContactState
+                contact_state = uow.session.query(LeadContactState).filter_by(
+                    id=obj_in.contact_state_id,
+                    organization_id=current_lead.organization_id,
+                    active=True
+                ).first()
+                if not contact_state:
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "contact_state_id", "message": "El estado de contacto no existe o no pertenece a esta organización."}])
+
             # Logica de Tags
-            if "tag_ids" in obj_in.model_fields_set:
+            if obj_in and "tag_ids" in obj_in.model_fields_set:
                 lead_db = uow.session.query(Lead).filter_by(id=obj_id).first()
                 cls._assign_tags(
-                    session=uow.session, 
-                    lead_obj=lead_db, 
-                    tag_ids=obj_in.tag_ids, 
-                    org_id=current_lead.organization_id 
+                    session=uow.session,
+                    lead_obj=lead_db,
+                    tag_ids=obj_in.tag_ids,
+                    org_id=current_lead.organization_id
                 )
 
-            # Update base
-            lead_data = obj_in.model_dump(exclude_unset=True, exclude={"values", "tag_ids"})
+            # Update base (campos nativos del lead)
+            lead_data = obj_in.model_dump(exclude_unset=True, exclude={"values", "tag_ids"}) if obj_in else {}
 
             if avatar_file:
                 StorageService.validate_file(avatar_file, ALLOWED_IMAGE_TYPES)
@@ -806,19 +981,19 @@ class LeadService(BaseService):
             if lead_data:
                 cls.repository.update(uow.session, obj_id, lead_data, user_context=user_context)
 
-            if obj_in.values is not None:
+            if obj_in and obj_in.values is not None:
                 all_field_defs = cls.field_repository.get_all_active_with_rules(uow.session, campaign_id=current_lead.campaign_id)
                 current_campaign_defs = [f for f in all_field_defs if f.campaign_id == current_lead.campaign_id]
-                
+
                 defs_map = {f.id: f for f in current_campaign_defs}
-                
+
                 # Validaciones previas
                 incoming_ids = [v.get('field_id') if isinstance(v, dict) else v.field_id for v in obj_in.values]
                 for fid in incoming_ids:
-                    if fid not in defs_map: 
+                    if fid not in defs_map:
                         errors.append({"field": f"ID_{fid}", "message": "Campo no existe o no pertenece a esta campaña."})
                         continue
-                    if defs_map[fid].campaign_id != current_lead.campaign_id: 
+                    if defs_map[fid].campaign_id != current_lead.campaign_id:
                         errors.append({"field": defs_map[fid].name, "message": "El campo no pertenece a esta campaña."})
 
                 if errors:
@@ -826,9 +1001,11 @@ class LeadService(BaseService):
 
                 incoming_data = cls._prepare_context_dict(obj_in.values)
 
+                # Archivos — Fase 1: validar sin subir
+                pending_files = {}
                 if files_map:
-                    incoming_data = cls._handle_file_uploads(incoming_data, files_map, current_campaign_defs, errors)
-                
+                    pending_files = cls._validate_file_uploads(incoming_data, files_map, current_campaign_defs, errors)
+
                 # Reconstruir estado actual DB
                 db_values = {}
                 for v in current_lead.field_values:
@@ -841,10 +1018,10 @@ class LeadService(BaseService):
                         elif hasattr(v, "nomenclator_item_id") and v.nomenclator_item_id:
                             val = v.nomenclator_item_id
                     db_values[v.field_id] = val
-                
+
                 full_context = {**db_values, **incoming_data}
 
-                #INYECCIÓN DEL MOTOR DE AUTOMATIZACIÓN (ON_UPDATE)
+                # INYECCIÓN DEL MOTOR DE AUTOMATIZACIÓN (ON_UPDATE)
                 full_context, automation_audit = AutomationEngine.run(
                     session=uow.session,
                     campaign_id=current_lead.campaign_id,
@@ -852,13 +1029,24 @@ class LeadService(BaseService):
                     event="ON_UPDATE"
                 )
 
-                #Calcular los campos calculados con el contexto completo (DB + incoming)
+                # Calcular los campos calculados con el contexto completo (DB + incoming)
                 full_context = cls._evaluate_calculated_fields(full_context, current_campaign_defs)
-                #Validar reglas 
+
+                # Chequear duplicados en primary fields (excluimos el lead actual)
+                cls._check_duplicates(uow.session, current_lead.campaign_id, full_context, current_campaign_defs, errors, exclude_lead_id=obj_id)
+
+                # Validar reglas
                 cls._validate_processed_data(uow, full_context, current_campaign_defs, errors, current_lead_id=obj_id)
-                
+
                 if errors:
                     raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
+
+                # Archivos — Fase 2: subir ahora que todo está validado
+                if pending_files:
+                    cls._execute_file_uploads(incoming_data, pending_files, folder="leads")
+                    # Sincronizar paths reales en full_context para el historial
+                    for fid in pending_files:
+                        full_context[fid] = incoming_data[fid]
 
                 for field in current_campaign_defs:
                     if field.field_type_code == "CALCULATED" and field.id in full_context:
@@ -996,17 +1184,15 @@ class LeadService(BaseService):
         # Buscamos solo las etiquetas que coinciden con los IDs y pertenecen a la empresa
         tags = session.query(Tag).filter(
             Tag.id.in_(tag_ids),
-            Tag.organization_id == org_id,
-            Tag.active == True
+            Tag.organization_id == org_id
         ).all()
-        
-        # Validación de seguridad: ¿Encontró la misma cantidad de etiquetas que enviaron?
-        # Usamos set() por si el front mandó IDs duplicados por error en el array
+
         if len(tags) != len(set(tag_ids)):
+            found_ids = {t.id for t in tags}
+            missing_ids = [i for i in tag_ids if i not in found_ids]
             raise HTTPException(
-                status.HTTP_400_BAD_REQUEST, 
-                detail=[{"field": "tag_ids", "message": "Una o más etiquetas no existen o no pertenecen a tu organización."}]
+                status_code=400,
+                detail=[{"field": "tag_ids", "message": f"Las etiquetas {missing_ids} no existen o no pertenecen a tu organización."}]
             )
-            
-        # Asignación directa: SQLAlchemy se encarga de hacer los INSERT/DELETE en la tabla intermedia
+
         lead_obj.tags = tags

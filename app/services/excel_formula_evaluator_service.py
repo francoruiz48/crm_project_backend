@@ -13,6 +13,8 @@ class ExcelFormulaEvaluatorService:
                 if a is None: a = 0
                 if b is None: b = 0
                 return op_func(float(a), float(b))
+            except ZeroDivisionError:
+                raise ValueError("División por cero.")
             except (ValueError, TypeError):
                 raise ValueError("Se esperaba un valor numérico para la operación matemática.")
 
@@ -374,7 +376,7 @@ class ExcelFormulaEvaluatorService:
         until_ = int(args[1])
         return random.randint(from_, until_)
     
-    def _random_number(self):
+    def _random_number(self, args):
         return random.random()
     
     def _is_number(self, args):

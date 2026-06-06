@@ -174,9 +174,12 @@ class BaseService:
     def bulk_delete(cls, obj_ids: list[int], user_context: Optional[UserContext] = None):
         def do_bulk_delete(uow):
             # 1. Buscamos los objetos ANTES de borrarlos para poder auditar
-            objs_to_delete = uow.session.query(cls.repository.model).filter(
+            objs_query = uow.session.query(cls.repository.model).filter(
                 cls.repository.model.id.in_(obj_ids)
-            ).all()
+            )
+            objs_query = cls.repository.apply_security_filter(uow.session, objs_query, user_context)
+            objs_query = cls.repository._apply_tenant_filter(objs_query, is_read_operation=False)
+            objs_to_delete = objs_query.all()
 
             if not objs_to_delete:
                 return {"deleted": [], "disabled": [], "failed": obj_ids}
@@ -236,9 +239,12 @@ class BaseService:
                 raise AppException(detail=f"El modelo {cls._model_name()} no soporta activación.")
 
             # 1. Buscamos los objetos
-            objs_to_activate = uow.session.query(cls.repository.model).filter(
+            objs_query = uow.session.query(cls.repository.model).filter(
                 cls.repository.model.id.in_(obj_ids)
-            ).all()
+            )
+            objs_query = cls.repository.apply_security_filter(uow.session, objs_query, user_context)
+            objs_query = cls.repository._apply_tenant_filter(objs_query, is_read_operation=False)
+            objs_to_activate = objs_query.all()
 
             if not objs_to_activate:
                 return {"activated": [], "already_active": [], "failed": obj_ids}

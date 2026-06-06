@@ -11,5 +11,6 @@ class LeadContactStateController(BaseController):
     schema_out = LeadContactStateResponse
     schema_out_detail = LeadContactStateDetailedResponse
     enabled_methods = READ_WRITE
+    allowed_filter_fields = {"name", "is_initial", "order"}
 
 router = LeadContactStateController.get_router()

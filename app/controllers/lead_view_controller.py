@@ -13,4 +13,6 @@ class LeadViewController(BaseController):
     
     enabled_methods = READ_WRITE
 
+    allowed_filter_fields = {"name", "campaign_id", "team_id", "visibility", "view_type"}
+
 router = LeadViewController.get_router()

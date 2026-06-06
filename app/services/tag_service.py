@@ -46,16 +46,18 @@ class TagService(BaseService):
 
             org_id = user_context.organization_id if user_context and user_context.organization_id else TENANT_ORG_ID.get()
             
-            # Validación: Nombre único por organización
-            existing = uow.session.query(Tag).filter(
-                Tag.name.ilike(obj_in.name),
-                Tag.organization_id == org_id
-            ).first()
-            if existing:
-                raise HTTPException(
-                    status.HTTP_400_BAD_REQUEST,
-                    detail=[{"field": "name", "message": f"Ya existe una etiqueta llamada '{obj_in.name}'."}]
-                )
+            # Validación: Nombre único por organización (solo si se envía nombre y es distinto al actual)
+            if obj_in.name is not None and obj_in.name.lower() != (current_obj.name or "").lower():
+                existing = uow.session.query(Tag).filter(
+                    Tag.name.ilike(obj_in.name),
+                    Tag.organization_id == org_id,
+                    Tag.id != obj_id
+                ).first()
+                if existing:
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST,
+                        detail=[{"field": "name", "message": f"Ya existe una etiqueta llamada '{obj_in.name}'."}]
+                    )
 
             updated_obj = cls.repository.update(uow.session, obj_id, obj_in, user_context=user_context)
             uow.session.flush()

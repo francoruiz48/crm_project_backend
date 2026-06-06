@@ -12,6 +12,7 @@ class BaseController:
     schema_out = None
     schema_out_detail = None
     enabled_methods = {"GET_ALL", "GET_ONE", "POST", "PUT", "DELETE", "ACTIVE", "PATCH"}
+    allowed_filter_fields: Optional[set] = None  # None = sin restricción (backward compat)
 
     required_permissions: Dict[str, str] = {}
 
@@ -86,6 +87,7 @@ class BaseController:
                 dynamic_filters = {
                     key: value for key, value in request.query_params.items()
                     if key not in reserved_params
+                    and (cls.allowed_filter_fields is None or key.replace("__ilike", "") in cls.allowed_filter_fields)
                 }
 
                 total, items_pydantic = cls.service.get_all(

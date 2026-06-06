@@ -11,6 +11,7 @@ class UserSimpleResponse(BaseModel):
 
 class BaseResponse():
     id: int
+    active: bool
 
     model_config = {
         "from_attributes": True
@@ -19,7 +20,6 @@ class BaseResponse():
 class BaseDetailedResponse(BaseResponse):
     created_at: datetime
     updated_at: datetime
-    active: bool
     created_by: Optional[int]
     updated_by: Optional[int]
 

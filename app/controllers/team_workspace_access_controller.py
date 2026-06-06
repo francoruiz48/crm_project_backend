@@ -10,4 +10,6 @@ class TeamWorkspaceAccessController(BaseController):
     schema_out_detail = TeamWorkspaceAccessDetailedResponse
     enabled_methods = {"GET_ALL", "GET_ONE", "POST", "DELETE"}
 
+    allowed_filter_fields = {"team_id", "workspace_id"}
+
 router = TeamWorkspaceAccessController.get_router()

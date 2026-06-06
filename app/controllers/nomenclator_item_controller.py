@@ -13,4 +13,6 @@ class NomenclatorItemController(BaseController):
     
     enabled_methods = READ_WRITE
 
+    allowed_filter_fields = {"value", "nomenclator_id", "parent_item_id"}
+
 router = NomenclatorItemController.get_router()
