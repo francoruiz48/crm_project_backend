@@ -129,7 +129,7 @@ class LeadController(BaseController):
         def get_all(
             user_context = Depends(get_current_user_roles),
             page: int = Query(1, ge=1),
-            page_size: int = DEFAULT_PAGE_SIZE,
+            page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=PAGE_SIZE_LIMIT),
             only_active: bool = True, 
             detailed: bool = Query(False),
             campaign_id: Optional[int] = Query(None, description="Filtrar por ID de campaña"),
@@ -205,7 +205,7 @@ class LeadController(BaseController):
             return cls.service.update(id, obj_in, files_map=files_map, user_context=user_context, avatar_file=avatar_file)
 
     
-        @router.post("/simulate", response_model=LeadResponse) # O usa un schema específico si prefieres
+        @router.post("/simulate", response_model=LeadResponse, dependencies=cls._get_deps("create"))
         async def simulate_lead_creation(
             request: Request,
             user_context = Depends(get_current_user_roles)
