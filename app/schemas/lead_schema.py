@@ -6,7 +6,7 @@ from app.schemas.lead_comment_shema import LeadCommentDetailedResponse
 from app.schemas.lead_field_value_schema import LeadFieldValueCreate, LeadFieldValueDetailedResponse, LeadFieldValueResponse
 from app.schemas.lead_state_schema import LeadStateDetailedResponse, LeadStateResponse
 from app.schemas.tag_schema import TagResponse
-from app.schemas.lead_contact_state_schema import LeadContactStateResponse
+from app.schemas.lead_contact_state_schema import LeadContactStateResponse, LeadContactStateDetailedResponse
 
 
 class LeadBase(BaseModel):
@@ -32,7 +32,7 @@ class LeadResponse(LeadBase, BaseResponse):
     organization_id : int
     current_state_id: int
     current_state: LeadStateResponse
-    contact_state: LeadContactStateResponse
+    contact_state: Optional[LeadContactStateResponse] = None
     tags: List[TagResponse] = Field(default_factory=list)
 
 class LeadLiteResponse(LeadBase, BaseResponse):
@@ -49,5 +49,6 @@ class LeadDetailedResponse(LeadBase, BaseDetailedResponse):
     organization_id : int
     current_state: LeadStateDetailedResponse
     current_state_id: int
+    contact_state: Optional[LeadContactStateDetailedResponse] = None
 
 

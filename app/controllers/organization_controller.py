@@ -12,5 +12,6 @@ class OrganizationController(BaseController):
     schema_out_detail = OrganizationDetailedResponse
     enabled_methods = READ_WRITE
 
+    allowed_filter_fields = {"name", "description"}
 
 router = OrganizationController.get_router()

@@ -12,4 +12,6 @@ class ValidationRuleController(BaseController):
     schema_out_detail = ValidationRuleDetailedResponse
     enabled_methods = READ_WRITE
 
+    allowed_filter_fields = {"name", "field_id", "template_code"}
+
 router = ValidationRuleController.get_router()

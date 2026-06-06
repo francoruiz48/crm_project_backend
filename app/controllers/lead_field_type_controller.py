@@ -10,4 +10,6 @@ class LeadFieldTypeController(BaseController):
     schema_out_detail = LeadFieldTypeDetailedResponse
     enabled_methods = READ_ONLY
 
+    allowed_filter_fields = {"code", "description"}
+
 router = LeadFieldTypeController.get_router()

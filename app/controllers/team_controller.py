@@ -12,4 +12,6 @@ class TeamController(BaseController):
     schema_out_detail = TeamDetailedResponse
     enabled_methods = READ_WRITE
 
+    allowed_filter_fields = {"name", "is_visibility_shared"}
+
 router = TeamController.get_router()

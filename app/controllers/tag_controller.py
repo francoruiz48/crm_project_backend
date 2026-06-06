@@ -12,5 +12,7 @@ class TagController(BaseController):
     schema_out_detail = TagDetailedResponse
     enabled_methods = READ_WRITE
 
+    allowed_filter_fields = {"name"}
+
 
 router = TagController.get_router()
