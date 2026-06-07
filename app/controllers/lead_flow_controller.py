@@ -17,4 +17,6 @@ class LeadFlowController(BaseController):
 
     enabled_methods = {"GET_ALL", "GET_ONE", "POST", "PUT", "DELETE"}
 
+    allowed_filter_fields = {"name", "description"}
+
 router = LeadFlowController.get_router()

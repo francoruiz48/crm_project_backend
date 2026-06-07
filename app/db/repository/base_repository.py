@@ -8,12 +8,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func, inspect, or_
 from app.core.context import TENANT_ORG_ID
 from app.core.security import UserContext
+from fastapi.encoders import jsonable_encoder
 
 class BaseRepository:
     model = None
     schema_out = None
     schema_out_detail = None
     relationships: list = []
+    default_sort_column = "id"
+    default_sort_asc = False
 
     # ===============================================================
     # Inyección automática de Tenant (Multi-empresa)
@@ -138,17 +141,17 @@ class BaseRepository:
 
     @staticmethod
     def _normalize_data(obj_data) -> Dict[str, Any]:
-        """Convierte obj_data a dict (compatible con Pydantic u dict normal)"""
+        """
+        Convierte obj_data a dict puramente nativo (compatible con Postgres JSONB).
+        Utiliza jsonable_encoder para asegurar un 'deep dump' que transforma 
+        Enums, Datetimes y modelos Pydantic anidados en tipos primitivos puros.
+        """
         if obj_data is None:
             return {}
-        # Soporte para Pydantic V2
-        if hasattr(obj_data, "model_dump"):
-            return obj_data.model_dump(exclude_unset=True)
             
-        # Soporte Legacy / Pydantic V1
-        if hasattr(obj_data, "dict"):
-            return obj_data.dict(exclude_unset=True)
-        return dict(obj_data)
+        # jsonable_encoder hace todo el trabajo sucio automáticamente, 
+        # sin importar si es Pydantic V1, V2, o un simple diccionario.
+        return jsonable_encoder(obj_data, exclude_unset=True)
     
     @staticmethod
     def _handle_integrity_error(e: IntegrityError):
@@ -222,6 +225,49 @@ class BaseRepository:
         search_query = kwargs.pop('search', None)
         search_fields = kwargs.pop('search_fields', [])
 
+        start_date = kwargs.pop('start_date', None)
+        end_date = kwargs.pop('end_date', None)
+        date_field = kwargs.pop('date_field', 'created_at')
+
+        if (start_date or end_date) and date_field and hasattr(cls.model, date_field):
+            column = getattr(cls.model, date_field)
+            if start_date:
+                query = query.filter(column >= start_date)
+            if end_date:
+                end_date_str = end_date
+                # Si envían solo la fecha (ej: "2026-05-14"), le sumamos la hora tope 
+                # para que abarque todo el día completo y no corte a las 00:00:00.
+                if len(end_date_str) == 10:
+                    end_date_str += " 23:59:59.999999"
+                query = query.filter(column <= end_date_str)
+
+        creator_name = kwargs.pop('creator_name', None)
+        creator_email = kwargs.pop('creator_email', None)
+        updater_name = kwargs.pop('updater_name', None)
+        updater_email = kwargs.pop('updater_email', None)
+
+        if creator_name or creator_email:
+            # Importación local para evitar dependencias circulares en la inicialización
+            from app.models.security_models import User 
+            
+            # Hacemos un OUTER JOIN con la tabla de usuarios
+            query = query.outerjoin(User, cls.model.created_by == User.id)
+
+            if creator_name:
+                query = query.filter(User.name.ilike(f"%{creator_name}%"))
+            if creator_email:
+                query = query.filter(User.email.ilike(f"%{creator_email}%"))
+
+        if updater_name or updater_email:
+            from app.models.security_models import User 
+            
+            query = query.outerjoin(User, cls.model.updated_by == User.id)
+
+            if updater_name:
+                query = query.filter(User.name.ilike(f"%{updater_name}%"))
+            if updater_email:
+                query = query.filter(User.email.ilike(f"%{updater_email}%"))
+
         for key, value in kwargs.items():
             if value is None:
                 continue
@@ -251,6 +297,18 @@ class BaseRepository:
             # Si encontramos campos válidos, aplicamos un OR (uno u otro)
             if search_conditions:
                 query = query.filter(or_(*search_conditions))
+
+        # Si el Frontend NO envió un campo específico por el cual ordenar...
+        if not order_by:
+            order_by = cls.default_sort_column
+            # Usamos la dirección por defecto del repositorio si no enviaron una
+            if ascending is None:
+                ascending = cls.default_sort_asc
+        else:
+            # Si el Frontend SÍ envió un campo (ej: order_by=name), pero no la dirección,
+            # por convención general de APIs asumimos ascendente.
+            if ascending is None:
+                ascending = True
 
         if order_by and hasattr(cls.model, order_by):
             column = getattr(cls.model, order_by)

@@ -1,6 +1,6 @@
 
 from typing import Optional
-from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
+from app.schemas.base_schema import BaseDetailedResponse, BaseCreate, BaseResponse
 from pydantic import BaseModel, Field
 
 
@@ -18,7 +18,7 @@ class OrganizationUpdate(BaseModel):
 class OrganizationResponse(OrganizationBase, BaseResponse):
     pass
 
-class OrganizationDetailedResponse(OrganizationBase, BaseDetailResponse):
+class OrganizationDetailedResponse(OrganizationBase, BaseDetailedResponse):
     pass
 
 

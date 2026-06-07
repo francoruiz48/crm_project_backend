@@ -1,6 +1,6 @@
 from typing import Optional
 
-from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
+from app.schemas.base_schema import BaseDetailedResponse, BaseCreate, BaseResponse
 from pydantic import BaseModel, Field
 
 from app.schemas.lead_field_subtype_schema import LeadFieldSubtypeResponse
@@ -19,5 +19,5 @@ class LeadFieldTypeUpdate(BaseModel):
 class LeadFieldTypeResponse(LeadFieldTypeBase, BaseResponse):
     pass
 
-class LeadFieldTypeDetailedResponse(LeadFieldTypeBase, BaseDetailResponse):
+class LeadFieldTypeDetailedResponse(LeadFieldTypeBase, BaseDetailedResponse):
     subtypes: list[LeadFieldSubtypeResponse] = []

@@ -9,6 +9,7 @@ from app.core.exceptions.exceptions import ValidationError
 from app.services.excel_formula_evaluator_service import ExcelFormulaEvaluatorService
 from app.db.repository.lead_field_repository import LeadFieldRepository
 from app.core.security import UserContext
+from app.core.constans import SystemAuditLogAction
 
 class ValidationRuleService(BaseService):
     repository = ValidationRuleRepository
@@ -161,7 +162,7 @@ class ValidationRuleService(BaseService):
         session.flush()
 
         # 5. LOG DE AUDITORÍA (Aquí obj_data ya es el dict procesado con exclude_unset=True)
-        cls._log_audit(session, new_rule, action="CREATE", changes=obj_data, user_id=user_context.user.id if user_context and user_context.user else None)
+        cls._log_audit(session, new_rule, action=SystemAuditLogAction.CREATED, changes=obj_data, user_id=user_context.user.id if user_context and user_context.user else None)
 
         return new_rule
 
@@ -281,7 +282,7 @@ class ValidationRuleService(BaseService):
             uow.session.flush()
 
             if changes:
-                cls._log_audit(uow.session, updated_rule, action="UPDATE", changes=changes, user_id=user_context.user.id if user_context and user_context.user else None)
+                cls._log_audit(uow.session, updated_rule, action=SystemAuditLogAction.UPDATED, changes=changes, user_id=user_context.user.id if user_context and user_context.user else None)
 
             return updated_rule
         

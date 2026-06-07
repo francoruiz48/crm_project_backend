@@ -10,3 +10,6 @@ class LeadContactStateRepository(BaseRepository):
     model = LeadContactState
     schema_out = LeadContactStateResponse
     schema_out_detail = LeadContactStateDetailedResponse
+
+    default_sort_column = "order"
+    default_sort_asc = True

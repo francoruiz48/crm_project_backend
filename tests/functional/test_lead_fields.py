@@ -1,6 +1,10 @@
 import pytest
 from app.models.lead_field import LeadField
 from app.models.validation_rule import ValidationRule
+from app.models.lead import Lead
+from app.models.lead_field_section import LeadFieldSection
+from app.models.organization import Organization
+from tests.helpers.api_helpers import ApiClient
 
 def test_lead_field_lifecycle_no_data(api, db_session, initial_structure):
     """
@@ -584,3 +588,250 @@ def test_reorder_ignores_soft_deleted_fields_collision(api, db_session, initial_
 
     db_session.expire_all()
     assert db_session.get(LeadField, f_nombre_id).order == 2
+
+
+# =============================================================================
+# VALIDACIONES DE NEGOCIO EN UPDATE
+# =============================================================================
+
+def test_update_field_visible_false_cannot_set_required(api, initial_structure):
+    """
+    Caso: Un campo oculto (is_visible=False) no puede marcarse como requerido.
+    La combinación is_visible=False + required=True es inválida.
+    """
+    camp_id = initial_structure["campaign_id"]
+
+    field = api.create_lead_field(camp_id, "Oculto No Requerido", "STRING", is_visible=False)
+
+    res = api.client.put(f"/lead_fields/{field['id']}", json={
+        "required": True
+    }, headers=api.headers)
+
+    assert res.status_code == 400
+    errors = res.json().get("detail", [])
+    assert any(e.get("field") == "required" for e in errors)
+
+
+def test_update_field_required_cannot_be_hidden(api, initial_structure):
+    """
+    Caso: Un campo requerido no puede ocultarse.
+    Ocultar un campo requerido lo haría imposible de completar en el formulario.
+    """
+    camp_id = initial_structure["campaign_id"]
+
+    field = api.create_lead_field(camp_id, "Requerido Visible", "STRING", required=True)
+
+    res = api.client.put(f"/lead_fields/{field['id']}", json={
+        "is_visible": False
+    }, headers=api.headers)
+
+    assert res.status_code == 400
+    errors = res.json().get("detail", [])
+    assert any(e.get("field") in ("required", "is_primary") for e in errors)
+
+
+def test_update_calculated_field_cannot_set_required(api, initial_structure):
+    """
+    Caso: Un campo CALCULATED no puede ser requerido.
+    Su valor lo calcula el sistema, no lo ingresa el usuario.
+    """
+    camp_id = initial_structure["campaign_id"]
+
+    field = api.create_lead_field(
+        camp_id, "Formula", "CALCULATED",
+        calculation_expression="1+1"
+    )
+
+    res = api.client.put(f"/lead_fields/{field['id']}", json={
+        "required": True
+    }, headers=api.headers)
+
+    assert res.status_code == 400
+    errors = res.json().get("detail", [])
+    assert any(e.get("field") == "required" for e in errors)
+
+
+def test_update_calculated_field_cannot_set_primary(api, initial_structure):
+    """
+    Caso: Un campo CALCULATED no puede ser identificador principal (is_primary).
+    """
+    camp_id = initial_structure["campaign_id"]
+
+    field = api.create_lead_field(
+        camp_id, "Formula Primaria", "CALCULATED",
+        calculation_expression="1+1"
+    )
+
+    res = api.client.put(f"/lead_fields/{field['id']}", json={
+        "is_primary": True
+    }, headers=api.headers)
+
+    assert res.status_code == 400
+    errors = res.json().get("detail", [])
+    assert any(e.get("field") == "is_primary" for e in errors)
+
+
+# =============================================================================
+# INTEGRIDAD HISTÓRICA: LEADS INACTIVOS
+# =============================================================================
+
+def test_update_required_succeeds_when_only_inactive_leads_have_nulls(api, db_session, initial_structure):
+    """
+    Caso: Un campo con nulos solo en leads inactivos puede marcarse como requerido.
+    Antes del fix, los leads soft-deleted bloqueaban este cambio incorrectamente.
+    """
+    camp_id = initial_structure["campaign_id"]
+
+    # 1. Campo opcional → lead sin valor
+    field = api.create_lead_field(camp_id, "Campo Historico", "STRING", required=False)
+    lead_data = api.create_lead(camp_id, values=[])
+
+    # 2. Soft-delete del lead (activo=False)
+    db_session.query(Lead).filter_by(id=lead_data["id"]).update({"active": False})
+    db_session.commit()
+
+    # 3. Ahora no hay leads activos con nulos: debe permitir marcar como requerido
+    res = api.client.put(f"/lead_fields/{field['id']}", json={
+        "required": True
+    }, headers=api.headers)
+
+    assert res.status_code == 200
+
+
+# =============================================================================
+# VALIDACIÓN DE CAMPAÑA RELACIONADA
+# =============================================================================
+
+def test_create_lead_field_related_campaign_nonexistent_fails(api, initial_structure):
+    """
+    Caso: Un campo tipo LEAD no puede apuntar a una campaña que no existe.
+    """
+    camp_id = initial_structure["campaign_id"]
+
+    res = api.client.post("/lead_fields/", json={
+        "campaign_id": camp_id,
+        "name": "Lead Inexistente",
+        "field_type_code": "LEAD",
+        "related_campaign_id": 999999
+    }, headers=api.headers)
+
+    assert res.status_code == 400
+    errors = res.json().get("detail", [])
+    assert any(e.get("field") == "related_campaign_id" for e in errors)
+
+
+def test_create_lead_field_intra_campaign_allowed(api, initial_structure):
+    """
+    Caso: Un campo tipo LEAD SÍ puede apuntar a su propia campaña (relación intra-campaña).
+    """
+    camp_id = initial_structure["campaign_id"]
+
+    res = api.client.post("/lead_fields/", json={
+        "campaign_id": camp_id,
+        "name": "Lead Intra-Campaña",
+        "field_type_code": "LEAD",
+        "related_campaign_id": camp_id
+    }, headers=api.headers)
+
+    assert res.status_code == 200
+    assert res.json()["related_campaign"]["id"] == camp_id
+
+
+# =============================================================================
+# SECCIÓN POR DEFECTO INACTIVA
+# =============================================================================
+
+def test_create_field_without_section_fails_when_default_section_inactive(api, db_session, initial_structure):
+    """
+    Caso: Si la organización no tiene secciones activas, crear un campo
+    sin especificar sección debe fallar con mensaje claro.
+    Cubre el fix del filtro active=True en el fallback de sección.
+    """
+    camp_id = initial_structure["campaign_id"]
+    section_id = initial_structure["section_id"]
+
+    # Desactivar la única sección de la org
+    db_session.query(LeadFieldSection).filter_by(id=section_id).update({"active": False})
+    db_session.commit()
+
+    res = api.client.post("/lead_fields/", json={
+        "campaign_id": camp_id,
+        "name": "Campo Sin Seccion",
+        "field_type_code": "STRING"
+    }, headers=api.headers)
+
+    assert res.status_code == 400
+    errors = res.json().get("detail", [])
+    assert any(e.get("field") == "lead_field_section_id" for e in errors)
+
+
+# =============================================================================
+# REGRESIÓN: CAMBIO DE SECCIÓN (fix AttributeError 500)
+# =============================================================================
+
+def test_update_field_section_change_succeeds(api, initial_structure):
+    """
+    Caso: Cambiar la sección de un campo debe funcionar sin error 500.
+    Regresión para el fix de AttributeError en current_field.lead_field_section_id.
+    """
+    camp_id = initial_structure["campaign_id"]
+
+    # Segunda sección
+    res_sec = api.client.post(
+        "/lead_field_sections/",
+        json={"name": "Sección Destino"},
+        headers=api.headers
+    )
+    assert res_sec.status_code in [200, 201]
+    section2_id = res_sec.json()["id"]
+
+    field = api.create_lead_field(camp_id, "Campo Movible", "STRING")
+
+    # Cambiar sección → antes lanzaba 500
+    res = api.client.put(f"/lead_fields/{field['id']}", json={
+        "lead_field_section_id": section2_id
+    }, headers=api.headers)
+
+    assert res.status_code == 200
+    assert res.json()["lead_field_section"]["id"] == section2_id
+
+
+# =============================================================================
+# SEGURIDAD: IDOR EN BULK DELETE
+# =============================================================================
+
+def test_bulk_delete_respects_tenant_filter(client, db_session, initial_structure):
+    """
+    Caso: bulk-delete desde un tenant diferente no puede borrar campos ajenos.
+    Cubre el fix de IDOR en operaciones bulk (apply_security_filter en BaseService).
+    """
+    org1_id = initial_structure["org_id"]
+    camp_id = initial_structure["campaign_id"]
+
+    # Campo creado en org1
+    api_org1 = ApiClient(client, org_id=org1_id)
+    field = api_org1.create_lead_field(camp_id, "Campo Protegido", "STRING")
+    field_id = field["id"]
+
+    # Org intrusa
+    org2 = Organization(name="Org Intrusa")
+    db_session.add(org2)
+    db_session.commit()
+
+    # Intentar bulk-delete desde org2
+    api_org2 = ApiClient(client, org_id=org2.id)
+    res = api_org2.client.post(
+        "/lead_fields/bulk-delete",
+        json={"ids": [field_id]},
+        headers=api_org2.headers
+    )
+
+    assert res.status_code == 200
+    result = res.json()
+    assert field_id in result.get("failed", [])
+    assert field_id not in result.get("deleted", [])
+    assert field_id not in result.get("disabled", [])
+
+    # El campo sigue existiendo en DB
+    db_session.expire_all()
+    assert db_session.get(LeadField, field_id) is not None

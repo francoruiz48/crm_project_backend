@@ -23,6 +23,7 @@ class ExcelFormulaReponse(BaseModel):
     name_spanish: str
     name_english: str
     description: str
+    syntax: str
     example: str
     category: str
     note: str = ""

@@ -1,6 +1,6 @@
 from typing import Optional, List
 from pydantic import BaseModel, Field
-from app.schemas.base_schema import BaseCreate, BaseResponse, BaseDetailResponse
+from app.schemas.base_schema import BaseCreate, BaseResponse, BaseDetailedResponse
 
 class TagBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=50)
@@ -16,5 +16,5 @@ class TagUpdate(BaseModel):
 class TagResponse(TagBase, BaseResponse):
     organization_id: int
 
-class TagDetailedResponse(TagResponse, BaseDetailResponse):
+class TagDetailedResponse(TagResponse, BaseDetailedResponse):
     pass

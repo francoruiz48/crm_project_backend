@@ -51,7 +51,7 @@ def test_organization_creation_injects_states_and_initial(api):
 
     api.org_id = old_org_id
 
-    assert len(states) == 6, "Fallo al inyectar los 5 estados por defecto."
+    assert len(states) == 4, "Fallo al inyectar los 4 estados por defecto."
     
     initial_states = [s for s in states if s.get("is_initial") is True]
     assert len(initial_states) == 1, "Debe haber exactamente un estado inicial."

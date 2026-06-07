@@ -23,6 +23,8 @@ class LeadStateTransitionController(BaseController):
     # Limitamos los métodos: No permitimos PUT (es mejor borrar y recrear la regla) ni ACTIVE
     enabled_methods = {"GET_ALL", "GET_ONE", "POST", "DELETE"}
 
+    allowed_filter_fields = {"from_state_id", "to_state_id", "lead_flow_id"}
+
     @classmethod
     def get_router(cls):
         # Generamos el router con los métodos base (GET_ONE, POST, etc.)

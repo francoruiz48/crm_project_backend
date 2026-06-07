@@ -40,9 +40,21 @@ class as_user:
 
     def __enter__(self):
         from app.core.security import get_current_user_roles, UserContext
-        def fake_get_current_user_roles():
-            return UserContext(user=self._user, roles=[], is_superuser=self._user.is_superuser, is_owner=False)
-        
+        from app.core.context import TENANT_ORG_ID
+        from fastapi import Header
+
+        user = self._user  # captura explícita para el closure
+
+        def fake_get_current_user_roles(x_organization_id: int = Header(default=None, alias="X-Organization-Id")):
+            if x_organization_id is not None:
+                TENANT_ORG_ID.set(x_organization_id)
+            return UserContext(
+                user=user,
+                is_superuser=user.is_superuser,
+                is_owner=False,
+                organization_id=x_organization_id,
+            )
+
         self._api.client.app.dependency_overrides[get_current_user_roles] = fake_get_current_user_roles
         return self
 
@@ -80,8 +92,19 @@ class MultiUserApiClient(ApiClient):
 
     def switch_user(self, user: User):
         from app.core.security import get_current_user_roles, UserContext
-        def fake_get_current_user_roles():
-            return UserContext(user=user, roles=[], is_superuser=user.is_superuser, is_owner=False)
+        from app.core.context import TENANT_ORG_ID
+        from fastapi import Header
+
+        def fake_get_current_user_roles(x_organization_id: int = Header(default=None, alias="X-Organization-Id")):
+            if x_organization_id is not None:
+                TENANT_ORG_ID.set(x_organization_id)
+            return UserContext(
+                user=user,
+                is_superuser=user.is_superuser,
+                is_owner=False,
+                organization_id=x_organization_id,
+            )
+
         self.client.app.dependency_overrides[get_current_user_roles] = fake_get_current_user_roles
         return self
 

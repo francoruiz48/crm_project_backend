@@ -52,7 +52,7 @@ def test_field_money_logic(api, initial_structure):
 
     create_field_and_assert_validation(
         api, camp_id,
-        field_props={"name": "Precio Venta", "field_type_code": "MONEY"},
+        field_props={"name": "Precio Venta", "field_type_code": "NUMBER", "field_subtype_code": "MONEY"},
         valid_val="-1500.50",
         invalid_val="Mil pesos", 
         error_fragment="número" 
@@ -66,7 +66,7 @@ def test_field_email_logic(api, initial_structure):
 
     create_field_and_assert_validation(
         api, camp_id,
-        field_props={"name": "Email Corporativo", "field_type_code": "EMAIL"},
+        field_props={"name": "Email Corporativo", "field_type_code": "STRING", "field_subtype_code": "EMAIL"},
         valid_val="usuario@empresa.com",
         invalid_val="usuario.empresa.com", # Falta @
         error_fragment="formato" # Viene de DEFAULT_TYPE_RULES["EMAIL"]
@@ -82,7 +82,7 @@ def test_field_url_logic(api, initial_structure):
         api, camp_id,
         field_props={
             "name": "LinkedIn", 
-            "field_type_code": "URL", 
+            "field_type_code": "STRING", 
             "field_subtype_code": "SOCIAL_MEDIA"
         },
         valid_val="https://linkedin.com/in/usuario",
@@ -101,7 +101,7 @@ def test_field_phone_logic(api, initial_structure):
         api, camp_id,
         field_props={
             "name": "Celular", 
-            "field_type_code": "PHONE", 
+            "field_type_code": "STRING", 
             "field_subtype_code": "MOBILE"
         },
         valid_val="+54 9 111 2345678",
@@ -121,7 +121,7 @@ def test_field_rating_stars(api, initial_structure):
         api, camp_id,
         field_props={
             "name": "Calidad Estrellas", 
-            "field_type_code": "RATING", 
+            "field_type_code": "NUMBER", 
             "field_subtype_code": "STAR_RATING"
         },
         valid_val="5",
@@ -137,7 +137,7 @@ def test_field_rating_nps(api, initial_structure):
         api, camp_id,
         field_props={
             "name": "NPS Encuesta", 
-            "field_type_code": "RATING", 
+            "field_type_code": "NUMBER", 
             "field_subtype_code": "NPS"
         },
         valid_val="9",
@@ -153,7 +153,7 @@ def test_field_rating_score(api, initial_structure):
         api, camp_id,
         field_props={
             "name": "Scoring Crediticio", 
-            "field_type_code": "RATING", 
+            "field_type_code": "NUMBER", 
             "field_subtype_code": "SCORE"
         },
         valid_val="98",
@@ -172,7 +172,7 @@ def test_field_address_coordinates(api, initial_structure):
         api, camp_id,
         field_props={
             "name": "Ubicación GPS", 
-            "field_type_code": "ADDRESS", 
+            "field_type_code": "STRING", 
             "field_subtype_code": "COORDINATES"
         },
         valid_val="-34.6037, -58.3816", # Obelisco BA
@@ -196,7 +196,8 @@ def test_field_password_logic(api, initial_structure):
         api, camp_id,
         field_props={
             "name": "Clave Acceso", 
-            "field_type_code": "PASSWORD"
+            "field_type_code": "STRING",
+            "field_subtype_code": "PASSWORD"
         },
         valid_val="Segura123", # Cumple todo (Largo 9, Mayúscula, Número)
         invalid_val="insegura123456", # Falla Regex (No tiene mayúsculas)
@@ -213,7 +214,8 @@ def test_field_password_length(api, initial_structure):
         api, camp_id,
         field_props={
             "name": "Clave Corta", 
-            "field_type_code": "PASSWORD"
+            "field_type_code": "STRING",
+            "field_subtype_code": "PASSWORD"
         },
         valid_val="Correcta1", 
         invalid_val="Ab1", # Falla Longitud (Solo 3 chars)

@@ -9,6 +9,7 @@ from app.models.lead_field import LeadField
 from app.db.repository.web_form_repository import WebFormRepository
 from app.db.repository.campaign_repository import CampaignRepository
 from app.services.base_service import BaseService
+from app.core.constans import SystemAuditLogAction
 
 class WebFormService(BaseService):
     repository = WebFormRepository
@@ -99,7 +100,7 @@ class WebFormService(BaseService):
                 uow.session.add(new_field)
 
             # 5. Auditoría
-            cls._log_audit(uow.session, new_form, action="CREATE", changes=data, user_id=user_context.user.id if user_context else None)
+            cls._log_audit(uow.session, new_form, action=SystemAuditLogAction.CREATED, changes=data, user_id=user_context.user.id if user_context else None)
             
             return new_form
 
@@ -168,7 +169,7 @@ class WebFormService(BaseService):
             # Delegamos al repositorio la eliminación real/soft-delete
             result = cls.repository.delete(uow.session, obj_id, user_context=user_context)
             
-            cls._log_audit(uow.session, current_form, action="DELETE", changes=None, user_id=user_context.user.id if user_context else None)
+            cls._log_audit(uow.session, current_form, action=SystemAuditLogAction.DELETED, changes=None, user_id=user_context.user.id if user_context else None)
             return result
 
         return cls._execute(action="Eliminar WebForm", obj_id=obj_id, func=do_delete)

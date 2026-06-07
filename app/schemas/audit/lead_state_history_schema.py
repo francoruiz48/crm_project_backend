@@ -1,5 +1,5 @@
 
-from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
+from app.schemas.base_schema import BaseDetailedResponse, BaseCreate, BaseResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 from app.schemas.lead_state_schema import LeadStateDetailedResponse
@@ -13,7 +13,7 @@ class LeadStateHistoryBase(BaseModel):
 class LeadStateHistoryResponse(LeadStateHistoryBase, BaseResponse):
     pass
 
-class LeadStateHistoryDetailedResponse(LeadStateHistoryBase, BaseDetailResponse):
+class LeadStateHistoryDetailedResponse(LeadStateHistoryBase, BaseDetailedResponse):
     from_state : Optional[LeadStateDetailedResponse] = None
     to_state : LeadStateDetailedResponse
 

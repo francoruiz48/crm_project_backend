@@ -1,4 +1,4 @@
-from app.schemas.base_schema import BaseDetailResponse, BaseCreate, BaseResponse
+from app.schemas.base_schema import BaseDetailedResponse, BaseCreate, BaseResponse
 from pydantic import BaseModel, Field
 
 
@@ -13,7 +13,7 @@ class TeamWorkspaceAccessCreate(TeamWorkspaceAccessBase, BaseCreate):
 class TeamWorkspaceAccessResponse(TeamWorkspaceAccessBase, BaseResponse):
     pass
 
-class TeamWorkspaceAccessDetailedResponse(TeamWorkspaceAccessBase, BaseDetailResponse):
+class TeamWorkspaceAccessDetailedResponse(TeamWorkspaceAccessBase, BaseDetailedResponse):
     pass
 
 # --------------------------------------------------
@@ -29,7 +29,7 @@ class TeamCampaignAccessCreate(TeamCampaignAccessBase, BaseCreate):
 class TeamCampaignAccessResponse(TeamCampaignAccessBase, BaseResponse):
     pass
 
-class TeamCampaignAccessDetailedResponse(TeamCampaignAccessBase, BaseDetailResponse):
+class TeamCampaignAccessDetailedResponse(TeamCampaignAccessBase, BaseDetailedResponse):
     pass
 
 

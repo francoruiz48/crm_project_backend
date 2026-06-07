@@ -1,10 +1,10 @@
 from typing import List, Optional, Any
 from pydantic import BaseModel, Field, field_validator
-from app.schemas.base_schema import BaseCreate, BaseDetailResponse
+from app.schemas.base_schema import BaseCreate, BaseDetailedResponse
 from app.schemas.security_schemas.permission_schema import PermissionResponse
-from app.schemas.security_schemas.role_schema import RoleDetailedResponse, RoleResponse
+from app.schemas.security_schemas.role_schema import RoleResponse
 
-class UserOrganizationResponse(BaseModel, BaseDetailResponse):
+class UserOrganizationResponse(BaseModel, BaseDetailedResponse):
     organization_id: int
     roles: List[RoleResponse] = []
     is_owner: bool
@@ -17,7 +17,7 @@ class UserBase(BaseModel):
     name: str
     email: str
 
-class UserResponse(UserBase, BaseDetailResponse):
+class UserResponse(UserBase, BaseDetailedResponse):
     organizations_access: List[UserOrganizationResponse] = []
     is_superuser: bool
 

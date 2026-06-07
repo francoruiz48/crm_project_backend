@@ -9,6 +9,7 @@ from app.core.error_messages import (
 from app.db.unit_of_work import UnitOfWork
 from sqlalchemy.exc import SQLAlchemyError
 from app.core.security import UserContext
+from app.core.constans import SystemAuditLogAction
 
 class BaseService:
     repository = None  # Subclases deben definirlo
@@ -112,7 +113,7 @@ class BaseService:
             payload = cls.repository._normalize_data(obj_data)
             
             # LOG DE AUDITORÍA
-            cls._log_audit(uow.session, new_obj, action="CREATE", changes=payload, user_id=user_context.user.id if user_context else None)
+            cls._log_audit(uow.session, new_obj, action=SystemAuditLogAction.CREATED, changes=payload, user_id=user_context.user.id if user_context else None)
             
             return new_obj
             
@@ -127,12 +128,13 @@ class BaseService:
                 cls._not_found(obj_id)
 
             payload = cls.repository._normalize_data(obj_data)
+            old_data = cls.repository._normalize_data(old_obj)
             
             # 2. Armar el diff (viejo vs nuevo)
             changes = {}
             for key, new_val in payload.items():
-                if hasattr(old_obj, key):
-                    old_val = getattr(old_obj, key)
+                if hasattr(old_data, key):
+                    old_val = getattr(old_data, key)
                     if old_val != new_val:
                         changes[key] = {"old": old_val, "new": new_val}
             
@@ -142,7 +144,7 @@ class BaseService:
             
             # 4. LOG DE AUDITORÍA (Solo si realmente hubo cambios)
             if changes:
-                cls._log_audit(uow.session, updated_obj, action="UPDATE", changes=changes, user_id=user_context.user.id if user_context else None)
+                cls._log_audit(uow.session, updated_obj, action=SystemAuditLogAction.UPDATED, changes=changes, user_id=user_context.user.id if user_context else None)
             
             return updated_obj
 
@@ -160,7 +162,7 @@ class BaseService:
             result = cls.repository.delete(uow.session, obj_id, user_context=user_context)
             
             # LOG DE AUDITORÍA
-            action = "SOFT_DELETE" if result.get("action") == "disabled" else "DELETE"
+            action = SystemAuditLogAction.DISABLED if result.get("action") == "disabled" else SystemAuditLogAction.DELETED
             cls._log_audit(uow.session, obj_to_delete, action=action, changes=None, user_id=user_context.user.id if user_context else None)
             
             return result
@@ -172,9 +174,12 @@ class BaseService:
     def bulk_delete(cls, obj_ids: list[int], user_context: Optional[UserContext] = None):
         def do_bulk_delete(uow):
             # 1. Buscamos los objetos ANTES de borrarlos para poder auditar
-            objs_to_delete = uow.session.query(cls.repository.model).filter(
+            objs_query = uow.session.query(cls.repository.model).filter(
                 cls.repository.model.id.in_(obj_ids)
-            ).all()
+            )
+            objs_query = cls.repository.apply_security_filter(uow.session, objs_query, user_context)
+            objs_query = cls.repository._apply_tenant_filter(objs_query, is_read_operation=False)
+            objs_to_delete = objs_query.all()
 
             if not objs_to_delete:
                 return {"deleted": [], "disabled": [], "failed": obj_ids}
@@ -187,9 +192,9 @@ class BaseService:
             
             for obj in objs_to_delete:
                 if obj.id in result["deleted"]:
-                    cls._log_audit(uow.session, obj, action="DELETE", changes=None, user_id=user_id)
+                    cls._log_audit(uow.session, obj, action=SystemAuditLogAction.DELETED, changes=None, user_id=user_id)
                 elif obj.id in result["disabled"]:
-                    cls._log_audit(uow.session, obj, action="SOFT_DELETE", changes=None, user_id=user_id)
+                    cls._log_audit(uow.session, obj, action=SystemAuditLogAction.DISABLED, changes=None, user_id=user_id)
 
             return result
 
@@ -213,7 +218,7 @@ class BaseService:
                 cls._log_audit(
                     session=uow.session, 
                     obj=updated_obj, 
-                    action="ACTIVATE", 
+                    action=SystemAuditLogAction.ACTIVATED, 
                     changes={"active": {"old": False, "new": True}}, 
                     user_id=user_context.user.id if user_context else None
                 )
@@ -234,9 +239,12 @@ class BaseService:
                 raise AppException(detail=f"El modelo {cls._model_name()} no soporta activación.")
 
             # 1. Buscamos los objetos
-            objs_to_activate = uow.session.query(cls.repository.model).filter(
+            objs_query = uow.session.query(cls.repository.model).filter(
                 cls.repository.model.id.in_(obj_ids)
-            ).all()
+            )
+            objs_query = cls.repository.apply_security_filter(uow.session, objs_query, user_context)
+            objs_query = cls.repository._apply_tenant_filter(objs_query, is_read_operation=False)
+            objs_to_activate = objs_query.all()
 
             if not objs_to_activate:
                 return {"activated": [], "already_active": [], "failed": obj_ids}
@@ -252,7 +260,7 @@ class BaseService:
                     cls._log_audit(
                         session=uow.session, 
                         obj=obj, 
-                        action="ACTIVATE", 
+                        action=SystemAuditLogAction.ACTIVATED, 
                         changes={"active": {"old": False, "new": True}}, 
                         user_id=user_id
                     )

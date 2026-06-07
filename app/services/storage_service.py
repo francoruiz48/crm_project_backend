@@ -4,6 +4,21 @@ from fastapi import UploadFile, HTTPException
 from app.core.config import settings
 from app.core.constans import ALLOWED_IMAGE_TYPES, ALLOWED_DOCUMENT_TYPES, MAX_FILE_SIZE_MB
 
+_MIME_TO_EXTENSIONS = {
+    "image/jpeg": {"jpg", "jpeg"},
+    "image/png": {"png"},
+    "image/webp": {"webp"},
+    "image/gif": {"gif"},
+    "image/avif": {"avif"},
+    "application/pdf": {"pdf"},
+    "application/msword": {"doc"},
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {"docx"},
+    "application/vnd.ms-excel": {"xls"},
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {"xlsx"},
+    "text/plain": {"txt", "text"},
+    "text/csv": {"csv"},
+}
+
 class StorageService:
     _client: Client = None
 
@@ -35,8 +50,11 @@ class StorageService:
     def upload_file(cls, file: UploadFile, folder: str = "uploads") -> str:
         client = cls.get_client()
         
-        # Sanitizar nombre
-        file_ext = file.filename.split(".")[-1]
+        # Sanitizar nombre y validar extensión contra el MIME type declarado
+        file_ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename and "." in file.filename else ""
+        allowed_exts = _MIME_TO_EXTENSIONS.get(file.content_type, set())
+        if allowed_exts and file_ext not in allowed_exts:
+            raise HTTPException(400, f"Extensión de archivo '.{file_ext}' no es válida para el tipo '{file.content_type}'.")
         unique_name = f"{uuid.uuid4()}.{file_ext}"
         path = f"{folder}/{unique_name}"
         
@@ -54,10 +72,13 @@ class StorageService:
 
     @classmethod
     def get_public_url(cls, path: str) -> str:
-        # Si el path es nulo o vacío, devolver None
-        if not path: return None
-        # Si ya es una URL completa (migración antigua), devolverla
-        if path.startswith("http"): return path
+        # Si el path es nulo, vacío, o puros espacios, devolver None
+        if not path or not str(path).strip(): 
+            return None
+            
+        # Si ya es una URL completa (migración antigua o re-inyección), devolverla
+        if str(path).startswith("http"): 
+            return path
         
         client = cls.get_client()
         return client.storage.from_(settings.SUPABASE_BUCKET).get_public_url(path)

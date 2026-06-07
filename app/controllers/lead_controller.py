@@ -55,7 +55,7 @@ class LeadController(BaseController):
             if "application/json" in content_type:
                 try:
                     data = await request.json()
-                    return data, None # No hay archivos
+                    return data, None, None # No hay archivos
                 except Exception:
                     raise HTTPException(400, "JSON inválido en el cuerpo del request.")
 
@@ -74,8 +74,8 @@ class LeadController(BaseController):
                 
                 # B. Extraer Archivos
                 files_map = {}
+                avatar_file = None
                 for key, value in form.items():
-                    # --- CAMBIO AQUÍ: Usamos hasattr en lugar de isinstance ---
                     # Verificamos si tiene 'filename', lo cual confirma que es un UploadFile
                     if key.startswith("file_") and hasattr(value, "filename"):
                         try:
@@ -83,8 +83,10 @@ class LeadController(BaseController):
                             files_map[field_id] = value
                         except ValueError:
                             continue 
+                    elif key == "avatar_file":
+                        avatar_file = value
                 
-                return lead_data, files_map
+                return lead_data, files_map, avatar_file
 
             else:
                 raise HTTPException(400, f"Content-Type no soportado: {content_type}")
@@ -127,7 +129,7 @@ class LeadController(BaseController):
         def get_all(
             user_context = Depends(get_current_user_roles),
             page: int = Query(1, ge=1),
-            page_size: int = DEFAULT_PAGE_SIZE,
+            page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=PAGE_SIZE_LIMIT),
             only_active: bool = True, 
             detailed: bool = Query(False),
             campaign_id: Optional[int] = Query(None, description="Filtrar por ID de campaña"),
@@ -163,7 +165,7 @@ class LeadController(BaseController):
             user_context = Depends(get_current_user_roles)
         ):
             # 1. Usamos el helper para obtener datos sin importar el formato
-            lead_dict, files_map = await _parse_hybrid_request(request)
+            lead_dict, files_map, avatar_file = await _parse_hybrid_request(request)
             
             # 2. Validamos con Pydantic
             try:
@@ -173,7 +175,7 @@ class LeadController(BaseController):
                 raise HTTPException(422, detail=str(e))
 
             # 3. Llamamos al servicio
-            return cls.service.create(obj_in, user_context=user_context, files_map=files_map)
+            return cls.service.create(obj_in, user_context=user_context, files_map=files_map, avatar_file=avatar_file)
 
 
         # --- UPDATE HÍBRIDO ---
@@ -184,7 +186,7 @@ class LeadController(BaseController):
             user_context = Depends(get_current_user_roles)
         ):
             # 1. Usamos el helper
-            lead_dict, files_map = await _parse_hybrid_request(request)
+            lead_dict, files_map, avatar_file = await _parse_hybrid_request(request)
             
             # 2. Validación parcial para Update
             # Si vino JSON, lo validamos. Si no vino (solo archivos), obj_in es None (parcial)
@@ -200,10 +202,10 @@ class LeadController(BaseController):
                 raise HTTPException(400, "Debe enviar datos JSON o archivos para actualizar.")
 
             # 3. Llamamos al servicio
-            return cls.service.update(id, obj_in, files_map=files_map, user_context=user_context)
+            return cls.service.update(id, obj_in, files_map=files_map, user_context=user_context, avatar_file=avatar_file)
 
     
-        @router.post("/simulate", response_model=LeadResponse) # O usa un schema específico si prefieres
+        @router.post("/simulate", response_model=LeadResponse, dependencies=cls._get_deps("create"))
         async def simulate_lead_creation(
             request: Request,
             user_context = Depends(get_current_user_roles)
@@ -213,7 +215,7 @@ class LeadController(BaseController):
             No guarda nada en la base de datos.
             """
             # 1. Parsing (igual que create)
-            lead_dict, files_map = await _parse_hybrid_request(request)
+            lead_dict, files_map, _ = await _parse_hybrid_request(request)
             
             try:
                 obj_in = cls.schema_in(**lead_dict)

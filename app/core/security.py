@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from fastapi import Depends, HTTPException, status, Header
 from app.db.session import SessionLocal, get_db
@@ -16,10 +16,11 @@ def _get_current_user(db = Depends(get_db)) -> User:
 
 @dataclass
 class UserContext:
-    user: Any = None  # Aquí puedes importar tu modelo User si quieres tipado estricto
+    user: Any = None
     is_superuser: bool = False
     is_owner: bool = False
     organization_id: int = None
+    permissions: list = field(default_factory=list)
 
 
 def get_current_user_roles(
@@ -46,11 +47,14 @@ def get_current_user_roles(
         if user_org_link and user_org_link.is_owner:
             is_owner_here = True
 
+    permissions = current_user.get_permissions(org_id=current_org_id) if current_org_id else []
+
     return UserContext(
         user=current_user,
         is_superuser=is_superuser,
         is_owner=is_owner_here,
-        organization_id=current_org_id
+        organization_id=current_org_id,
+        permissions=permissions,
     )
 
 

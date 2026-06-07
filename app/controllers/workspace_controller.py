@@ -12,4 +12,6 @@ class WorkspaceController(BaseController):
     schema_out_detail = WorkspaceDetailedResponse
     enabled_methods = READ_WRITE
 
+    allowed_filter_fields = {"name", "description", "is_public"}
+
 router = WorkspaceController.get_router()

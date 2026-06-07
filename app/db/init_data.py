@@ -12,6 +12,7 @@ from app.models.workspace import Workspace
 from app.models.lead_field_subtype import LeadFieldSubtype
 from app.models.lead_field_section import LeadFieldSection
 from app.models.organization import Organization
+from app.core.dictionaries import SYSTEM_ENTITIES_REGISTRY
 
 # -----------------------------------------------------------------------------
 # HELPER GENÉRICO
@@ -130,43 +131,50 @@ def seed_lead_field_types(db):
         {"code": "DATE_TIME", "description": "Fecha y hora"},
         {"code": "BOOL", "description": "Valor verdadero/falso"},
         {"code": "SELECTOR", "description": "Selector"},
-        {"code": "CHECKBOX", "description": "Casilla de verificación"},
         {"code": "FILE", "description": "Archivo"},
         {"code": "CALCULATED", "description": "Campo calculado"},
         {"code": "LEAD", "description": "Lead"},
-        {"code": "MONEY", "description": "Moneda"},
-        {"code": "EMAIL", "description": "Email"},
-        {"code": "URL", "description": "Enlace"},
-        {"code": "PHONE", "description": "Teléfono"},
-        {"code": "RATING", "description": "Rating"},
-        {"code": "ADDRESS", "description": "Dirección"},
-        {"code": "RICH_TEXT", "description": "Texto Enriquecido"},
-        {"code": "PASSWORD", "description": "Contraseña"},
     ]
     seed_generic(db, model=LeadFieldType, items=datos, unique_by=["code"])
 
 def seed_lead_field_subtypes(db):
     print("Procesando LeadFieldSubTypes...")
     datos = [
-        {"code": "SELECTOR_MULTIPLE", "description": "Multiple", "lead_field_type_code": "SELECTOR"},
-        {"code": "SELECTOR_SIMPLE", "description": "Simple", "lead_field_type_code": "SELECTOR"},
-        {"code": "CHECKBOX_MULTIPLE", "description": "Multiple", "lead_field_type_code": "CHECKBOX"},
-        {"code": "CHECKBOX_SIMPLE", "description": "Simple", "lead_field_type_code": "CHECKBOX"},
-        {"code": "FILE_IMAGE", "description": "Imagen", "lead_field_type_code": "FILE"},
+        # SELECTOR
+        {"code": "SELECTOR_MULTIPLE", "description": "Selector Múltiple", "lead_field_type_code": "SELECTOR"},
+        {"code": "SELECTOR_SIMPLE",   "description": "Selector Simple",   "lead_field_type_code": "SELECTOR"},
+        {"code": "CHECKBOX_MULTIPLE", "description": "Checkbox Múltiple", "lead_field_type_code": "SELECTOR"},
+        {"code": "CHECKBOX_SIMPLE",   "description": "Checkbox Simple",   "lead_field_type_code": "SELECTOR"},
+        # FILE
+        {"code": "FILE_IMAGE",    "description": "Imagen",    "lead_field_type_code": "FILE"},
         {"code": "FILE_DOCUMENT", "description": "Documento", "lead_field_type_code": "FILE"},
-        {"code": "WEBSITE", "description": "Sitio Web", "lead_field_type_code": "URL"},
-        {"code": "SOCIAL_MEDIA", "description": "Red Social", "lead_field_type_code": "URL"},
-        {"code": "WHATSAPP", "description": "WhatsApp", "lead_field_type_code": "PHONE"},
-        {"code": "MOBILE", "description": "Teléfono Movil", "lead_field_type_code": "PHONE"},
-        {"code": "LANDLINE", "description": "Teléfono Fijo", "lead_field_type_code": "PHONE"},
-        {"code": "STAR_RATING", "description": "Calificación de estrellas", "lead_field_type_code": "RATING"},
-        {"code": "NPS", "description": "Indicador del 1 al 10", "lead_field_type_code": "RATING"},
-        {"code": "SCORE", "description": "Valor del 0 al 100", "lead_field_type_code": "RATING"},
-        {"code": "SIMPLE_ADDRESS", "description": "Texto Plano multi-línea", "lead_field_type_code": "ADDRESS"},
-        {"code": "MAPS_URL", "description": "URL de Google Maps", "lead_field_type_code": "ADDRESS"},
-        {"code": "COORDINATES", "description": "Latitud y Longitud", "lead_field_type_code": "ADDRESS"},
-        {"code": "HTML", "description": "HTML", "lead_field_type_code": "RICH_TEXT"},
-        {"code": "MARKDOWN", "description": "MARKDOWN", "lead_field_type_code": "RICH_TEXT"},
+        # NUMBER
+        {"code": "MONEY",       "description": "Valor Monetario",           "lead_field_type_code": "NUMBER"},
+        {"code": "PERCENTAGE",  "description": "Porcentaje",                "lead_field_type_code": "NUMBER"},
+        {"code": "STAR_RATING", "description": "Calificación de estrellas", "lead_field_type_code": "NUMBER"},
+        {"code": "NPS",         "description": "Indicador del 0 al 10",     "lead_field_type_code": "NUMBER"},
+        {"code": "SCORE",       "description": "Valor del 0 al 100",        "lead_field_type_code": "NUMBER"},
+        # STRING
+        {"code": "EMAIL",          "description": "Correo Electrónico",     "lead_field_type_code": "STRING"},
+        {"code": "URL",            "description": "Enlace",                 "lead_field_type_code": "STRING"},
+        {"code": "WEBSITE",        "description": "Sitio Web",              "lead_field_type_code": "STRING"},
+        {"code": "SOCIAL_MEDIA",   "description": "Red Social",             "lead_field_type_code": "STRING"},
+        {"code": "WHATSAPP",       "description": "WhatsApp",               "lead_field_type_code": "STRING"},
+        {"code": "MOBILE",         "description": "Teléfono Móvil",         "lead_field_type_code": "STRING"},
+        {"code": "PHONE",          "description": "Teléfono",               "lead_field_type_code": "STRING"},
+        {"code": "LANDLINE",       "description": "Teléfono Fijo",          "lead_field_type_code": "STRING"},
+        {"code": "SIMPLE_ADDRESS", "description": "Dirección (texto libre)", "lead_field_type_code": "STRING"},
+        {"code": "MAPS_URL",       "description": "URL de Google Maps",     "lead_field_type_code": "STRING"},
+        {"code": "COORDINATES",    "description": "Latitud y Longitud",     "lead_field_type_code": "STRING"},
+        {"code": "HTML",           "description": "HTML",                   "lead_field_type_code": "STRING"},
+        {"code": "MARKDOWN",       "description": "Markdown",               "lead_field_type_code": "STRING"},
+        {"code": "PASSWORD",       "description": "Contraseña",             "lead_field_type_code": "STRING"},
+        # DATE
+        {"code": "DATE_ONLY",   "description": "Solo fecha (sin hora)",  "lead_field_type_code": "DATE"},
+        {"code": "BIRTH_DATE",  "description": "Fecha de nacimiento",    "lead_field_type_code": "DATE"},
+        # DATE_TIME
+        {"code": "TIME_ONLY",   "description": "Solo hora (sin fecha)", "lead_field_type_code": "DATE_TIME"},
+        {"code": "DATE_EVENT",  "description": "Fecha de Evento",       "lead_field_type_code": "DATE_TIME"},
     ]
     seed_generic(db, model=LeadFieldSubtype, items=datos, unique_by=["code"],resolve_fk={"lead_field_type_code": (LeadFieldType, "code")}
     )
@@ -175,26 +183,6 @@ def seed_lead_field_subtypes(db):
 # -----------------------------------------------------------------------------
 def seed_rbac(db):
     print("Procesando RBAC Automático...")
-
-    # 1. Entidades con CRUD Completo
-    FULL_CRUD_ENTITIES = [
-        "lead", "lead_field", "validation_rule",
-        "campaign", "nomenclator", "nomenclator_item", "user",
-        "role", "workspace", "lead_field_section",
-        "lead_comment", "organization", "lead_flow", "lead_state", 
-        "lead_state_transition", "team", "team_member", 
-        "team_workspace_access", "team_campaign_access", "lead_routing_policy", "lead_view"
-    ]
-
-    # 2. Entidades de Solo Lectura (Catálogos del sistema)
-    READ_ONLY_ENTITIES = [
-        "lead_field_type", 
-        "lead_field_subtype",
-        "permission", 
-        "lead_state_history", 
-        "system_audit_log", 
-        "lead_activity_history"
-    ]
 
     ACTIONS = {
         "create": "Crear", 
@@ -213,37 +201,32 @@ def seed_rbac(db):
     # --- 1. Generación Masiva de Permisos ---
     all_permissions = []
     
-    # Procesar entidades con CRUD completo
-    for entity in FULL_CRUD_ENTITIES:
-        # Formateamos el nombre visual (ej: "lead_field" -> "Lead Field")
-        entity_name_visual = entity.replace('_', ' ').title()
+    # Iteramos sobre nuestra Única Fuente de Verdad
+    for entity_code, entity_info in SYSTEM_ENTITIES_REGISTRY.items():
+        entity_name_visual = entity_info["name"]
+        crud_type = entity_info["crud_type"]
 
-        for action_code, action_label in ACTIONS.items():
-            codename = f"{entity}:{action_code}"
-            name = f"{action_label} {entity_name_visual}"
-            p = _get_or_create_permission(codename, name)
-            all_permissions.append(p)
+        if crud_type == "FULL":
+            # Genera: Crear, Ver, Editar, Eliminar
+            for action_code, action_label in ACTIONS.items():
+                codename = f"{entity_code}:{action_code}"
+                name = f"{action_label} {entity_name_visual}"
+                all_permissions.append(_get_or_create_permission(codename, name))
         
-        p_all = _get_or_create_permission(f"{entity}:view_all", f"Ver TODOS los {entity_name_visual}")
-        all_permissions.append(p_all)
-
-    # Procesar entidades de Solo Lectura
-    for entity in READ_ONLY_ENTITIES:
-        entity_name_visual = entity.replace('_', ' ').title()
-
-        # Solo permiso para ver uno específico
-        p_view = _get_or_create_permission(f"{entity}:view", f"Ver {entity_name_visual}")
-        all_permissions.append(p_view)
+        elif crud_type == "READ_ONLY":
+            # Genera solo: Ver
+            codename = f"{entity_code}:view"
+            name = f"Ver {entity_name_visual}"
+            all_permissions.append(_get_or_create_permission(codename, name))
         
-        # Solo permiso para ver todos (listados)
-        p_all = _get_or_create_permission(f"{entity}:view_all", f"Ver TODOS los {entity_name_visual}")
+        # Ambas (FULL y READ_ONLY) siempre tienen el permiso general de "Ver TODOS" (Listar)
+        p_all = _get_or_create_permission(f"{entity_code}:view_all", f"Ver TODOS los registros de {entity_name_visual}")
         all_permissions.append(p_all)
 
     db.flush()
 
     # --- 2. Roles del Sistema (Plantillas globales) ---
     def _get_or_create_system_role(name, code):
-        # organization_id=None significa que es un rol global/plantilla
         role = db.query(Role).filter_by(code=code, organization_id=None).first()
         if not role:
             role = Role(name=name, code=code, organization_id=None)
@@ -253,11 +236,11 @@ def seed_rbac(db):
 
     r_admin = _get_or_create_system_role("Admin Global", "admin")
 
-    # Asignamos TODOS los permisos (incluyendo los de solo lectura) al rol Admin Global
+    # Asignamos TODOS los permisos al rol Admin Global
     all_db_perms = db.query(Permission).all()
     r_admin.permissions = all_db_perms
 
-    # --- 3. Usuario SuperAdmin (Sin Organización) ---
+    # --- 3. Usuario SuperAdmin ---
     def _get_or_create_superadmin(email):
         user = db.query(User).filter_by(email=email).first()
         if not user:
@@ -266,11 +249,9 @@ def seed_rbac(db):
             db.flush()
         return user
 
-    # Creamos al admin. Al ser is_superuser=True, no necesita estar 
-    # en la tabla UserOrganization para tener permisos totales.
     _get_or_create_superadmin("admin@crm.com")
-    
     db.commit()
+    print(f"✅ RBAC Procesado. Se sincronizaron {len(SYSTEM_ENTITIES_REGISTRY)} entidades.")
 
 def seed_test_tenants(db):
     print("🏢 Iniciando Seed de Organizaciones de Prueba (Multi-Tenant)...")

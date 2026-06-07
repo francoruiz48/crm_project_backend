@@ -2,10 +2,11 @@ from typing import Optional
 from fastapi import HTTPException, status
 from app.core.context import TENANT_ORG_ID
 from app.core.security import UserContext
-from app.db.unit_of_work import UnitOfWork
+from sqlalchemy import func
 from app.models.lead_contact_state import LeadContactState
 from app.db.repository.lead_contact_state_repository import LeadContactStateRepository
 from app.services.base_service import BaseService
+from app.core.constans import SystemAuditLogAction
 
 class LeadContactStateService(BaseService):
     repository = LeadContactStateRepository
@@ -38,12 +39,19 @@ class LeadContactStateService(BaseService):
                         status.HTTP_400_BAD_REQUEST,
                         detail=[{"field": "is_initial", "message": "Ya existe un estado inicial en la organización. Desmarque el actual antes de asignar uno nuevo."}]
                     )
+                
+            max_order = uow.session.query(func.max(cls.repository.model.order)).filter(
+                cls.repository.model.organization_id == org_id
+            ).scalar()
+
+            # 4. Lógica de incremento: Si max_order es None (no hay estados), da 0. +1 = 1.
+            obj_in.order = (max_order or 0) + 1
 
             new_obj = cls.repository.create(uow.session, obj_in, user_context=user_context)
             uow.session.flush()
             
             user_id = user_context.user.id if user_context and getattr(user_context, 'user', None) else None
-            cls._log_audit(uow.session, new_obj, action="CREATE", changes=obj_in.model_dump(), user_id=user_id)
+            cls._log_audit(uow.session, new_obj, action=SystemAuditLogAction.CREATED, changes=obj_in.model_dump(), user_id=user_id)
             return new_obj
 
         return cls._execute(action="Crear Estado de Contacto", func=do_create)
@@ -94,7 +102,7 @@ class LeadContactStateService(BaseService):
             uow.session.flush()
             
             user_id = user_context.user.id if user_context and getattr(user_context, 'user', None) else None
-            cls._log_audit(uow.session, updated_obj, action="UPDATE", changes=obj_in.model_dump(exclude_unset=True), user_id=user_id)
+            cls._log_audit(uow.session, updated_obj, action=SystemAuditLogAction.UPDATED, changes=obj_in.model_dump(exclude_unset=True), user_id=user_id)
             return updated_obj
 
         return cls._execute(action="Actualizar Estado de Contacto", obj_id=obj_id, func=do_update)
