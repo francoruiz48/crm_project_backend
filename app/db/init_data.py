@@ -242,11 +242,20 @@ def seed_rbac(db):
 
     # --- 3. Usuario SuperAdmin ---
     def _get_or_create_superadmin(email):
+        from app.core.security import hash_password
         user = db.query(User).filter_by(email=email).first()
         if not user:
-            user = User(name="Super Admin", email=email, is_superuser=True)
+            user = User(
+                name="Super Admin",
+                email=email,
+                is_superuser=True,
+                hashed_password=hash_password("admin1234"),  # cambiar en producción
+            )
             db.add(user)
             db.flush()
+        elif not user.hashed_password:
+            # retrocompatibilidad: si ya existe sin password, se la asignamos
+            user.hashed_password = hash_password("admin1234")
         return user
 
     _get_or_create_superadmin("admin@crm.com")
@@ -280,12 +289,15 @@ def seed_test_tenants(db):
         """
         memberships_info es una lista de tuplas: [(org_obj, role_obj), ...]
         """
+        from app.core.security import hash_password
         user = db.query(User).filter_by(email=email).first()
         if not user:
             # IMPORTANTE: is_superuser=False para que la seguridad actúe sobre ellos
-            user = User(name=name, email=email, is_superuser=False)
+            user = User(name=name, email=email, is_superuser=False, hashed_password=hash_password("test1234"))
             db.add(user)
             db.flush()
+        elif not user.hashed_password:
+            user.hashed_password = hash_password("test1234")
 
         for org_obj, role_obj in memberships_info:
             from app.models.security_models import UserOrganization

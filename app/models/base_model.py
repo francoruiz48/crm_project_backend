@@ -16,11 +16,11 @@ class BaseModelDB(Base):
 
     @declared_attr
     def creator(cls):
-        return relationship("User", primaryjoin="User.id == %s.created_by" % cls.__name__, foreign_keys=[cls.created_by], viewonly=True)
+        return relationship("User", primaryjoin="User.id == %s.created_by" % cls.__name__, foreign_keys=[cls.created_by], uselist=False, viewonly=True)
 
     @declared_attr
     def updater(cls):
-        return relationship("User", primaryjoin="User.id == %s.updated_by" % cls.__name__, foreign_keys=[cls.updated_by], viewonly=True)
+        return relationship("User", primaryjoin="User.id == %s.updated_by" % cls.__name__, foreign_keys=[cls.updated_by], uselist=False, viewonly=True)
 
     @declared_attr
     def __tablename__(cls):

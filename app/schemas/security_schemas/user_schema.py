@@ -13,6 +13,18 @@ class UserOrganizationDetailedResponse(UserOrganizationResponse):
     permission_objects: List[PermissionResponse] = []
     is_owner: bool
 
+class UserPublicResponse(BaseModel):
+    """Schema reducido para exponer usuarios dentro de una organización.
+    Solo incluye lo necesario para la UI (asignaciones, menciones, chat).
+    """
+    id: int
+    name: str
+    email: str
+    active: bool
+
+    model_config = {"from_attributes": True}
+
+
 class UserBase(BaseModel):
     name: str
     email: str
@@ -20,13 +32,15 @@ class UserBase(BaseModel):
 class UserResponse(UserBase, BaseDetailedResponse):
     organizations_access: List[UserOrganizationResponse] = []
     is_superuser: bool
+    model_config = {"from_attributes": True}
 
 class UserDetailedResponse(UserResponse):
     organizations_access: List[UserOrganizationDetailedResponse] = []
     is_superuser: bool
+    model_config = {"from_attributes": True}
 
 class UserCreate(UserBase, BaseCreate):
-    pass
+    password: Optional[str] = None  # opcional para no romper seeds internos
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None

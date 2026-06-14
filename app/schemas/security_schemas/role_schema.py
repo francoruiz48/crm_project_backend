@@ -9,10 +9,12 @@ class RoleBase(BaseModel):
 
 class RoleResponse(RoleBase, BaseDetailedResponse):
     organization_id: Optional[int] = Field(default=None, gt=0)
+    model_config = {"from_attributes": True}
 
 class RoleDetailedResponse(RoleBase, BaseDetailedResponse):
     organization_id: Optional[int] = Field(default=None, gt=0)
     permissions: List[PermissionResponse] = []
+    model_config = {"from_attributes": True}
 
 class RoleCreate(RoleBase, BaseCreate):
     organization_id: Optional[int] = Field(gt=0)

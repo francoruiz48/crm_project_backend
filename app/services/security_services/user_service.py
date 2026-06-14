@@ -4,10 +4,32 @@ from app.models.security_models import User, UserOrganization
 from fastapi import HTTPException, status
 from app.core.security import UserContext
 from app.core.constans import SystemAuditLogAction
+from app.core.error_messages import ERROR_NOT_FOUND
 
 class UserService(BaseService):
     repository = UserRepository
 
+    @classmethod
+    def _assert_can_modify(cls, target_user_id: int, user_context: UserContext):
+        """Solo el propio usuario o un superadmin puede modificar/eliminar un usuario."""
+        if user_context and user_context.is_superuser:
+            return
+        if user_context and user_context.user and user_context.user.id == target_user_id:
+            return
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo podés modificar tu propia cuenta.",
+        )
+
+    @classmethod
+    def update(cls, obj_id: int, obj_data, user_context: UserContext = None):
+        cls._assert_can_modify(obj_id, user_context)
+        return super().update(obj_id, obj_data, user_context=user_context)
+
+    @classmethod
+    def delete(cls, obj_id: int, user_context: UserContext = None):
+        cls._assert_can_modify(obj_id, user_context)
+        return super().delete(obj_id, user_context=user_context)
 
     @classmethod
     def promote_to_superuser(cls, target_user_id: int, user_context: UserContext):
