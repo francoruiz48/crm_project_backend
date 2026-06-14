@@ -92,35 +92,35 @@ SYSTEM_AUDIT_LOG_ACTIONS = {
 AUTOMATION_COMPATIBILITY_MATRIX = {
     "STRING": {
         "operators": ["EQUALS", "NOT_EQUALS", "CONTAINS", "NOT_CONTAINS", "STARTS_WITH", "ENDS_WITH", "IS_EMPTY", "IS_NOT_EMPTY"],
-        "actions": ["SET_VALUE", "CLEAR_VALUE", "COPY_FROM_FIELD"]
+        "actions": ["SET_VALUE", "SET_VALUE_IF_EMPTY", "CLEAR_VALUE", "COPY_FROM_FIELD", "NORMALIZE_TEXT", "CONCAT_FIELDS"]
     },
     "INT": {
         "operators": ["EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN", "IS_EMPTY", "IS_NOT_EMPTY"],
-        "actions": ["SET_VALUE", "CLEAR_VALUE", "COPY_FROM_FIELD", "INCREMENT", "DECREMENT"]
+        "actions": ["SET_VALUE", "SET_VALUE_IF_EMPTY", "CLEAR_VALUE", "COPY_FROM_FIELD", "INCREMENT", "DECREMENT"]
     },
     "NUMBER": {
         "operators": ["EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN", "IS_EMPTY", "IS_NOT_EMPTY"],
-        "actions": ["SET_VALUE", "CLEAR_VALUE", "COPY_FROM_FIELD"]
+        "actions": ["SET_VALUE", "SET_VALUE_IF_EMPTY", "CLEAR_VALUE", "COPY_FROM_FIELD"]
     },
     "BOOL": {
         "operators": ["EQUALS", "NOT_EQUALS", "IS_EMPTY", "IS_NOT_EMPTY"],
-        "actions": ["SET_VALUE", "CLEAR_VALUE", "COPY_FROM_FIELD"]
+        "actions": ["SET_VALUE", "SET_VALUE_IF_EMPTY", "CLEAR_VALUE", "COPY_FROM_FIELD"]
     },
     "DATE": {
         "operators": ["EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN", "IS_PAST", "IS_FUTURE", "IS_EMPTY", "IS_NOT_EMPTY"],
-        "actions": ["SET_VALUE", "CLEAR_VALUE", "COPY_FROM_FIELD", "SET_CURRENT_DATE"]
+        "actions": ["SET_VALUE", "SET_VALUE_IF_EMPTY", "CLEAR_VALUE", "COPY_FROM_FIELD", "SET_CURRENT_DATE", "SET_DATE_OFFSET"]
     },
     "DATE_TIME": {
         "operators": ["EQUALS", "NOT_EQUALS", "GREATER_THAN", "LESS_THAN", "IS_PAST", "IS_FUTURE", "STARTS_WITH", "IS_EMPTY", "IS_NOT_EMPTY"],
-        "actions": ["SET_VALUE", "CLEAR_VALUE", "COPY_FROM_FIELD", "SET_CURRENT_DATETIME"]
+        "actions": ["SET_VALUE", "SET_VALUE_IF_EMPTY", "CLEAR_VALUE", "COPY_FROM_FIELD", "SET_CURRENT_DATETIME"]
     },
     "SELECTOR": {
         "operators": ["EQUALS", "NOT_EQUALS", "CONTAINS", "NOT_CONTAINS", "IS_EMPTY", "IS_NOT_EMPTY"],
-        "actions": ["SET_VALUE", "CLEAR_VALUE", "COPY_FROM_FIELD", "APPEND_TO_LIST", "REMOVE_FROM_LIST"]
+        "actions": ["SET_VALUE", "SET_VALUE_IF_EMPTY", "CLEAR_VALUE", "COPY_FROM_FIELD", "APPEND_TO_LIST", "REMOVE_FROM_LIST"]
     },
     "LEAD": {
         "operators": ["CONTAINS", "NOT_CONTAINS", "IS_EMPTY", "IS_NOT_EMPTY"],
-        "actions": ["SET_VALUE", "CLEAR_VALUE", "COPY_FROM_FIELD", "APPEND_TO_LIST", "REMOVE_FROM_LIST"]
+        "actions": ["SET_VALUE", "SET_VALUE_IF_EMPTY", "CLEAR_VALUE", "COPY_FROM_FIELD", "APPEND_TO_LIST", "REMOVE_FROM_LIST"]
     }
 }
 
@@ -128,8 +128,7 @@ SYSTEM_DICTIONARIES = {
     "lead_search_operators": LEAD_SEARCH_OPERATORS,
     "routing_condition_types": LEAD_ROUTING_RULE_CONDITION_TYPES,
     "team_roles": TEAM_ROLES,
-    "lead_states_categories": LEAD_STATE_CATEGORIES,
-    "lead_view_visibilities": LEAD_VIEW_VISIBILITIES,
+    "lead_states_categories": LEAD_STATE_CATEGORIES,    "lead_view_visibilities": LEAD_VIEW_VISIBILITIES,
     "automation_compatibility_matrix": AUTOMATION_COMPATIBILITY_MATRIX,
     "entities": ENTITIES,
     "system_audit_log_actions": SYSTEM_AUDIT_LOG_ACTIONS

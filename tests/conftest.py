@@ -4,6 +4,9 @@ conftest.py actualizado
 Agrega los fixtures multi-usuario como OPT-IN sin tocar los existentes.
 Los tests actuales siguen funcionando sin cambios.
 """
+# Plugin de logging por archivo (genera tests/logs/)
+pytest_plugins = ["tests.plugins.log_reporter"]
+
 from tests.fixtures.db_fixtures import db_engine, db_session
 from tests.fixtures.client import client
 from tests.fixtures.data_seeds import initial_structure, initial_fields
