@@ -153,7 +153,7 @@ class WebFormService(BaseService):
 
 
     @classmethod
-    def delete(cls, obj_id: int, user_context: Optional[UserContext] = None):
+    def delete(cls, obj_id: int, user_context: Optional[UserContext] = None, force: bool = False):
         def do_delete(uow):
             org_id = user_context.organization_id if user_context else TENANT_ORG_ID.get()
             

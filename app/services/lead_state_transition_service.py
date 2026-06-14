@@ -232,9 +232,9 @@ class LeadStateTransitionService(BaseService):
     
 
     @classmethod
-    def delete(cls, obj_id: int, user_context: Optional[UserContext] = None):
+    def delete(cls, obj_id: int, user_context: Optional[UserContext] = None, force: bool = False):
         def do_delete(uow):
-            
+
             transition = uow.session.query(LeadStateTransition).filter_by(id=obj_id).first()
             if not transition:
                 cls._not_found(obj_id)

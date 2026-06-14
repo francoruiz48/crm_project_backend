@@ -4,6 +4,7 @@ from typing import Optional
 
 from sqlalchemy import or_
 from app.db.repository.base_repository import BaseRepository
+from app.core.constans import DeleteStrategy
 from app.models.campaign import Campaign
 from app.models.team_access import TeamCampaignAccess, TeamWorkspaceAccess
 from app.models.team_member import TeamMember
@@ -13,6 +14,7 @@ from app.core.security import UserContext
 
 class CampaignRepository(BaseRepository):
     model = Campaign
+    delete_strategy = DeleteStrategy.SOFT_DELETE_HARD_OPT
     schema_in = CampaignCreate
     schema_out = CampaignResponse
     schema_out_detail = CampaignDetailedResponse

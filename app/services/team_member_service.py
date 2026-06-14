@@ -103,7 +103,7 @@ class TeamMemberService(BaseService):
         return cls._execute(action="Actualizar Miembro", obj_id=obj_id, func=do_update)
 
     @classmethod
-    def delete(cls, obj_id: int, user_context: Optional[UserContext] = None):
+    def delete(cls, obj_id: int, user_context: Optional[UserContext] = None, force: bool = False):
         def do_delete(uow):
             member = uow.session.query(TeamMember).filter_by(id=obj_id).first()
             if not member:

@@ -1,5 +1,6 @@
 from typing import Optional
 from app.core.context import TENANT_ORG_ID
+from app.core.constans import DeleteStrategy
 from app.core.security import UserContext
 from app.db.repository.base_repository import BaseRepository
 from app.models.nomenclator import Nomenclator
@@ -8,6 +9,7 @@ from sqlalchemy import or_
 
 class NomenclatorRepository(BaseRepository):
     model = Nomenclator
+    delete_strategy = DeleteStrategy.SOFT_DELETE_ALWAYS
     schema_out = NomenclatorResponse
     schema_out_detail = NomenclatorDetailedResponse
 

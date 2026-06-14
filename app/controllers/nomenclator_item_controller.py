@@ -11,7 +11,7 @@ class NomenclatorItemController(BaseController):
     schema_out = NomenclatorItemResponse
     schema_out_detail = NomenclatorItemDetailedResponse
     
-    enabled_methods = READ_WRITE
+    enabled_methods = READ_WRITE | {"DEACTIVATE"}
 
     allowed_filter_fields = {"value", "nomenclator_id", "parent_item_id"}
 

@@ -1,5 +1,6 @@
 from sqlalchemy import func, or_
 from app.db.repository.base_repository import BaseRepository
+from app.core.constans import DeleteStrategy
 from app.models.lead_field import LeadField
 from app.schemas.lead_field_schema import LeadFieldDetailedResponse, LeadFieldResponse
 from sqlalchemy.orm import joinedload
@@ -11,6 +12,8 @@ from app.models.workspace import Workspace
 
 class LeadFieldRepository(BaseRepository):
     model = LeadField
+    delete_strategy = DeleteStrategy.SMART_DELETE
+    delete_blockers = ["field_values", "web_form_fields"]
     schema_out = LeadFieldResponse
     schema_out_detail = LeadFieldDetailedResponse
 

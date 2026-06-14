@@ -1,4 +1,5 @@
 from typing import Optional
+from app.core.constans import DeleteStrategy
 from app.core.security import UserContext
 from app.db.repository.base_repository import BaseRepository
 from app.models.team_access import TeamCampaignAccess, TeamWorkspaceAccess
@@ -12,6 +13,7 @@ from fastapi import HTTPException, status
  
 class TeamWorkspaceAccessRepository(BaseRepository):
     model             = TeamWorkspaceAccess
+    delete_strategy = DeleteStrategy.HARD_DELETE_ALWAYS
     schema_in         = TeamWorkspaceAccessCreate
     schema_out        = TeamWorkspaceAccessResponse
     schema_out_detail = TeamWorkspaceAccessDetailedResponse

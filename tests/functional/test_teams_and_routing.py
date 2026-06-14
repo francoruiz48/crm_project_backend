@@ -61,7 +61,7 @@ def test_team_delete_cascades_members(api, db_session):
     team_id = team["id"]
     db_session.expire_all()
     assert db_session.query(TeamMember).filter_by(team_id=team_id).count() == 1
-    api.client.delete(f"/teams/{team_id}", headers=api.headers)
+    api.client.delete(f"/teams/{team_id}?force=true", headers=api.headers)
     db_session.expire_all()
     assert db_session.get(Team, team_id) is None
     assert db_session.query(TeamMember).filter_by(team_id=team_id).count() == 0
@@ -144,6 +144,20 @@ def test_manager_can_promote_agent_to_manager(api, two_users):
         )
     assert resp.status_code == 200
     assert resp.json()["role"] == "MANAGER"
+
+
+def test_agent_cannot_remove_team_member(api, two_users):
+    """Un AGENT no puede eliminar miembros del equipo."""
+    team = api.create_team("Equipo Roles 5")
+    team_id = team["id"]
+    member = api.add_team_member(team_id, two_users["agent"].id, role="AGENT")
+
+    with as_user(api, two_users["agent"]):
+        resp = api.client.delete(
+            f"/team_members/{member['id']}",
+            headers=api.headers,
+        )
+    assert resp.status_code == 403
 
 
 # ---------------------------------------------------------------------------

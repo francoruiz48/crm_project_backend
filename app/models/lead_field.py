@@ -32,6 +32,7 @@ class LeadField(BaseModelDB):
     field_subtype = relationship("LeadFieldSubtype", foreign_keys=[field_subtype_code])
     field_values = relationship("LeadFieldValue", back_populates="field", passive_deletes="all")
     validation_rules = relationship("ValidationRule", back_populates="field", foreign_keys=lambda: [ValidationRule.field_id], cascade="all, delete-orphan")
+    web_form_fields = relationship("WebFormField", foreign_keys="WebFormField.lead_field_id", viewonly=True, overlaps="lead_field")
     campaign = relationship("Campaign", foreign_keys=[campaign_id])
     nomenclator = relationship("Nomenclator", foreign_keys=[nomenclator_id])
     lead_field_section = relationship("LeadFieldSection", foreign_keys=[lead_field_section_id])

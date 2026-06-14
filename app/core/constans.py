@@ -55,3 +55,25 @@ INITIAL_ROUTES_STATES = [
     # Y si nos equivocamos y lo dimos por perdido, que pueda volver a "Contactado"
     (5, 1)
 ]
+
+
+class DeleteStrategy:
+    """
+    Estrategias de borrado para BaseRepository.
+    Configurar en cada repositorio via: delete_strategy = DeleteStrategy.XXXX
+
+    HARD_DELETE_ALWAYS      → Borra físicamente siempre. Si hay FK violation → 409 con detalle.
+    SOFT_DELETE_ALWAYS      → Siempre desactiva (active=False). No hay hard delete disponible.
+    SOFT_DELETE_HARD_OPT    → Desactiva por defecto. Hard delete disponible pasando ?force=true,
+                               con cascade de hijos según las relaciones del modelo.
+    PROTECTED               → Nunca borrable (audit trails). Lanza error en cualquier intento.
+    SMART_DELETE            → Desactiva por defecto. Hard delete con ?force=true SOLO si no hay
+                               registros en delete_blockers. Cascades del modelo se aplican igual.
+    HARD_DELETE_WITH_TOGGLE → Hard delete directo. Desactivación disponible via DELETE /active/{id}.
+    """
+    HARD_DELETE_ALWAYS      = "HARD_DELETE_ALWAYS"
+    SOFT_DELETE_ALWAYS      = "SOFT_DELETE_ALWAYS"
+    SOFT_DELETE_HARD_OPT    = "SOFT_DELETE_HARD_OPT"
+    PROTECTED               = "PROTECTED"
+    SMART_DELETE            = "SMART_DELETE"
+    HARD_DELETE_WITH_TOGGLE = "HARD_DELETE_WITH_TOGGLE"

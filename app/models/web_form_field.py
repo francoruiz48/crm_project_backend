@@ -25,4 +25,4 @@ class WebFormField(BaseModelDB):
 
     # Relaciones ORM
     web_form = relationship("WebForm", back_populates="fields")
-    lead_field = relationship("LeadField")
+    lead_field = relationship("LeadField", overlaps="web_form_fields")

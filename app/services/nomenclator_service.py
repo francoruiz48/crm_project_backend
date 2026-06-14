@@ -94,7 +94,7 @@ class NomenclatorService(BaseService):
         return cls._execute(action="Actualizar Nomenclador", obj_id=obj_id, func=do_update)
 
     @classmethod
-    def delete(cls, obj_id: int, user_context: Optional[UserContext] = None):
+    def delete(cls, obj_id: int, user_context: Optional[UserContext] = None, force: bool = False):
         def do_delete(uow):
             current_obj = uow.session.query(Nomenclator).filter_by(id=obj_id).first()
             if not current_obj:

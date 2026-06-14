@@ -12,7 +12,7 @@ class LeadFieldController(BaseController):
     schema_update = LeadFieldUpdate
     schema_out = LeadFieldResponse
     schema_out_detail = LeadFieldDetailedResponse
-    enabled_methods = READ_WRITE
+    enabled_methods = READ_WRITE | {"DEACTIVATE"}
 
     allowed_filter_fields = {"name", "required", "is_primary", "order", "is_visible", "campaign_id", "nomenclator_id", "related_campaign_id", "field_type_code", "lead_field_section_id", "field_subtype_code"}
 

@@ -27,7 +27,7 @@ class UserService(BaseService):
         return super().update(obj_id, obj_data, user_context=user_context)
 
     @classmethod
-    def delete(cls, obj_id: int, user_context: UserContext = None):
+    def delete(cls, obj_id: int, user_context: UserContext = None, force: bool = False):
         cls._assert_can_modify(obj_id, user_context)
         return super().delete(obj_id, user_context=user_context)
 
