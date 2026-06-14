@@ -640,3 +640,192 @@ def test_campaign_access_rejects_wrong_org_campaign(api, initial_structure):
         headers=api.headers,
     )
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Nuevas casuísticas
+# ---------------------------------------------------------------------------
+
+def test_agent_cannot_remove_team_member(api, two_users):
+    """Un AGENT no puede expulsar a otro miembro del equipo."""
+    team = api.create_team("Equipo Remove Perm")
+    api.add_team_member(team["id"], two_users["agent"].id,   role="AGENT")
+    victim = api.add_team_member(team["id"], two_users["manager"].id, role="MANAGER")
+
+    with as_user(api, two_users["agent"]):
+        resp = api.client.delete(f"/team_members/{victim['id']}", headers=api.headers)
+    assert resp.status_code == 403, "Un AGENT no debería poder eliminar miembros del equipo."
+
+
+def test_manager_cannot_create_policy_for_another_team(api, two_users, initial_structure):
+    """Un MANAGER del equipo A no puede crear políticas para el equipo B."""
+    camp_id   = initial_structure["campaign_id"]
+    team_own  = api.create_team("Equipo Propio Manager")
+    team_otro = api.create_team("Equipo Ajeno Manager")
+    api.add_team_member(team_own["id"], two_users["manager"].id, role="MANAGER")
+    # two_users["manager"] NO pertenece a team_otro
+
+    f_x = api.create_lead_field(camp_id, "Campo Política Ajena", "INT")
+
+    with as_user(api, two_users["manager"]):
+        resp = api.client.post(
+            "/lead_routing_policies/",
+            json={
+                "name":             "Política para equipo ajeno",
+                "target_team_id":   team_otro["id"],
+                "priority":         98,
+                "logical_operator": "AND",
+                "campaign_id":      camp_id,
+                "conditions": [{
+                    "lead_field_id": f_x["id"],
+                    "operator":      "eq",
+                    "value_str":     "1",
+                    "position":      0,
+                }],
+            },
+            headers=api.headers,
+        )
+    assert resp.status_code == 403, "Un MANAGER no debería poder crear políticas para un equipo al que no pertenece."
+
+
+def test_validate_policy_rejects_field_from_wrong_campaign(api, initial_structure):
+    """
+    La validación rechaza un campo que pertenece a otra campaña distinta
+    a la campaña de la política.
+    """
+    camp_id  = initial_structure["campaign_id"]
+    flow_id  = initial_structure["lead_flow_id"]
+
+    ws      = api.create_workspace("WS Validación Campo")
+    camp2   = api.create_campaign(ws["id"], "Campaign 2 Validación", lead_flow_id=flow_id)
+    f_otro  = api.create_lead_field(camp2["id"], "Campo de Otra Campaign", "INT")
+    team    = api.create_team("Equipo Campo Inválido")
+
+    result = api.validate_routing_policy(
+        target_team_id = team["id"],
+        conditions     = [{
+            "lead_field_id": f_otro["id"],
+            "operator":      "eq",
+            "value_str":     "1",
+            "position":      0,
+        }],
+        campaign_id = camp_id,
+    )
+    assert result["valid"] is False
+    assert any("campaña" in e.lower() or "campaign" in e.lower() for e in result["errors"]), \
+        f"Se esperaba error de campaña incorrecta, se recibió: {result['errors']}"
+
+
+def test_routing_policy_selector_not_in(api, db_session, initial_structure):
+    """SELECTOR not_in: el lead matchea si su valor NO está en la lista."""
+    from app.models.nomenclator import Nomenclator
+    from app.models.nomenclator_item import NomenclatorItem
+
+    camp_id = initial_structure["campaign_id"]
+    org_id  = initial_structure["org_id"]
+
+    nom = Nomenclator(name="Zonas NotIn", organization_id=org_id)
+    db_session.add(nom)
+    db_session.flush()
+    item_norte = NomenclatorItem(nomenclator_id=nom.id, value="Norte", organization_id=org_id)
+    item_sur   = NomenclatorItem(nomenclator_id=nom.id, value="Sur",   organization_id=org_id)
+    item_este  = NomenclatorItem(nomenclator_id=nom.id, value="Este",  organization_id=org_id)
+    db_session.add_all([item_norte, item_sur, item_este])
+    db_session.commit()
+
+    team   = api.create_team("Equipo NotIn")
+    f_zona = api.create_lead_field(
+        camp_id, "Zona NotIn", "SELECTOR",
+        subtype_code="SELECTOR_SIMPLE", nomenclator_id=nom.id,
+    )
+
+    api.create_routing_policy(
+        name           = "Zona que NO es Norte ni Sur",
+        target_team_id = team["id"],
+        conditions     = [{
+            "lead_field_id": f_zona["id"],
+            "operator":      "not_in",
+            "value_list":    [str(item_norte.id), str(item_sur.id)],
+            "position":      0,
+        }],
+        priority    = 1,
+        campaign_id = camp_id,
+    )
+
+    excluido = api.create_lead(camp_id, [{"field_id": f_zona["id"], "value": item_norte.id}])
+    incluido = api.create_lead(camp_id, [{"field_id": f_zona["id"], "value": item_este.id}])
+
+    assert excluido["team_id"] is None,     "Norte está en la lista excluida, no debería rutear."
+    assert incluido["team_id"] == team["id"], "Este NO está en la lista excluida, debería rutear."
+
+
+def test_routing_policy_native_field_assigned_to_user(api, db_session, initial_structure):
+    """Routing basado en campo nativo assigned_to_user_id al momento de crear el lead."""
+    camp_id = initial_structure["campaign_id"]
+    org_id  = initial_structure["org_id"]
+
+    agente = _make_user(db_session, "Agente Nativo", f"agente_nativo_{org_id}@test.com")
+    _link_user_to_org(db_session, agente, org_id)
+    db_session.commit()
+
+    team = api.create_team("Equipo Usuario Nativo")
+
+    api.create_routing_policy(
+        name           = "Lead asignado al agente específico",
+        target_team_id = team["id"],
+        conditions     = [{
+            "native_field": "assigned_to_user_id",
+            "operator":     "eq",
+            "value_str":    str(agente.id),
+            "position":     0,
+        }],
+        priority    = 1,
+        campaign_id = camp_id,
+    )
+
+    f_dummy       = api.create_lead_field(camp_id, "Dato Asignado", "STRING")
+    lead_asignado = api.create_lead(
+        camp_id,
+        [{"field_id": f_dummy["id"], "value": "x"}],
+        assigned_to_user_id=agente.id,
+    )
+    lead_libre = api.create_lead(camp_id, [{"field_id": f_dummy["id"], "value": "y"}])
+
+    assert lead_asignado["team_id"] == team["id"], "El lead asignado al agente debería rutearse."
+    assert lead_libre["team_id"]    is None,        "El lead sin asignar no debería rutearse."
+
+
+def test_routing_policy_inactive_does_not_route(api, db_session, initial_structure):
+    """
+    Una política con active=False no debe rutear leads, aunque sus condiciones matcheen.
+    Se verifica también que, antes de desactivarla, sí rutea (smoke check).
+    """
+    from app.models.lead_routing_policy import LeadRoutingPolicy
+
+    camp_id = initial_structure["campaign_id"]
+    team    = api.create_team("Equipo Inactivo")
+    f_score = api.create_lead_field(camp_id, "Score Inactivo", "INT")
+
+    policy = api.create_routing_policy(
+        name           = "Política a desactivar",
+        target_team_id = team["id"],
+        conditions     = [{
+            "lead_field_id": f_score["id"],
+            "operator":      "gte",
+            "value_str":     "1",
+            "position":      0,
+        }],
+        priority    = 1,
+        campaign_id = camp_id,
+    )
+
+    # Smoke: con la política activa el lead se rutea
+    lead_antes = api.create_lead(camp_id, [{"field_id": f_score["id"], "value": 50}])
+    assert lead_antes["team_id"] == team["id"], "La política activa debería rutear."
+
+    # Desactivar directo en DB (active no está expuesto en el schema de update aún)
+    db_session.query(LeadRoutingPolicy).filter_by(id=policy["id"]).update({"active": False})
+    db_session.commit()
+
+    lead_despues = api.create_lead(camp_id, [{"field_id": f_score["id"], "value": 50}])
+    assert lead_despues["team_id"] is None, "La política inactiva NO debería rutear."

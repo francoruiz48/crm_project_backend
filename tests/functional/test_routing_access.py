@@ -209,3 +209,43 @@ def test_security_super_admin_bypass(api, db_session, initial_structure):
 
     res_direct = api.client.get(f"/campaigns/{camp_id}", headers=api.headers)
     assert res_direct.status_code == 200, "El superadmin fue bloqueado al acceder por ID."
+
+
+# ---------------------------------------------------------------------------
+# Equipo compartido: agente ve leads de sus compañeros
+# ---------------------------------------------------------------------------
+
+def test_security_micro_shared_team_agent_sees_all_leads(api, db_session, initial_structure):
+    """
+    En un equipo con is_visibility_shared=True (comportamiento por defecto),
+    un AGENT ve TODOS los leads del equipo, incluyendo los asignados a sus compañeros.
+    Es el caso espejo del test estricto (is_visibility_shared=False).
+    """
+    org_id  = initial_structure["org_id"]
+    flow_id = initial_structure["lead_flow_id"]
+
+    agent    = _make_user(db_session, "Agent Shared",    f"agent_shared_{org_id}@test.com")
+    companero = _make_user(db_session, "Companero Shared", f"comp_shared_{org_id}@test.com")
+    _link_user_to_org(db_session, agent,     org_id)
+    _link_user_to_org(db_session, companero, org_id)
+    db_session.commit()
+
+    ws   = api.create_workspace("WS Shared", is_public=False)
+    camp = api.create_campaign(ws["id"], "Camp Shared", lead_flow_id=flow_id, is_public=False)
+
+    # Equipo compartido (is_visibility_shared=True → todos ven todos los leads)
+    team_shared = api.create_team("Equipo Compartido", is_visibility_shared=True)
+    api.grant_workspace_access(team_shared["id"], ws["id"])
+    api.add_team_member(team_shared["id"], agent.id,     role="AGENT")
+    api.add_team_member(team_shared["id"], companero.id, role="AGENT")
+
+    f_base             = api.create_lead_field(camp["id"], "Dato Shared", "STRING")
+    lead_del_companero = api.create_lead(camp["id"], [{"field_id": f_base["id"], "value": "Lead Compañero"}])
+    api.bulk_assign([lead_del_companero["id"]], target_team_id=team_shared["id"], target_user_id=companero.id)
+
+    agent_api = ApiClient(api.client, org_id)
+    with as_user(agent_api, agent):
+        res = api.client.get(f"/leads/?campaign_id={camp['id']}", headers=agent_api.headers)
+
+    assert lead_del_companero["id"] in _ids(res), \
+        "En equipo compartido, el AGENT debería ver los leads asignados a sus compañeros."
