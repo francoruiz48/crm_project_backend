@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends
 from app.core.security import _get_current_user
 from app.models.security_models import User
 from app.schemas.security_schemas.auth_schema import (
+    ChangePasswordRequest,
     InviteRequest,
     InviteResponse,
     LoginRequest,
@@ -50,6 +51,15 @@ def invite(
         organization_id=data.organization_id,
         current_user=current_user,
     )
+
+
+@router.post("/change-password")
+def change_password(
+    data: ChangePasswordRequest,
+    current_user: User = Depends(_get_current_user),
+):
+    """Cambia la contraseña del usuario autenticado. Revoca todas las demás sesiones activas."""
+    return AuthService.change_password(data, current_user)
 
 
 @router.post("/accept-invite", response_model=TokenResponse)

@@ -181,7 +181,7 @@ class PermissionChecker:
         if self.required_permission not in user_permissions:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"No tienes permisos en esta organización. Requiere: {self.required_permission}",
+                detail="No tenés permisos para realizar esta acción en esta organización.",
             )
 
         return True

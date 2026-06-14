@@ -18,6 +18,7 @@ from app.models.organization import Organization
 from app.models.refresh_token_model import RefreshToken
 from app.models.security_models import Role, User, UserOrganization
 from app.schemas.security_schemas.auth_schema import (
+    ChangePasswordRequest,
     InviteResponse,
     LoginRequest,
     RegisterRequest,
@@ -28,6 +29,11 @@ from app.schemas.security_schemas.auth_schema import (
 def _hash_refresh_token(raw_token: str) -> str:
     """Hashea el refresh token antes de guardarlo en la DB."""
     return hashlib.sha256(raw_token.encode()).hexdigest()
+
+
+# Hash dummy pre-computado para usar en el timing-attack fix del login.
+# Se genera una sola vez al cargar el módulo para no añadir latencia por request.
+_DUMMY_HASH = hash_password("__dummy_timing_prevention__")
 
 
 def _build_token_response(user: User, session: Session) -> TokenResponse:
@@ -89,13 +95,13 @@ class AuthService:
         with UnitOfWork() as uow:
             user = uow.session.query(User).filter_by(email=data.email).first()
 
-            if not user or not user.hashed_password:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Credenciales incorrectas.",
-                )
+            # Siempre ejecutamos bcrypt para evitar timing attacks:
+            # si el usuario no existe usamos un hash dummy pre-computado,
+            # así el tiempo de respuesta es igual para emails válidos e inválidos.
+            candidate_hash = user.hashed_password if (user and user.hashed_password) else _DUMMY_HASH
+            password_ok = verify_password(data.password, candidate_hash)
 
-            if not verify_password(data.password, user.hashed_password):
+            if not user or not user.hashed_password or not password_ok:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Credenciales incorrectas.",
@@ -202,6 +208,50 @@ class AuthService:
             expires_in_hours=72,
             message=f"Compartí este token con {email} para que pueda unirse a '{org.name}'.",
         )
+
+    @classmethod
+    def change_password(cls, data: ChangePasswordRequest, current_user: User) -> dict:
+        """
+        Cambia la contraseña del usuario autenticado.
+        - Verifica la contraseña actual antes de aceptar la nueva.
+        - Revoca todos los refresh tokens activos (fuerza logout de otras sesiones).
+        - Usa tiempo de respuesta constante para no filtrar si el password es correcto.
+        """
+        MIN_PASSWORD_LENGTH = 8
+
+        if len(data.new_password) < MIN_PASSWORD_LENGTH:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"La nueva contraseña debe tener al menos {MIN_PASSWORD_LENGTH} caracteres.",
+            )
+
+        with UnitOfWork() as uow:
+            user = uow.session.get(User, current_user.id)
+
+            if not user or not user.hashed_password:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No se puede cambiar la contraseña de esta cuenta.",
+                )
+
+            # Verificación con tiempo constante: siempre corre bcrypt
+            if not verify_password(data.current_password, user.hashed_password):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="La contraseña actual es incorrecta.",
+                )
+
+            # Actualizar contraseña
+            user.hashed_password = hash_password(data.new_password)
+
+            # Revocar todos los refresh tokens activos (cierra otras sesiones)
+            uow.session.query(RefreshToken).filter_by(
+                user_id=user.id, revoked=False
+            ).update({"revoked": True})
+
+            uow.session.flush()
+
+        return {"message": "Contraseña actualizada correctamente. Las demás sesiones fueron cerradas."}
 
     @classmethod
     def accept_invite(cls, invite_token: str, name: str, password: str) -> TokenResponse:

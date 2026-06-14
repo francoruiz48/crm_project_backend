@@ -32,3 +32,8 @@ class InviteResponse(BaseModel):
     invite_token: str
     expires_in_hours: int = 72
     message: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
