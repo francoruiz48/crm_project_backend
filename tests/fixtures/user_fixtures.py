@@ -30,7 +30,7 @@ def _make_team_member(db_session, team_id: int, user_id: int, role: str) -> Team
     return member
 
 
-def _apply_user_overrides(app, user: User, org_id: int = None):
+def _apply_user_overrides(app, user: User, org_id: int = None, is_owner: bool = False):
     """
     Overridea tanto _get_current_user como get_current_user_roles para simular
     un usuario específico. Cubre todos los endpoints: los que usan una u otra dependencia.
@@ -40,7 +40,8 @@ def _apply_user_overrides(app, user: User, org_id: int = None):
     from fastapi import Header
     from typing import Optional
 
-    captured_user = user  # captura explícita para el closure
+    captured_user  = user      # captura explícita para el closure
+    captured_owner = is_owner  # idem para is_owner
 
     def fake_get_current_user():
         return captured_user
@@ -54,7 +55,7 @@ def _apply_user_overrides(app, user: User, org_id: int = None):
         return UserContext(
             user=captured_user,
             is_superuser=captured_user.is_superuser,
-            is_owner=False,
+            is_owner=captured_owner,
             organization_id=effective_org,
         )
 
@@ -73,21 +74,35 @@ class as_user:
     Context manager que simula un usuario específico en FastAPI.
     Overridea tanto _get_current_user como get_current_user_roles.
     Al salir, RESTAURA los overrides previos (ej: el superadmin del fixture client).
+
+    Si se pasa db_session, consulta UserOrganization para determinar is_owner
+    automáticamente. De lo contrario, is_owner=False.
     """
-    def __init__(self, api, user: User):
-        self._api = api
-        self._user = user
+    def __init__(self, api, user: User, db_session=None):
+        self._api        = api
+        self._user       = user
+        self._db         = db_session
         self._prev_overrides = {}
 
     def __enter__(self):
         from app.core.security import _get_current_user, get_current_user_roles
         app = self._api.client.app
+
+        # Resolver is_owner consultando la DB si se proporcionó sesión
+        is_owner = False
+        if self._db is not None and self._api.org_id is not None:
+            link = self._db.query(UserOrganization).filter_by(
+                user_id=self._user.id,
+                organization_id=self._api.org_id,
+            ).first()
+            is_owner = bool(link and link.is_owner)
+
         # Guardamos los overrides actuales antes de pisarlos
         self._prev_overrides = {
             k: v for k, v in app.dependency_overrides.items()
             if k in (_get_current_user, get_current_user_roles)
         }
-        _apply_user_overrides(app, self._user, self._api.org_id)
+        _apply_user_overrides(app, self._user, self._api.org_id, is_owner=is_owner)
         return self
 
     def __exit__(self, *args):
