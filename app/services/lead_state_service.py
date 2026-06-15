@@ -57,16 +57,23 @@ class LeadStateService(BaseService):
         created_by = user_context.user.id if user_context and user_context.user else None
 
         with UnitOfWork() as uow:
+            # Regla 0: El estado inicial solo puede ser de categoría OPEN
+            if obj_in.is_initial and obj_in.category != "OPEN":
+                errors.append({
+                    "field": "is_initial",
+                    "message": "El estado inicial debe ser de categoría OPEN."
+                })
+
             # Regla 1: Un solo estado inicial
             if obj_in.is_initial:
                 existing_initial = cls.repository.get_all(
-                    uow.session, 
-                    lead_flow_id=obj_in.lead_flow_id, 
+                    uow.session,
+                    lead_flow_id=obj_in.lead_flow_id,
                     is_initial=True
                 )
                 if existing_initial:
                     errors.append({
-                        "field": "is_initial", 
+                        "field": "is_initial",
                         "message": "Ya existe un estado inicial para esta campaña. Desmárquelo antes de crear uno nuevo."
                     })
 
@@ -111,11 +118,12 @@ class LeadStateService(BaseService):
             if not current_state:
                 cls._not_found(current_state_id)
 
-            # 2. Consultar los estados destino permitidos
+            # 2. Consultar los estados destino permitidos (solo activos)
             next_states = uow.session.query(LeadState).join(
                 LeadStateTransition, LeadState.id == LeadStateTransition.to_state_id
             ).filter(
-                LeadStateTransition.from_state_id == current_state_id
+                LeadStateTransition.from_state_id == current_state_id,
+                LeadState.active.is_(True)
             ).order_by(
                 LeadState.order.asc() # Ordenamos para que en el front el dropdown quede prolijo
             ).all()
@@ -175,6 +183,14 @@ class LeadStateService(BaseService):
                 update_data["order"] = calculated_order
 
             # --- EVALUAR ESTADO INICIAL ---
+            if update_data.get("is_initial"):
+                effective_category = update_data.get("category", current_state.category)
+                if effective_category != "OPEN":
+                    errors.append({
+                        "field": "is_initial",
+                        "message": "El estado inicial debe ser de categoría OPEN."
+                    })
+
             if update_data.get("is_initial") and not current_state.is_initial:
                 existing_initial = cls.repository.get_all(
                     uow.session, 
@@ -212,7 +228,8 @@ class LeadStateService(BaseService):
     def delete(cls, obj_id: int, user_context: Optional[UserContext] = None, force: bool = False):
         def do_delete(uow):
             from app.models.lead_state import LeadState
-            
+            from app.models.lead import Lead
+
             state_to_delete = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
             if not state_to_delete:
                 cls._not_found(obj_id)
@@ -224,15 +241,21 @@ class LeadStateService(BaseService):
                     detail=[{"field": "general", "message": "No se puede eliminar un estado inicial."}]
                 )
 
+            # Regla 5: Si hay leads activos, el estado se desactiva con aviso (no bloquea)
+            leads_en_estado = uow.session.query(Lead).filter_by(
+                current_state_id=obj_id,
+                active=True
+            ).count()
+
             flow_id = state_to_delete.lead_flow_id
             category = state_to_delete.category
             deleted_order = state_to_delete.order
 
-            # Eliminamos el estado
+            # Eliminamos el estado (soft-delete siempre)
             result = cls.repository.delete(uow.session, obj_id, user_context=user_context)
             uow.session.flush()
 
-            # Regla 5: Reordenar los estados OPEN restantes
+            # Regla 6: Reordenar los estados OPEN restantes
             if category == "OPEN" and deleted_order is not None:
                 states_to_reorder = uow.session.query(LeadState).filter(
                     LeadState.lead_flow_id == flow_id,
@@ -243,10 +266,18 @@ class LeadStateService(BaseService):
                 for state in states_to_reorder:
                     state.order -= 1
                     uow.session.add(state)
-                
+
                 uow.session.flush()
 
             cls._log_audit(uow.session, state_to_delete, action=SystemAuditLogAction.DELETED, changes=None, user_id=user_context.user.id if user_context and user_context.user else None)
+
+            # Agregar aviso si había leads activos en el estado eliminado
+            if leads_en_estado > 0:
+                result["warning"] = (
+                    f"El estado '{state_to_delete.name}' fue desactivado porque "
+                    f"tiene {leads_en_estado} lead(s) activo(s)."
+                )
+
             return result
 
         return cls._execute(action="Eliminar Estado de Lead", obj_id=obj_id, func=do_delete)

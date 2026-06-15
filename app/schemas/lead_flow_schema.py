@@ -23,7 +23,7 @@ class LeadFlowDetailedResponse(LeadFlowBase, BaseDetailedResponse):
 class StateNodeSchema(BaseModel):
     id: int = Field(description="ID real o ID negativo temporal (ej: -1) para estados nuevos")
     name: str = Field(..., max_length=50)
-    category: str = Field(...) # OPEN, WON, LOST
+    category: str = Field(..., pattern="^(OPEN|WON|LOST)$")
     is_initial: bool = False
     order: Optional[int] = None
     color: Optional[str] = None

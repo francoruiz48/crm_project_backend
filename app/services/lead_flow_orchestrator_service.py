@@ -8,6 +8,7 @@ from app.services.base_service import BaseService
 from app.models.lead_flow import LeadFlow
 from app.models.lead_state import LeadState
 from app.models.lead_state_transition import LeadStateTransition
+from app.models.lead import Lead
 from app.db.repository.lead_flow_repository import LeadFlowRepository
 from app.core.constans import SystemAuditLogAction
 
@@ -17,7 +18,7 @@ class LeadFlowOrchestratorService(BaseService):
     @classmethod
     def save_graph(cls, payload, user_context: Optional[UserContext] = None):
         def do_save(uow):
-            org_id = user_context.organization_id if user_context and user_context.organization_id else TENANT_ORG_ID
+            org_id = user_context.organization_id if user_context and user_context.organization_id else TENANT_ORG_ID.get()
             created_by = user_context.user.id if user_context and user_context.user else None
             
             # ==========================================
@@ -27,7 +28,8 @@ class LeadFlowOrchestratorService(BaseService):
             
             name_query = uow.session.query(LeadFlow).filter(
                 LeadFlow.name.ilike(payload.name),
-                LeadFlow.organization_id == org_id
+                LeadFlow.organization_id == org_id,
+                LeadFlow.active.is_(True)
             )
             if flow_id:
                 name_query = name_query.filter(LeadFlow.id != flow_id)
@@ -36,7 +38,7 @@ class LeadFlowOrchestratorService(BaseService):
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "name", "message": f"Ya existe un flujo llamado '{payload.name}'."}])
 
             if flow_id:
-                flow_obj = uow.session.query(LeadFlow).filter_by(id=flow_id, organization_id=org_id).first()
+                flow_obj = uow.session.query(LeadFlow).filter_by(id=flow_id, organization_id=org_id, active=True).first()
                 if not flow_obj: cls._not_found(flow_id)
                 flow_obj.name = payload.name
                 flow_obj.description = payload.description
@@ -54,21 +56,29 @@ class LeadFlowOrchestratorService(BaseService):
             if len(initial_states) != 1:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "states", "message": "El flujo debe tener exactamente un (1) estado inicial."}])
 
-            existing_states = uow.session.query(LeadState).filter_by(lead_flow_id=flow_id).all()
+            # Validación: el estado inicial debe ser de categoría OPEN
+            if initial_states[0].category != "OPEN":
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "states", "message": "El estado inicial debe ser de categoría OPEN."}])
+
+            existing_states = uow.session.query(LeadState).filter_by(lead_flow_id=flow_id, active=True).all()
             existing_states_map = {s.id: s for s in existing_states}
-            
+
             payload_state_ids = [s.id for s in payload.states if s.id and s.id > 0]
-            
-            id_translation_map = {} 
+
+            id_translation_map = {}
             open_order_counter = 1
-            
+
             for state_node in payload.states:
                 # Defensa: si manda id 0 o negativo, es nuevo
-                is_new = state_node.id is None or state_node.id <= 0 
-                
+                is_new = state_node.id is None or state_node.id <= 0
+
                 calc_order = None
                 if state_node.category == "OPEN":
-                    calc_order = open_order_counter
+                    # Respetar el order del payload si viene provisto; si no, usar el counter secuencial
+                    if state_node.order is not None and state_node.order > 0:
+                        calc_order = state_node.order
+                    else:
+                        calc_order = open_order_counter
                     open_order_counter += 1
 
                 if is_new:
@@ -106,16 +116,27 @@ class LeadFlowOrchestratorService(BaseService):
             # ==========================================
             existing_transitions = uow.session.query(LeadStateTransition).filter_by(lead_flow_id=flow_id).all()
             existing_t_map = {(t.from_state_id, t.to_state_id): t for t in existing_transitions}
-            
+
             incoming_pairs = set()
             for edge in payload.transitions:
                 real_from = id_translation_map.get(edge.from_state_id)
                 real_to = id_translation_map.get(edge.to_state_id)
-                
+
                 if not real_from or not real_to:
                     raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "transitions", "message": "Transición apunta a un estado inválido o no guardado."}])
-                
+
                 incoming_pairs.add((real_from, real_to))
+
+            # ==========================================
+            # 3.5 VALIDACIÓN DE REGLAS (pre-mutación)
+            # ==========================================
+            # Callejones sin salida: validar ANTES de tocar la DB para dar error limpio
+            for state_node in payload.states:
+                if state_node.category == "OPEN":
+                    real_id = id_translation_map.get(state_node.id)
+                    exits = sum(1 for pair in incoming_pairs if pair[0] == real_id)
+                    if exits == 0:
+                        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "transitions", "message": f"Diseño inválido: El estado '{state_node.name}' es un callejón sin salida (no tiene rutas hacia adelante)."}])
 
             # ==========================================
             # 4. ELIMINACIÓN SEGURA (ORDEN ESTRICTO)
@@ -125,14 +146,25 @@ class LeadFlowOrchestratorService(BaseService):
                 if pair not in incoming_pairs:
                     uow.session.delete(db_trans)
 
-            uow.session.flush() # ⚡ CRÍTICO: Fuerza a PostgreSQL a borrar las dependencias ya mismo.
+            uow.session.flush()  # ⚡ CRÍTICO: Fuerza a PostgreSQL a borrar las dependencias ya mismo.
 
-            # B. Ahora sí, borramos los Estados obsoletos con seguridad
+            # B. Soft-delete de los Estados obsoletos (con verificación de leads activos)
             for db_state in existing_states:
                 if db_state.id not in payload_state_ids:
-                    uow.session.delete(db_state)
+                    leads_en_estado = uow.session.query(Lead).filter_by(
+                        current_state_id=db_state.id,
+                        active=True
+                    ).count()
+                    if leads_en_estado > 0:
+                        raise HTTPException(
+                            status.HTTP_400_BAD_REQUEST,
+                            detail=[{"field": "states", "message": f"No se puede eliminar el estado '{db_state.name}': hay {leads_en_estado} lead(s) activo(s) en ese estado."}]
+                        )
+                    # Soft delete para preservar integridad del historial
+                    db_state.active = False
+                    db_state.updated_by = created_by
 
-            uow.session.flush() # ⚡ CRÍTICO: Fuerza a borrar los nodos limpios.
+            uow.session.flush()  # ⚡ CRÍTICO: Fuerza a marcar los nodos eliminados.
 
             # ==========================================
             # 5. CREACIÓN DE NUEVAS TRANSICIONES
@@ -146,18 +178,8 @@ class LeadFlowOrchestratorService(BaseService):
                         created_by=created_by
                     )
                     uow.session.add(new_trans)
-            
-            uow.session.flush()
 
-            # ==========================================
-            # 6. VALIDACIÓN DE REGLAS FINALES (Callejones sin salida)
-            # ==========================================
-            final_states = uow.session.query(LeadState).filter_by(lead_flow_id=flow_id).all()
-            for state in final_states:
-                if state.category == "OPEN":
-                    exits = sum(1 for pair in incoming_pairs if pair[0] == state.id)
-                    if exits == 0:
-                        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "transitions", "message": f"Diseño inválido: El estado '{state.name}' es un callejón sin salida (no tiene rutas hacia adelante)."}])
+            uow.session.flush()
 
             # Auditoría y Retorno
             cls._log_audit(uow.session, flow_obj, action=SystemAuditLogAction.UPDATED, changes=None, user_id=created_by)
