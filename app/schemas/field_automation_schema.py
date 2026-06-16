@@ -28,7 +28,7 @@ class ConditionOperatorEnum(str, Enum):
     IS_NOT_EMPTY = "IS_NOT_EMPTY"
     STARTS_WITH = "STARTS_WITH"
     ENDS_WITH = "ENDS_WITH"
-    IS_PAST = "IS_PAST"         
+    IS_PAST = "IS_PAST"
     IS_FUTURE = "IS_FUTURE"
 
 class ActionTypeEnum(str, Enum):
@@ -37,39 +37,38 @@ class ActionTypeEnum(str, Enum):
     COPY_FROM_FIELD = "COPY_FROM_FIELD"
     SET_CURRENT_DATE = "SET_CURRENT_DATE"
     SET_CURRENT_DATETIME = "SET_CURRENT_DATETIME"
-
     INCREMENT = "INCREMENT"
-    DECREMENT = "DECREMENT"      
-    
-    APPEND_TO_LIST = "APPEND_TO_LIST"    # Agrega un ID sin pisar los que ya tiene
+    DECREMENT = "DECREMENT"
+    APPEND_TO_LIST = "APPEND_TO_LIST"
     REMOVE_FROM_LIST = "REMOVE_FROM_LIST"
+    SET_DATE_OFFSET = "SET_DATE_OFFSET"
+    SET_VALUE_IF_EMPTY = "SET_VALUE_IF_EMPTY"
+    NORMALIZE_TEXT = "NORMALIZE_TEXT"
+    CONCAT_FIELDS = "CONCAT_FIELDS"
 
 # ==========================================
-# 2. ESQUEMAS DEL ÁRBOL JSONB
+# 2. ESQUEMAS DEL ARBOL JSONB
 # ==========================================
 class RuleCondition(BaseModel):
-    """Una condición hoja (Ej: 'Provincia == Mendoza')"""
     field_id: int
     operator: ConditionOperatorEnum
-    value: Optional[Any] = None 
+    value: Optional[Any] = None
 
 class RuleGroup(BaseModel):
-    """Un agrupador lógico. Contiene reglas simples o más grupos (recursividad)"""
     operator: LogicalOperatorEnum
     rules: List[Union[RuleCondition, RuleGroup]]
 
-# Le decimos a Pydantic que reconstruya la clase para aceptar la recursividad
-RuleGroup.model_rebuild() 
+RuleGroup.model_rebuild()
 
 class AutomationAction(BaseModel):
-    """El paso a paso de lo que hace el motor si la condición se cumple"""
     type: ActionTypeEnum
     target_field_id: int
-    value: Optional[Any] = Field(default=None, description="Valor estático a inyectar")
-    source_field_id: Optional[int] = Field(default=None, description="ID del campo de origen si la acción es copiar")
+    value: Optional[Any] = Field(default=None)
+    source_field_id: Optional[int] = Field(default=None)
+    source_field_ids: Optional[List[int]] = Field(default=None)
 
 # ==========================================
-# 3. ESQUEMAS CRUD (ENTRADA Y SALIDA)
+# 3. ESQUEMAS CRUD
 # ==========================================
 class FieldAutomationBase(BaseModel):
     name: str = Field(..., max_length=150)

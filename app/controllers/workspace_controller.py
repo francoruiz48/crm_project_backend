@@ -10,7 +10,7 @@ class WorkspaceController(BaseController):
     schema_update = WorkspaceUpdate
     schema_out = WorkspaceResponse
     schema_out_detail = WorkspaceDetailedResponse
-    enabled_methods = READ_WRITE
+    enabled_methods = READ_WRITE | {"DEACTIVATE"}
 
     allowed_filter_fields = {"name", "description", "is_public"}
 

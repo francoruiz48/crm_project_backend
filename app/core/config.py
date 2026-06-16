@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     CAPTCHA_SECRET_KEY: str
     CAPTCHA_VERIFY_URL: AnyHttpUrl
 
+    SECRET_KEY: str
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
     BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []
 
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")

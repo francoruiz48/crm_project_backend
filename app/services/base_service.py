@@ -151,7 +151,7 @@ class BaseService:
         return cls._execute(action="Actualizando", obj_id=obj_id, func=do_update, success_msg=SUCCESS_UPDATE)
 
     @classmethod
-    def delete(cls, obj_id: int, user_context: Optional[UserContext] = None):
+    def delete(cls, obj_id: int, user_context: Optional[UserContext] = None, force: bool = False):
         def do_delete(uow):
             # Necesitamos el objeto antes de borrarlo para tener su organization_id
             obj_to_delete = cls.repository.get_by_id(uow.session, obj_id, user_context, detailed=False)
@@ -159,7 +159,7 @@ class BaseService:
                 cls._not_found(obj_id)
                 
             # Ejecutamos el borrado (Físico o Soft)
-            result = cls.repository.delete(uow.session, obj_id, user_context=user_context)
+            result = cls.repository.delete(uow.session, obj_id, user_context=user_context, force=force)
             
             # LOG DE AUDITORÍA
             action = SystemAuditLogAction.DISABLED if result.get("action") == "disabled" else SystemAuditLogAction.DELETED
@@ -169,6 +169,27 @@ class BaseService:
 
         return cls._execute(action="Eliminando", obj_id=obj_id, func=do_delete, success_msg=SUCCESS_DELETE)
     
+
+
+    @classmethod
+    def deactivate(cls, obj_id: int, user_context: Optional[UserContext] = None):
+        """Establece active=False explícitamente (sin borrar el registro)."""
+        def do_deactivate(uow):
+            obj_to_deactivate = cls.repository.get_by_id(uow.session, obj_id, user_context, detailed=False)
+            if not obj_to_deactivate:
+                cls._not_found(obj_id)
+
+            result = cls.repository.deactivate(uow.session, obj_id, user_context=user_context)
+
+            cls._log_audit(
+                uow.session, obj_to_deactivate,
+                action=SystemAuditLogAction.DISABLED,
+                changes={"active": {"old": True, "new": False}},
+                user_id=user_context.user.id if user_context else None
+            )
+            return result
+
+        return cls._execute(action="Desactivando", obj_id=obj_id, func=do_deactivate, success_msg=SUCCESS_UPDATE)
 
     @classmethod
     def bulk_delete(cls, obj_ids: list[int], user_context: Optional[UserContext] = None):

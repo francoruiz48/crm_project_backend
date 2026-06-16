@@ -105,9 +105,6 @@ def run_seeds(db=None):
         seed_nomenclator_sex(db)
         db.commit()
 
-        seed_test_tenants(db)
-        db.commit()
-
         print("🚀 Seeders finalizados correctamente.")
 
     except Exception as e:
@@ -242,87 +239,25 @@ def seed_rbac(db):
 
     # --- 3. Usuario SuperAdmin ---
     def _get_or_create_superadmin(email):
+        from app.core.security import hash_password
         user = db.query(User).filter_by(email=email).first()
         if not user:
-            user = User(name="Super Admin", email=email, is_superuser=True)
+            user = User(
+                name="Super Admin",
+                email=email,
+                is_superuser=True,
+                hashed_password=hash_password("admin1234"),  # cambiar en producción
+            )
             db.add(user)
             db.flush()
+        elif not user.hashed_password:
+            # retrocompatibilidad: si ya existe sin password, se la asignamos
+            user.hashed_password = hash_password("admin1234")
         return user
 
     _get_or_create_superadmin("admin@crm.com")
     db.commit()
     print(f"✅ RBAC Procesado. Se sincronizaron {len(SYSTEM_ENTITIES_REGISTRY)} entidades.")
-
-def seed_test_tenants(db):
-    print("🏢 Iniciando Seed de Organizaciones de Prueba (Multi-Tenant)...")
-
-    # 1. Crear Organizaciones
-    org_alpha = db.query(Organization).filter_by(name="Empresa Alpha").first()
-    if not org_alpha:
-        org_alpha = Organization(name="Empresa Alpha", description="Tenant A para pruebas")
-        db.add(org_alpha)
-    
-    org_beta = db.query(Organization).filter_by(name="Empresa Beta").first()
-    if not org_beta:
-        org_beta = Organization(name="Empresa Beta", description="Tenant B para pruebas")
-        db.add(org_beta)
-
-    db.flush() # Flush para que la DB les asigne los IDs
-
-    # 2. Obtener el rol global de Admin (creado previamente por seed_rbac)
-    role_base = db.query(Role).filter_by(code="admin", organization_id=None).first()
-    if not role_base:
-        print("⚠️ Advertencia: No se encontró el rol 'admin'. Asegúrate de ejecutar seed_rbac primero.")
-        return
-
-    # 3. Helper interno para crear al usuario y sus membresías
-    def _create_test_user(name, email, memberships_info):
-        """
-        memberships_info es una lista de tuplas: [(org_obj, role_obj), ...]
-        """
-        user = db.query(User).filter_by(email=email).first()
-        if not user:
-            # IMPORTANTE: is_superuser=False para que la seguridad actúe sobre ellos
-            user = User(name=name, email=email, is_superuser=False)
-            db.add(user)
-            db.flush()
-
-        for org_obj, role_obj in memberships_info:
-            from app.models.security_models import UserOrganization
-            
-            membership = db.query(UserOrganization).filter_by(
-                user_id=user.id, 
-                organization_id=org_obj.id
-            ).first()
-            
-            if not membership:
-                membership = UserOrganization(
-                    user_id=user.id,
-                    organization_id=org_obj.id,
-                    active=True
-                )
-                # Asignamos el rol a esta membresía específica
-                membership.roles = [role_obj]
-                db.add(membership)
-        
-        db.flush()
-        return user
-
-    # 4. Crear los Usuarios de Prueba
-    
-    # A. Usuario de una sola empresa (Alpha)
-    _create_test_user("User Alpha", "user_alpha@test.com", [(org_alpha, role_base)])
-    
-    # B. Usuario de una sola empresa (Beta)
-    _create_test_user("User Beta", "user_beta@test.com", [(org_beta, role_base)])
-    
-    # C. Usuario Multi-Empresa (Alpha y Beta)
-    user_multi = _create_test_user("User Multi", "user_multi@test.com", [
-        (org_alpha, role_base), 
-        (org_beta, role_base)
-    ])
-
-    print("✅ Organizaciones y Usuarios de prueba creados con éxito.")
 
 
 def get_or_create_nomenclator(db, name, parent_id=None):
@@ -417,8 +352,3 @@ def seed_nomenclator_sex(db):
             value=item["value"],
             parent_id=None
         )
-
-
-
-
-

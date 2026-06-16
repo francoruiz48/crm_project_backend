@@ -69,9 +69,10 @@ class UserOrganization(BaseModelDB):
 
 class User(BaseModelDB):
     __tablename__ = "user"
-    
+
     name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
+    hashed_password = Column(String, nullable=True)  # nullable para no romper seeds/tests existentes
     is_superuser = Column(Boolean, default=False)
     
     organizations_access = relationship("UserOrganization", foreign_keys="[UserOrganization.user_id]", back_populates="user", cascade="all, delete-orphan")

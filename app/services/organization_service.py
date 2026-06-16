@@ -85,7 +85,21 @@ class OrganizationService(BaseService):
     @classmethod
     def create(cls, obj_in, user_context: Optional[UserContext] = None, **kwargs):
         def do_create(uow):
+            from fastapi import HTTPException, status
             user_id = user_context.user.id if user_context and user_context.user else None
+            is_superuser = user_context.is_superuser if user_context else False
+
+            # Validar límite: usuarios comunes solo pueden ser owner de 1 organización
+            if user_id and not is_superuser:
+                existing_owned = uow.session.query(UserOrganization).filter_by(
+                    user_id=user_id,
+                    is_owner=True,
+                ).first()
+                if existing_owned:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Ya sos propietario de una organización. Solo se permite una por usuario.",
+                    )
 
             # 1. Creamos la organización normalmente
             org_data = obj_in.model_dump(exclude_unset=True)

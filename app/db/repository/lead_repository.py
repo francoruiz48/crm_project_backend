@@ -1,4 +1,5 @@
 from typing import Optional
+from app.core.constans import DeleteStrategy
 from sqlalchemy.orm import aliased
 from sqlalchemy import cast, Float, or_, and_, func, insert, delete
 from app.db.repository.base_repository import BaseRepository
@@ -20,6 +21,7 @@ LEAD_NATIVE_FILTER_FIELDS = {
 
 class LeadRepository(BaseRepository):
     model = Lead
+    delete_strategy = DeleteStrategy.HARD_DELETE_ALWAYS
     schema_out = LeadResponse
     schema_out_detail = LeadDetailedResponse
     

@@ -83,6 +83,12 @@ def delete(obj_id: int, user_context=Depends(get_current_user_roles)):
     return LeadRoutingPolicyService.delete(obj_id, user_context=user_context)
 
 
+@router.delete("/active/{obj_id}")
+def deactivate(obj_id: int, user_context=Depends(get_current_user_roles)):
+    """Desactiva (active=False) sin eliminar la política."""
+    return LeadRoutingPolicyService.deactivate(obj_id, user_context=user_context)
+
+
 @router.post("/validate", response_model=LeadRoutingPolicyValidateResponse)
 def validate(
     obj_in:      LeadRoutingPolicyValidateRequest = Body(...),

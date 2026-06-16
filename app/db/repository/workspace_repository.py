@@ -1,6 +1,7 @@
 
 from sqlalchemy import or_
 from app.db.repository.base_repository import BaseRepository
+from app.core.constans import DeleteStrategy
 from app.models.campaign import Campaign
 from app.models.team_access import TeamCampaignAccess, TeamWorkspaceAccess
 from app.models.team_member import TeamMember
@@ -10,6 +11,8 @@ from app.core.security import UserContext
 
 class WorkspaceRepository(BaseRepository):
     model = Workspace
+    delete_strategy = DeleteStrategy.SMART_DELETE
+    delete_blockers = ["campaigns"]
     schema_in = WorkspaceCreate
     schema_out = WorkspaceResponse
     schema_out_detail = WorkspaceDetailedResponse

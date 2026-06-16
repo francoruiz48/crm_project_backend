@@ -250,9 +250,15 @@ class ApiClient:
     # LEADS
     # ==========================
     def create_lead(self, campaign_id: int, values: list,
+                    assigned_to_user_id: int = None,
+                    team_id: int = None,
                     expected_status=None) -> Dict:
         headers = self._inject_context()
         payload = {"campaign_id": campaign_id, "values": values}
+        if assigned_to_user_id is not None:
+            payload["assigned_to_user_id"] = assigned_to_user_id
+        if team_id is not None:
+            payload["team_id"] = team_id
         resp = self.client.post("/leads/", json=payload, headers=headers)
         return validate(resp, expected_status, "crear Lead")
 
@@ -282,6 +288,7 @@ class ApiClient:
         payload = {
             "field_id":      field_id,
             "name":          name,
+       
             "expression":    expression,
             "error_message": error_msg,
             "active":        True,

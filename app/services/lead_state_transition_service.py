@@ -20,20 +20,24 @@ class LeadStateTransitionService(BaseService):
         errors = []
         created_by = user_context.user.id if user_context and user_context.user else None
         with UnitOfWork() as uow:
-            # 1. Traer los estados de la base de datos
-            from_state = cls.state_repository.get_by_id(uow.session, obj_in.from_state_id, user_context=user_context)
-            to_state = cls.state_repository.get_by_id(uow.session, obj_in.to_state_id, user_context=user_context)
+            # 1. Traer los estados de la base de datos (solo activos)
+            from_state = cls.state_repository.get_by_id(uow.session, obj_in.from_state_id, user_context=user_context, only_active=True)
+            to_state = cls.state_repository.get_by_id(uow.session, obj_in.to_state_id, user_context=user_context, only_active=True)
 
             # 2. Validar Existencia y Pertenencia a la campaña (Acumulando errores)
             if not from_state:
-                errors.append({"field": "from_state_id", "message": "El estado de origen no existe."})
+                errors.append({"field": "from_state_id", "message": "El estado de origen no existe o está inactivo."})
             elif from_state.lead_flow_id != obj_in.lead_flow_id:
                 errors.append({"field": "from_state_id", "message": "El estado de origen no pertenece al flujo de leads enviado."})
 
             if not to_state:
-                errors.append({"field": "to_state_id", "message": "El estado de destino no existe."})
+                errors.append({"field": "to_state_id", "message": "El estado de destino no existe o está inactivo."})
             elif to_state.lead_flow_id != obj_in.lead_flow_id:
                 errors.append({"field": "to_state_id", "message": "El estado de destino no pertenece al flujo de leads enviado."})
+
+            # 2b. Validar self-loop
+            if not errors and obj_in.from_state_id == obj_in.to_state_id:
+                errors.append({"field": "to_state_id", "message": "Un estado no puede transicionar a sí mismo."})
 
             # 3. Validar Duplicados (Solo si los estados anteriores son válidos para evitar cruces raros)
             if not errors:
@@ -74,9 +78,10 @@ class LeadStateTransitionService(BaseService):
                 state_ids.add(t.from_state_id)
                 state_ids.add(t.to_state_id)
             
-            # Traemos los estados implicados y los mapeamos en un diccionario
+            # Traemos los estados activos implicados y los mapeamos en un diccionario
             states_in_db = uow.session.query(cls.state_repository.model).filter(
-                cls.state_repository.model.id.in_(state_ids)
+                cls.state_repository.model.id.in_(state_ids),
+                cls.state_repository.model.active.is_(True)
             ).all()
             state_map = {s.id: s for s in states_in_db}
 
@@ -141,9 +146,10 @@ class LeadStateTransitionService(BaseService):
             errors = []
             created_by = user_context.user.id if user_context and user_context.user else None
             
-            # 1. Traer todos los estados de este flujo para validación rápida
+            # 1. Traer todos los estados ACTIVOS de este flujo para validación rápida
             states_in_db = uow.session.query(cls.state_repository.model).filter_by(
-                lead_flow_id=obj_in.lead_flow_id
+                lead_flow_id=obj_in.lead_flow_id,
+                active=True
             ).all()
             state_map = {s.id: s for s in states_in_db}
 
@@ -232,9 +238,9 @@ class LeadStateTransitionService(BaseService):
     
 
     @classmethod
-    def delete(cls, obj_id: int, user_context: Optional[UserContext] = None):
+    def delete(cls, obj_id: int, user_context: Optional[UserContext] = None, force: bool = False):
         def do_delete(uow):
-            
+
             transition = uow.session.query(LeadStateTransition).filter_by(id=obj_id).first()
             if not transition:
                 cls._not_found(obj_id)
