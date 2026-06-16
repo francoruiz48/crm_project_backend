@@ -90,8 +90,8 @@ class TestRegister:
             "email": "not-an-email",
             "password": "pass123",
         })
-        # El handler personalizado convierte RequestValidationError a 400
-        assert resp.status_code == 400
+        # pydantic_exception_handler devuelve 422 para errores de schema
+        assert resp.status_code == 422
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +237,13 @@ class TestInvite:
 
         link = UserOrganization(user_id=owner.id, organization_id=org.id, is_owner=True)
         db_session.add(link)
+        db_session.flush()
+
+        # Asignar rol admin global al owner para que tenga user:invite
+        from app.models.security_models import Role
+        admin_role = db_session.query(Role).filter_by(code="admin", organization_id=None).first()
+        if admin_role:
+            link.roles = [admin_role]
         db_session.commit()
 
         # 2. Login como owner para obtener token
@@ -246,11 +253,14 @@ class TestInvite:
         assert resp_login.status_code == 200
         access_token = resp_login.json()["access_token"]
 
-        # 3. Invitar a un email nuevo
+        # 3. Invitar a un email nuevo (X-Organization-Id requerido por PermissionChecker)
         resp_invite = plain_client.post(
             "/auth/invite",
             json={"email": "invited@test.com", "organization_id": org.id},
-            headers={"Authorization": f"Bearer {access_token}"},
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "X-Organization-Id": str(org.id),
+            },
         )
         assert resp_invite.status_code == 200
         invite_token = resp_invite.json()["invite_token"]
@@ -287,10 +297,15 @@ class TestInvite:
         })
         access_token = resp_login.json()["access_token"]
 
+        # Con X-Organization-Id, PermissionChecker verifica user:invite.
+        # El outsider no tiene roles → 403.
         resp = plain_client.post(
             "/auth/invite",
             json={"email": "alguien@test.com", "organization_id": org.id},
-            headers={"Authorization": f"Bearer {access_token}"},
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "X-Organization-Id": str(org.id),
+            },
         )
         assert resp.status_code == 403
 
@@ -344,9 +359,9 @@ class TestOrgLimit:
 
 class TestUserEndpoints:
     def test_get_all_users_forbidden_for_regular_user(self, client, db_session, initial_structure):
-        """GET /users solo lo puede usar el superadmin."""
+        """GET /users requiere user:view_all — un agente no lo tiene."""
         regular = _make_user(db_session, "Regular", "regular@test.com")
-        _link_user_to_org(db_session, regular, initial_structure["org_id"])
+        _link_user_to_org(db_session, regular, initial_structure["org_id"], role_code="agent")
         db_session.commit()
 
         from tests.fixtures.user_fixtures import _apply_user_overrides, _remove_user_overrides
@@ -374,9 +389,9 @@ class TestUserEndpoints:
             _remove_user_overrides(app)
 
     def test_get_one_user_forbidden_for_regular_user(self, client, db_session, initial_structure):
-        """GET /users/{id} solo lo puede usar el superadmin."""
+        """GET /users/{id} requiere user:view_all — un agente no lo tiene."""
         regular = _make_user(db_session, "RegularGet", "regularget@test.com")
-        _link_user_to_org(db_session, regular, initial_structure["org_id"])
+        _link_user_to_org(db_session, regular, initial_structure["org_id"], role_code="agent")
         db_session.commit()
 
         from tests.fixtures.user_fixtures import _apply_user_overrides, _remove_user_overrides

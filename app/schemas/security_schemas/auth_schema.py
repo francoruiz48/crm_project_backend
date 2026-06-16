@@ -26,6 +26,7 @@ class RefreshRequest(BaseModel):
 class InviteRequest(BaseModel):
     email: EmailStr
     organization_id: int
+    role_code: str = "agent"  # Rol a asignar al invitado (default: agent)
 
 
 class InviteResponse(BaseModel):

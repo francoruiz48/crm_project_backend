@@ -52,11 +52,15 @@ def _apply_user_overrides(app, user: User, org_id: int = None, is_owner: bool = 
         if x_organization_id is not None:
             TENANT_ORG_ID.set(x_organization_id)
         effective_org = x_organization_id or org_id
+        # Poblamos los permisos reales del usuario para que PermissionChecker
+        # y los servicios (ej: LeadRepository) funcionen correctamente en tests.
+        permissions = captured_user.get_permissions(org_id=effective_org) if effective_org else []
         return UserContext(
             user=captured_user,
             is_superuser=captured_user.is_superuser,
             is_owner=captured_owner,
             organization_id=effective_org,
+            permissions=permissions,
         )
 
     app.dependency_overrides[_get_current_user] = fake_get_current_user

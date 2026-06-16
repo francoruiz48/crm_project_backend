@@ -170,7 +170,7 @@ class AuthService:
         return {"message": "Sesión cerrada correctamente."}
 
     @classmethod
-    def invite(cls, email: str, organization_id: int, current_user: User) -> InviteResponse:
+    def invite(cls, email: str, organization_id: int, current_user: User, role_code: str = "agent") -> InviteResponse:
         """
         Genera un token de invitación para que alguien se una a una organización.
         El frontend usa este token para redirigir al usuario al flujo de registro/aceptación.
@@ -195,18 +195,32 @@ class AuthService:
                     detail="Organización no encontrada.",
                 )
 
+            org_name = org.name  # capturar antes de que la sesión se cierre
+
+            # Verificar que el rol existe (primero org-específico, luego global como fallback)
+            role = (
+                uow.session.query(Role).filter_by(code=role_code, organization_id=organization_id).first()
+                or uow.session.query(Role).filter_by(code=role_code, organization_id=None).first()
+            )
+            if not role:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"El rol '{role_code}' no existe.",
+                )
+
         invite_token = create_invite_token(
             data={
                 "email": email,
                 "org_id": organization_id,
                 "invited_by": current_user.id,
+                "role_code": role_code,
             }
         )
 
         return InviteResponse(
             invite_token=invite_token,
             expires_in_hours=72,
-            message=f"Compartí este token con {email} para que pueda unirse a '{org.name}'.",
+            message=f"Compartí este token con {email} para que pueda unirse a '{org_name}'.",
         )
 
     @classmethod
@@ -299,12 +313,13 @@ class AuthService:
                 uow.session.add(membership)
                 uow.session.flush()
 
-                # Rol por defecto (admin global si existe)
-                admin_role = uow.session.query(Role).filter_by(
-                    code="admin", organization_id=None
+                # Asignar el rol de la org especificado en el token (default: agent)
+                role_code = payload.get("role_code", "agent")
+                org_role = uow.session.query(Role).filter_by(
+                    code=role_code, organization_id=org_id
                 ).first()
-                if admin_role:
-                    membership.roles = [admin_role]
+                if org_role:
+                    membership.roles = [org_role]
 
                 uow.session.flush()
 

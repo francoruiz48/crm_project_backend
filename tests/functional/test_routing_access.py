@@ -119,8 +119,8 @@ def test_security_micro_manager_vs_strict_agent(api, db_session, initial_structu
 
     agent    = _make_user(db_session, "Agent Strict",   f"agent_strict_{org_id}@test.com")
     companero = _make_user(db_session, "Companero",     f"companero_{org_id}@test.com")
-    _link_user_to_org(db_session, agent,     org_id)
-    _link_user_to_org(db_session, companero, org_id)
+    _link_user_to_org(db_session, agent,     org_id, role_code="agent")
+    _link_user_to_org(db_session, companero, org_id, role_code="agent")
     db_session.commit()
 
     # Crear workspace, campaign, equipo ESTRICTO (no colaborativo)

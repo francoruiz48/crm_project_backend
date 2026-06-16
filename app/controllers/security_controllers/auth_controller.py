@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 
-from app.core.security import _get_current_user
+from app.core.security import PermissionChecker, _get_current_user
 from app.models.security_models import User
 from app.schemas.security_schemas.auth_schema import (
     ChangePasswordRequest,
@@ -44,12 +44,14 @@ def logout(data: RefreshRequest):
 def invite(
     data: InviteRequest,
     current_user: User = Depends(_get_current_user),
+    _perm=Depends(PermissionChecker("user:invite")),
 ):
-    """Genera un token de invitación para agregar a alguien a una organización."""
+    """Genera un token de invitación para agregar a alguien a una organización. Requiere permiso user:invite."""
     return AuthService.invite(
         email=data.email,
         organization_id=data.organization_id,
         current_user=current_user,
+        role_code=data.role_code,
     )
 
 
