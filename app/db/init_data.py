@@ -182,9 +182,9 @@ def seed_rbac(db):
     print("Procesando RBAC Automático...")
 
     ACTIONS = {
-        "create": "Crear", 
-        "view": "Ver", 
-        "update": "Editar", 
+        "create": "Crear",
+        "view": "Ver",
+        "update": "Editar",
         "delete": "Eliminar"
     }
 
@@ -197,7 +197,7 @@ def seed_rbac(db):
 
     # --- 1. Generación Masiva de Permisos ---
     all_permissions = []
-    
+
     # Iteramos sobre nuestra Única Fuente de Verdad
     for entity_code, entity_info in SYSTEM_ENTITIES_REGISTRY.items():
         entity_name_visual = entity_info["name"]
@@ -209,16 +209,19 @@ def seed_rbac(db):
                 codename = f"{entity_code}:{action_code}"
                 name = f"{action_label} {entity_name_visual}"
                 all_permissions.append(_get_or_create_permission(codename, name))
-        
+
         elif crud_type == "READ_ONLY":
             # Genera solo: Ver
             codename = f"{entity_code}:view"
             name = f"Ver {entity_name_visual}"
             all_permissions.append(_get_or_create_permission(codename, name))
-        
+
         # Ambas (FULL y READ_ONLY) siempre tienen el permiso general de "Ver TODOS" (Listar)
         p_all = _get_or_create_permission(f"{entity_code}:view_all", f"Ver TODOS los registros de {entity_name_visual}")
         all_permissions.append(p_all)
+
+    # Permiso especial: invitar usuarios (no forma parte del CRUD estándar)
+    _get_or_create_permission("user:invite", "Invitar Usuarios a la Organización")
 
     db.flush()
 
@@ -231,11 +234,61 @@ def seed_rbac(db):
             db.flush()
         return role
 
-    r_admin = _get_or_create_system_role("Admin Global", "admin")
-
-    # Asignamos TODOS los permisos al rol Admin Global
+    # -- Rol Admin: todos los permisos --
+    r_admin = _get_or_create_system_role("Administrador", "admin")
     all_db_perms = db.query(Permission).all()
     r_admin.permissions = all_db_perms
+
+    # -- Rol Agent: operaciones del día a día, sin configuración del sistema --
+    r_agent = _get_or_create_system_role("Agente", "agent")
+    AGENT_PERMS = [
+        # Leads
+        "lead:view", "lead:create", "lead:update", "lead:delete",
+        # Comentarios
+        "lead_comment:view", "lead_comment:create", "lead_comment:update", "lead_comment:delete",
+        # Vistas propias
+        "lead_view:view", "lead_view:view_all", "lead_view:create", "lead_view:update", "lead_view:delete",
+        # Etiquetas
+        "tag:view", "tag:view_all", "tag:create",
+        # Lectura de catálogos
+        "campaign:view", "workspace:view",
+        "lead_field:view", "lead_field:view_all",
+        "lead_field_type:view", "lead_field_type:view_all",
+        "lead_field_subtype:view", "lead_field_subtype:view_all",
+        "lead_state:view", "lead_state:view_all",
+        "lead_state_transition:view", "lead_state_transition:view_all",
+        "lead_flow:view", "lead_flow:view_all",
+        "nomenclator:view", "nomenclator:view_all",
+        "nomenclator_item:view", "nomenclator_item:view_all",
+        # Historial
+        "lead_state_history:view", "lead_state_history:view_all",
+        "lead_activity_history:view", "lead_activity_history:view_all",
+        # Equipo (solo lectura)
+        "team:view", "team_member:view", "team_member:view_all",
+    ]
+    agent_perms = db.query(Permission).filter(Permission.codename.in_(AGENT_PERMS)).all()
+    r_agent.permissions = agent_perms
+
+    # -- Rol Viewer: solo lectura --
+    r_viewer = _get_or_create_system_role("Visualizador", "viewer")
+    VIEWER_PERMS = [
+        "lead:view", "lead:view_all",
+        "lead_comment:view", "lead_comment:view_all",
+        "campaign:view", "workspace:view",
+        "lead_field:view", "lead_field:view_all",
+        "lead_state:view", "lead_state:view_all",
+        "lead_flow:view", "lead_flow:view_all",
+        "nomenclator:view", "nomenclator:view_all",
+        "nomenclator_item:view", "nomenclator_item:view_all",
+        "lead_state_history:view", "lead_state_history:view_all",
+        "lead_activity_history:view", "lead_activity_history:view_all",
+        "tag:view", "tag:view_all",
+        "team:view", "team_member:view",
+    ]
+    viewer_perms = db.query(Permission).filter(Permission.codename.in_(VIEWER_PERMS)).all()
+    r_viewer.permissions = viewer_perms
+
+    db.flush()
 
     # --- 3. Usuario SuperAdmin ---
     def _get_or_create_superadmin(email):
@@ -257,7 +310,7 @@ def seed_rbac(db):
 
     _get_or_create_superadmin("admin@crm.com")
     db.commit()
-    print(f"✅ RBAC Procesado. Se sincronizaron {len(SYSTEM_ENTITIES_REGISTRY)} entidades.")
+    print(f"✅ RBAC Procesado. Se sincronizaron {len(SYSTEM_ENTITIES_REGISTRY)} entidades. Roles: admin, agent, viewer.")
 
 
 def get_or_create_nomenclator(db, name, parent_id=None):

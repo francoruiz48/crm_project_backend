@@ -8,7 +8,7 @@ from app.models.lead_flow import LeadFlow
 from app.models.lead_state import LeadState
 from app.models.lead_state_transition import LeadStateTransition
 from app.core.security import UserContext
-from app.models.security_models import UserOrganization
+from app.models.security_models import Role, UserOrganization
 
 class OrganizationService(BaseService):
     repository = OrganizationRepository
@@ -83,6 +83,29 @@ class OrganizationService(BaseService):
             session.add(transition)
 
     @classmethod
+    def _clone_default_roles_for_org(cls, session, org_id: int):
+        """Clona las plantillas globales de roles (admin, agent, viewer) para la nueva org."""
+        templates = session.query(Role).filter_by(organization_id=None).all()
+        cloned = {}
+        for template in templates:
+            existing = session.query(Role).filter_by(
+                code=template.code, organization_id=org_id
+            ).first()
+            if not existing:
+                new_role = Role(
+                    name=template.name,
+                    code=template.code,
+                    organization_id=org_id,
+                )
+                new_role.permissions = list(template.permissions)
+                session.add(new_role)
+                session.flush()
+                cloned[template.code] = new_role
+            else:
+                cloned[template.code] = existing
+        return cloned
+
+    @classmethod
     def create(cls, obj_in, user_context: Optional[UserContext] = None, **kwargs):
         def do_create(uow):
             from fastapi import HTTPException, status
@@ -105,28 +128,35 @@ class OrganizationService(BaseService):
             org_data = obj_in.model_dump(exclude_unset=True)
             org_data.update(kwargs)
             org = cls.repository.create(uow.session, org_data, user_context=user_context)
-            uow.session.flush() # Obligatorio para tener org.id
-            
+            uow.session.flush()  # Obligatorio para tener org.id
+
             # 2. Inyectar el flujo por defecto
             cls._create_default_lead_flow(uow.session, org.id, user_context=user_context)
 
             cls._create_default_contact_states(uow.session, org.id)
 
             cls._create_default_sections(uow.session, org.id)
-            
-            # --- 3. CORONAR AL CREADOR COMO OWNER ---
+
+            # 3. Clonar roles plantilla para esta org
+            cloned_roles = cls._clone_default_roles_for_org(uow.session, org.id)
+
+            # 4. Coronar al creador como owner y asignarle el rol admin de la org
             if user_id:
                 user_org = UserOrganization(
                     user_id=user_id,
                     organization_id=org.id,
-                    is_owner=True
+                    is_owner=True,
                 )
                 uow.session.add(user_org)
-            # ----------------------------------------
+                uow.session.flush()
+
+                admin_role = cloned_roles.get("admin")
+                if admin_role:
+                    user_org.roles = [admin_role]
 
             # LOG DE AUDITORÍA
             cls._log_audit(uow.session, org, action=SystemAuditLogAction.CREATED, changes=org_data, user_id=user_id)
-            
+
             return org
 
         return cls._execute(action="Crear Organización", func=do_create)

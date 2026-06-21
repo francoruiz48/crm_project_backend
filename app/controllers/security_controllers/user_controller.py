@@ -3,7 +3,7 @@ from fastapi import Depends, Header, Query
 from sqlalchemy.orm import Session
 
 from app.controllers.base_controller import BaseController
-from app.core.security import _get_current_user, get_current_user_roles, require_superuser
+from app.core.security import PermissionChecker, _get_current_user, get_current_user_roles, require_superuser
 from app.db.session import get_db
 from app.models.security_models import Role, User, UserOrganization
 from app.schemas.pagination_schema import PaginatedResponse
@@ -41,7 +41,7 @@ class UserController(BaseController):
         ResponseModelPaginated = PaginatedResponse[ResponseModelItem]
 
         # ---------------------------------------------------------------
-        # GET ALL — solo superadmin
+        # GET ALL — requiere permiso user:view_all (solo admins de org o superadmin)
         # ---------------------------------------------------------------
         @router.get("/", response_model=ResponseModelPaginated)
         def get_all(
@@ -49,7 +49,7 @@ class UserController(BaseController):
             page_size: int = Query(50),
             only_active: bool = True,
             detailed: bool = Query(False),
-            _superuser: User = Depends(require_superuser),
+            _perm=Depends(PermissionChecker("user:view_all")),
             user_context=Depends(get_current_user_roles),
         ):
             total, items = cls.service.get_all(
@@ -62,13 +62,13 @@ class UserController(BaseController):
             return PaginatedResponse.create(items=items, total=total, page=page, page_size=page_size)
 
         # ---------------------------------------------------------------
-        # GET ONE — solo superadmin
+        # GET ONE — requiere permiso user:view_all
         # ---------------------------------------------------------------
         @router.get("/{obj_id}", response_model=ResponseModelItem)
         def get_one(
             obj_id: int,
             detailed: bool = Query(False),
-            _superuser: User = Depends(require_superuser),
+            _perm=Depends(PermissionChecker("user:view_all")),
             user_context=Depends(get_current_user_roles),
         ):
             from fastapi import HTTPException
@@ -114,14 +114,14 @@ class UserController(BaseController):
         # ---------------------------------------------------------------
         # Endpoints existentes de promoción
         # ---------------------------------------------------------------
-        @router.patch("/promote_to_superuser/{id}", dependencies=cls._get_deps("update"))
+        @router.patch("/promote_to_superuser/{id}", dependencies=[Depends(require_superuser)])
         async def promote_to_superuser(
             id: int,
             user_context=Depends(get_current_user_roles),
         ):
             return cls.service.promote_to_superuser(target_user_id=id, user_context=user_context)
 
-        @router.patch("/organization/{organization_id}/promote-owner/{user_id}", dependencies=cls._get_deps("update"))
+        @router.patch("/organization/{organization_id}/promote-owner/{user_id}", dependencies=[Depends(require_superuser)])
         async def promote_to_org_owner(
             user_id: int,
             organization_id: int,
