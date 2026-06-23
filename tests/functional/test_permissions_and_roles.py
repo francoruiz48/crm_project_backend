@@ -10,6 +10,7 @@ Tests del sistema de permisos y roles implementado:
   5. Visibilidad de leads según campaña pública / privada / lead:view_all
 """
 import pytest
+from app.core.constans import ADMIN_ORG_ID
 from app.core.context import TENANT_ORG_ID
 from app.core.security import hash_password, _get_current_user, get_current_user_roles
 from app.models.campaign import Campaign
@@ -40,7 +41,7 @@ def _make_org_with_roles(db_session, name: str):
     db_session.add(org)
     db_session.flush()
 
-    templates = db_session.query(Role).filter_by(organization_id=None).all()
+    templates = db_session.query(Role).filter_by(organization_id=ADMIN_ORG_ID).all()
     cloned = {}
     for template in templates:
         new_role = Role(
@@ -474,15 +475,21 @@ class TestUserViewAllPermission:
         finally:
             _remove_user_overrides(app)
 
-    def test_superadmin_can_list_users_without_org(self, client, db_session):
-        """El superadmin puede listar usuarios incluso sin X-Organization-Id."""
+    def test_superadmin_requires_org_header(self, client, db_session, initial_structure):
+        """El superadmin también requiere X-Organization-Id (aislamiento de contexto)."""
         from app.main import app
 
+        org_id = initial_structure["org_id"]
         superadmin = db_session.query(User).filter_by(email="admin@crm.com").first()
-        _apply_user_overrides(app, superadmin)
+        _apply_user_overrides(app, superadmin, org_id)
         try:
-            resp = client.get("/users/")
-            assert resp.status_code == 200
+            # Sin header → 400
+            resp_no_header = client.get("/users/")
+            assert resp_no_header.status_code == 400
+
+            # Con header → 200
+            resp_with_header = client.get("/users/", headers={"X-Organization-Id": str(org_id)})
+            assert resp_with_header.status_code == 200
         finally:
             _remove_user_overrides(app)
 

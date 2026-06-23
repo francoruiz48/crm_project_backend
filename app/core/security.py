@@ -164,17 +164,19 @@ class PermissionChecker:
         user: User = Depends(_get_current_user),
         x_organization_id: Optional[int] = Header(default=None, alias="X-Organization-Id"),
     ):
-        if x_organization_id is not None:
-            TENANT_ORG_ID.set(x_organization_id)
-
-        if user.is_superuser:
-            return True
-
+        # El header es obligatorio para TODOS (incluido superadmin) para garantizar
+        # el aislamiento de contexto. Sin org_id no hay contexto de operación válido.
         if not x_organization_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Falta el header 'X-Organization-Id' para verificar los permisos en este contexto.",
+                detail="Falta el header 'X-Organization-Id'.",
             )
+
+        TENANT_ORG_ID.set(x_organization_id)
+
+        # Superadmin tiene todos los permisos pero opera SIEMPRE dentro de una org
+        if user.is_superuser:
+            return True
 
         user_permissions = user.get_permissions(org_id=x_organization_id)
 

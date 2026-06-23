@@ -8,6 +8,7 @@ Tests de autenticación y autorización:
   - Restricciones de acceso en endpoints de usuarios
 """
 import pytest
+from app.core.constans import ADMIN_ORG_ID
 from app.core.security import hash_password, _get_current_user, get_current_user_roles
 from app.models.security_models import User, UserOrganization
 from app.models.organization import Organization
@@ -241,7 +242,7 @@ class TestInvite:
 
         # Asignar rol admin global al owner para que tenga user:invite
         from app.models.security_models import Role
-        admin_role = db_session.query(Role).filter_by(code="admin", organization_id=None).first()
+        admin_role = db_session.query(Role).filter_by(code="admin", organization_id=ADMIN_ORG_ID).first()
         if admin_role:
             link.roles = [admin_role]
         db_session.commit()
@@ -374,16 +375,17 @@ class TestUserEndpoints:
         finally:
             _remove_user_overrides(app)
 
-    def test_get_all_users_allowed_for_superadmin(self, client, db_session):
-        """GET /users funciona para superadmin."""
+    def test_get_all_users_allowed_for_superadmin(self, client, db_session, initial_structure):
+        """GET /users funciona para superadmin (con X-Organization-Id requerido)."""
         superadmin = db_session.query(User).filter_by(email="admin@crm.com").first()
+        org_id = initial_structure["org_id"]
 
         from tests.fixtures.user_fixtures import _apply_user_overrides, _remove_user_overrides
         from app.main import app
 
-        _apply_user_overrides(app, superadmin)
+        _apply_user_overrides(app, superadmin, org_id)
         try:
-            resp = client.get("/users/")
+            resp = client.get("/users/", headers={"X-Organization-Id": str(org_id)})
             assert resp.status_code == 200
         finally:
             _remove_user_overrides(app)

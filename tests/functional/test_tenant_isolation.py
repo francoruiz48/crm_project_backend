@@ -11,6 +11,7 @@ Usa:
   - ApiClient(client, org_id): cliente HTTP con cabecera X-Organization-Id
 """
 import pytest
+from app.core.constans import ADMIN_ORG_ID
 from tests.helpers.api_helpers import ApiClient
 from tests.fixtures.user_fixtures import as_user
 from tests.fixtures.org_fixtures import TenantContext
@@ -249,9 +250,13 @@ class TestTeamIsolation:
 class TestNomenclatorIsolation:
 
     def test_global_nomenclator_visible_to_all_orgs(self, client, ctx_alpha, ctx_beta):
-        """Un nomenclador sin org (global) debe ser visible para todas las organizaciones."""
-        # El superadmin crea un nomenclador global (sin cabecera de org)
-        resp_create = client.post("/nomenclators/", json={"name": "Nomenclador Global Test"})
+        """Un nomenclador del admin org (global) debe ser visible para todas las organizaciones."""
+        # El superadmin crea un nomenclador en la org admin (id=1 = ADMIN_ORG_ID)
+        resp_create = client.post(
+            "/nomenclators/",
+            json={"name": "Nomenclador Global Test"},
+            headers={"X-Organization-Id": str(ADMIN_ORG_ID)},
+        )
         assert resp_create.status_code == 200
         nom_id = resp_create.json()["id"]
 

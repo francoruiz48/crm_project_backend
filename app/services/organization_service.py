@@ -1,5 +1,5 @@
 from typing import Optional
-from app.core.constans import INITIAL_ROUTES_STATES, INITIAL_STATES, SystemAuditLogAction
+from app.core.constans import INITIAL_ROUTES_STATES, INITIAL_STATES, SystemAuditLogAction, ADMIN_ORG_ID
 from app.models.lead_contact_state import LeadContactState
 from app.models.lead_field_section import LeadFieldSection
 from app.services.base_service import BaseService
@@ -9,6 +9,7 @@ from app.models.lead_state import LeadState
 from app.models.lead_state_transition import LeadStateTransition
 from app.core.security import UserContext
 from app.models.security_models import Role, UserOrganization
+
 
 class OrganizationService(BaseService):
     repository = OrganizationRepository
@@ -85,7 +86,7 @@ class OrganizationService(BaseService):
     @classmethod
     def _clone_default_roles_for_org(cls, session, org_id: int):
         """Clona las plantillas globales de roles (admin, agent, viewer) para la nueva org."""
-        templates = session.query(Role).filter_by(organization_id=None).all()
+        templates = session.query(Role).filter_by(organization_id=ADMIN_ORG_ID).all()
         cloned = {}
         for template in templates:
             existing = session.query(Role).filter_by(

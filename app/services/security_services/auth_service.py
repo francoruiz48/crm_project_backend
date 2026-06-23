@@ -3,6 +3,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
+from app.core.constans import ADMIN_ORG_ID
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -200,7 +201,7 @@ class AuthService:
             # Verificar que el rol existe (primero org-específico, luego global como fallback)
             role = (
                 uow.session.query(Role).filter_by(code=role_code, organization_id=organization_id).first()
-                or uow.session.query(Role).filter_by(code=role_code, organization_id=None).first()
+                or uow.session.query(Role).filter_by(code=role_code, organization_id=ADMIN_ORG_ID).first()
             )
             if not role:
                 raise HTTPException(

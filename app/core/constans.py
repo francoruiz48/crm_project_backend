@@ -2,6 +2,9 @@
 READ_ONLY = {"GET_ALL", "GET_ONE"}
 READ_WRITE = {"GET_ALL", "GET_ONE", "POST", "PUT", "DELETE", "ACTIVE", "PATCH"}
 
+# Organización del sistema (superadmins). Siempre tiene id=1 (primer seed).
+ADMIN_ORG_ID = 1
+
 DEFAULT_PAGE_SIZE = 50
 PAGE_SIZE_LIMIT = 999
 DATE_FORMAT = "%Y-%m-%d"
