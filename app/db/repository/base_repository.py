@@ -3,7 +3,7 @@ from typing import Dict, Any, Optional
 from math import ceil
 from sqlalchemy.orm import selectinload
 from app.core.exceptions.exceptions import AppException, NotFoundException
-from app.core.constans import DeleteStrategy
+from app.core.constans import DeleteStrategy, ADMIN_ORG_ID
 from app.core.error_messages import ERROR_DATABASE, ERROR_NOT_FOUND
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func, inspect, or_
@@ -31,28 +31,28 @@ class BaseRepository:
     def _apply_tenant_filter(cls, query, is_read_operation: bool = True):
         """
         is_read_operation:
-          - True (Lectura): Trae registros del tenant actual O globales (NULL).
-          - False (Escritura): Trae SOLO registros del tenant actual (protege los globales).
+          - True (Lectura): Trae registros del tenant actual O de la org admin (datos compartidos).
+          - False (Escritura): Trae SOLO registros del tenant actual (nunca toca la org admin).
         """
 
         if hasattr(cls.model, "organization_id"):
 
             org_id = TENANT_ORG_ID.get()
-            
-            # Si hay un tenant activo en el contexto
+
             if org_id is not None:
                 if is_read_operation:
-                    # LECTURA: Ve los suyos O los del sistema (NULL)
+                    # LECTURA: Ve los suyos + los de la org admin (nomencladores globales, etc.)
+                    # Si ya estamos en la org admin, el OR es redundante pero correcto.
                     query = query.filter(
                         or_(
                             cls.model.organization_id == org_id,
-                            cls.model.organization_id.is_(None)
+                            cls.model.organization_id == ADMIN_ORG_ID,
                         )
                     )
                 else:
-                    # ESCRITURA: Solo puede tocar los suyos. (Excluye los NULL)
+                    # ESCRITURA: Solo puede tocar sus propios registros.
                     query = query.filter(cls.model.organization_id == org_id)
-                    
+
         return query
 
     # ----------------- Helpers internos -----------------
@@ -733,7 +733,5 @@ class BaseRepository:
                         results["activated"].append(obj_id)
 
             except Exception as e:
-                # Si por algún motivo de base de datos falla la actualización
+                # Si por algun motivo de base de datos falla la actualizacion
                 results["failed"].append(obj_id)
-
-        return results

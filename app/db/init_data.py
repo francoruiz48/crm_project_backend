@@ -7,12 +7,13 @@ from app.models.lead_field_type import LeadFieldType
 from app.models.lead_flow import LeadFlow
 from app.models.nomenclator import Nomenclator
 from app.models.nomenclator_item import NomenclatorItem
-from app.models.security_models import Permission, Role, User
+from app.models.security_models import Permission, Role, User, UserOrganization
 from app.models.workspace import Workspace
 from app.models.lead_field_subtype import LeadFieldSubtype
 from app.models.lead_field_section import LeadFieldSection
 from app.models.organization import Organization
 from app.core.dictionaries import SYSTEM_ENTITIES_REGISTRY
+from app.core.constans import ADMIN_ORG_ID
 
 # -----------------------------------------------------------------------------
 # HELPER GENÉRICO
@@ -86,7 +87,11 @@ def run_seeds(db=None):
 
     try:
         print("🌱 Iniciando Seeders...")
-        
+
+        # 0. Organización del sistema (debe ser la primera, obtiene id=1)
+        seed_admin_org(db)
+        db.commit()
+
         # 1. RBAC (Usuarios, Roles, Permisos)
         seed_rbac(db)
         db.commit() # Commit por bloques para asegurar integridad
@@ -114,6 +119,31 @@ def run_seeds(db=None):
     finally:
         if should_close:
             db.close()
+
+# -----------------------------------------------------------------------------
+# 0. SEED ORGANIZACIÓN ADMIN DEL SISTEMA
+# -----------------------------------------------------------------------------
+def seed_admin_org(db):
+    """Crea la organización del sistema si no existe. Siempre debe tener id=ADMIN_ORG_ID."""
+    print("Procesando Organización del Sistema...")
+    org = db.query(Organization).filter_by(id=ADMIN_ORG_ID).first()
+    if not org:
+        org = Organization(
+            name="Sistema",
+            description="Organización interna del sistema.",
+        )
+        db.add(org)
+        db.flush()
+        if org.id != ADMIN_ORG_ID:
+            raise RuntimeError(
+                f"La org admin debería tener id={ADMIN_ORG_ID} pero obtuvo id={org.id}. "
+                "Asegurate de que la tabla organization esté vacía antes del primer seed."
+            )
+        print(f"   ✅ Organización 'Sistema' creada con id={org.id}")
+    else:
+        print(f"   ℹ️  Organización del sistema ya existe (id={org.id})")
+    return org
+
 
 # -----------------------------------------------------------------------------
 # 1. SEED LEAD FIELD TYPES
@@ -225,11 +255,15 @@ def seed_rbac(db):
 
     db.flush()
 
-    # --- 2. Roles del Sistema (Plantillas globales) ---
+    # --- 2. Roles del Sistema (Plantillas en org admin) ---
+    admin_org = db.query(Organization).filter_by(id=ADMIN_ORG_ID).first()
+    if not admin_org:
+        raise RuntimeError(f"No se encontró la organización admin (id={ADMIN_ORG_ID}). Ejecutá seed_admin_org primero.")
+
     def _get_or_create_system_role(name, code):
-        role = db.query(Role).filter_by(code=code, organization_id=None).first()
+        role = db.query(Role).filter_by(code=code, organization_id=ADMIN_ORG_ID).first()
         if not role:
-            role = Role(name=name, code=code, organization_id=None)
+            role = Role(name=name, code=code, organization_id=ADMIN_ORG_ID)
             db.add(role)
             db.flush()
         return role
@@ -290,7 +324,7 @@ def seed_rbac(db):
 
     db.flush()
 
-    # --- 3. Usuario SuperAdmin ---
+    # --- 3. Usuario SuperAdmin + membresía en org admin ---
     def _get_or_create_superadmin(email):
         from app.core.security import hash_password
         user = db.query(User).filter_by(email=email).first()
@@ -304,8 +338,21 @@ def seed_rbac(db):
             db.add(user)
             db.flush()
         elif not user.hashed_password:
-            # retrocompatibilidad: si ya existe sin password, se la asignamos
             user.hashed_password = hash_password("admin1234")
+
+        # Vincular superadmin a la org admin como owner (si no existe ya)
+        link = db.query(UserOrganization).filter_by(
+            user_id=user.id, organization_id=ADMIN_ORG_ID
+        ).first()
+        if not link:
+            link = UserOrganization(
+                user_id=user.id,
+                organization_id=ADMIN_ORG_ID,
+                is_owner=True,
+            )
+            db.add(link)
+            db.flush()
+
         return user
 
     _get_or_create_superadmin("admin@crm.com")
@@ -313,21 +360,22 @@ def seed_rbac(db):
     print(f"✅ RBAC Procesado. Se sincronizaron {len(SYSTEM_ENTITIES_REGISTRY)} entidades. Roles: admin, agent, viewer.")
 
 
-def get_or_create_nomenclator(db, name, parent_id=None):
-        nom = db.query(Nomenclator).filter_by(name=name).first()
-        if not nom:
-            nom = Nomenclator(name=name, parent_nomenclator_id=parent_id)
-            db.add(nom)
-            db.flush()
-        return nom
+def get_or_create_nomenclator(db, name, parent_id=None, org_id=ADMIN_ORG_ID):
+    nom = db.query(Nomenclator).filter_by(name=name, organization_id=org_id).first()
+    if not nom:
+        nom = Nomenclator(name=name, parent_nomenclator_id=parent_id, organization_id=org_id)
+        db.add(nom)
+        db.flush()
+    return nom
 
-def get_or_create_nomenclator_item(db, nomenclator_id, value, parent_id):
+def get_or_create_nomenclator_item(db, nomenclator_id, value, parent_id, org_id=ADMIN_ORG_ID):
     item = db.query(NomenclatorItem).filter_by(value=value, nomenclator_id=nomenclator_id).first()
     if not item:
         item = NomenclatorItem(
             value=value,
             nomenclator_id=nomenclator_id,
-            parent_item_id=parent_id
+            parent_item_id=parent_id,
+            organization_id=org_id,
         )
         db.add(item)
         db.flush()

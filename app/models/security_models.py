@@ -30,7 +30,7 @@ class Role(BaseModelDB):
     code = Column(String, nullable=False) 
     
     permissions = relationship("Permission", secondary=role_permissions, backref="roles")
-    organization_id = Column(Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=True)
+    organization_id = Column(Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False)
     organization = relationship("Organization")
 
     __table_args__ = (

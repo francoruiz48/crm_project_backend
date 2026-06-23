@@ -3,6 +3,7 @@ from unittest.mock import patch
 from app.models.security_models import User, UserOrganization, Role
 from app.models.team_member import TeamMember
 from app.models.team import Team
+from app.core.constans import ADMIN_ORG_ID
 from tests.helpers.api_helpers import ApiClient
 
 
@@ -14,7 +15,7 @@ def _make_user(db_session, name: str, email: str, is_superuser: bool = False) ->
 
 
 def _link_user_to_org(db_session, user: User, org_id: int, is_owner: bool = False, role_code: str = "admin") -> UserOrganization:
-    role = db_session.query(Role).filter_by(code=role_code, organization_id=None).first()
+    role = db_session.query(Role).filter_by(code=role_code, organization_id=ADMIN_ORG_ID).first()
     link = UserOrganization(user_id=user.id, organization_id=org_id, is_owner=is_owner)
     if role:
         link.roles = [role]
