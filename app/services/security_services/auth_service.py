@@ -78,7 +78,10 @@ class AuthService:
             # 2. Crear el usuario
             new_user = User(
                 name=data.name,
+                last_name=data.last_name,
                 email=data.email,
+                phone=getattr(data, "phone", None),
+                date_of_birth=getattr(data, "date_of_birth", None),
                 hashed_password=hash_password(data.password),
                 is_superuser=False,
             )

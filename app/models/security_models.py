@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, ForeignKey, Table, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, Integer, String, ForeignKey, Table, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.models.base_model import BaseModelDB
 
@@ -71,7 +71,10 @@ class User(BaseModelDB):
     __tablename__ = "user"
 
     name = Column(String, nullable=False)
+    last_name = Column(String, nullable=True)   # nullable para no romper filas existentes
     email = Column(String, unique=True, index=True, nullable=False)
+    phone = Column(String, nullable=True)
+    date_of_birth = Column(Date, nullable=True)
     hashed_password = Column(String, nullable=True)  # nullable para no romper seeds/tests existentes
     is_superuser = Column(Boolean, default=False)
     
