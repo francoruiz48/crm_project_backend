@@ -17,11 +17,12 @@ class LeadFlowService(BaseService):
         def do_create(uow):
             org_id = TENANT_ORG_ID.get()
             
-            # Validación: Nombre único por organización
+            # Validación: Nombre único por organización (solo entre flujos activos)
             if obj_in.name:
                 existing = uow.session.query(LeadFlow).filter(
                     LeadFlow.name.ilike(obj_in.name),
-                    LeadFlow.organization_id == org_id
+                    LeadFlow.organization_id == org_id,
+                    LeadFlow.active.is_(True)
                 ).first()
                 if existing:
                     raise HTTPException(
@@ -44,12 +45,13 @@ class LeadFlowService(BaseService):
             if not current_obj:
                 cls._not_found(obj_id)
 
-            # Validación: Nombre único en update
+            # Validación: Nombre único en update (solo entre flujos activos)
             if obj_in.name and obj_in.name.lower() != current_obj.name.lower():
                 existing = uow.session.query(LeadFlow).filter(
                     LeadFlow.name.ilike(obj_in.name),
                     LeadFlow.id != obj_id,
-                    LeadFlow.organization_id == org_id
+                    LeadFlow.organization_id == org_id,
+                    LeadFlow.active.is_(True)
                 ).first()
                 if existing:
                     raise HTTPException(

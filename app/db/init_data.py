@@ -7,12 +7,13 @@ from app.models.lead_field_type import LeadFieldType
 from app.models.lead_flow import LeadFlow
 from app.models.nomenclator import Nomenclator
 from app.models.nomenclator_item import NomenclatorItem
-from app.models.security_models import Permission, Role, User
+from app.models.security_models import Permission, Role, User, UserOrganization
 from app.models.workspace import Workspace
 from app.models.lead_field_subtype import LeadFieldSubtype
 from app.models.lead_field_section import LeadFieldSection
 from app.models.organization import Organization
 from app.core.dictionaries import SYSTEM_ENTITIES_REGISTRY
+from app.core.constans import ADMIN_ORG_ID
 
 # -----------------------------------------------------------------------------
 # HELPER GENÉRICO
@@ -86,7 +87,11 @@ def run_seeds(db=None):
 
     try:
         print("🌱 Iniciando Seeders...")
-        
+
+        # 0. Organización del sistema (debe ser la primera, obtiene id=1)
+        seed_admin_org(db)
+        db.commit()
+
         # 1. RBAC (Usuarios, Roles, Permisos)
         seed_rbac(db)
         db.commit() # Commit por bloques para asegurar integridad
@@ -105,9 +110,6 @@ def run_seeds(db=None):
         seed_nomenclator_sex(db)
         db.commit()
 
-        seed_test_tenants(db)
-        db.commit()
-
         print("🚀 Seeders finalizados correctamente.")
 
     except Exception as e:
@@ -117,6 +119,31 @@ def run_seeds(db=None):
     finally:
         if should_close:
             db.close()
+
+# -----------------------------------------------------------------------------
+# 0. SEED ORGANIZACIÓN ADMIN DEL SISTEMA
+# -----------------------------------------------------------------------------
+def seed_admin_org(db):
+    """Crea la organización del sistema si no existe. Siempre debe tener id=ADMIN_ORG_ID."""
+    print("Procesando Organización del Sistema...")
+    org = db.query(Organization).filter_by(id=ADMIN_ORG_ID).first()
+    if not org:
+        org = Organization(
+            name="Sistema",
+            description="Organización interna del sistema.",
+        )
+        db.add(org)
+        db.flush()
+        if org.id != ADMIN_ORG_ID:
+            raise RuntimeError(
+                f"La org admin debería tener id={ADMIN_ORG_ID} pero obtuvo id={org.id}. "
+                "Asegurate de que la tabla organization esté vacía antes del primer seed."
+            )
+        print(f"   ✅ Organización 'Sistema' creada con id={org.id}")
+    else:
+        print(f"   ℹ️  Organización del sistema ya existe (id={org.id})")
+    return org
+
 
 # -----------------------------------------------------------------------------
 # 1. SEED LEAD FIELD TYPES
@@ -185,9 +212,9 @@ def seed_rbac(db):
     print("Procesando RBAC Automático...")
 
     ACTIONS = {
-        "create": "Crear", 
-        "view": "Ver", 
-        "update": "Editar", 
+        "create": "Crear",
+        "view": "Ver",
+        "update": "Editar",
         "delete": "Eliminar"
     }
 
@@ -200,7 +227,7 @@ def seed_rbac(db):
 
     # --- 1. Generación Masiva de Permisos ---
     all_permissions = []
-    
+
     # Iteramos sobre nuestra Única Fuente de Verdad
     for entity_code, entity_info in SYSTEM_ENTITIES_REGISTRY.items():
         entity_name_visual = entity_info["name"]
@@ -212,134 +239,143 @@ def seed_rbac(db):
                 codename = f"{entity_code}:{action_code}"
                 name = f"{action_label} {entity_name_visual}"
                 all_permissions.append(_get_or_create_permission(codename, name))
-        
+
         elif crud_type == "READ_ONLY":
             # Genera solo: Ver
             codename = f"{entity_code}:view"
             name = f"Ver {entity_name_visual}"
             all_permissions.append(_get_or_create_permission(codename, name))
-        
+
         # Ambas (FULL y READ_ONLY) siempre tienen el permiso general de "Ver TODOS" (Listar)
         p_all = _get_or_create_permission(f"{entity_code}:view_all", f"Ver TODOS los registros de {entity_name_visual}")
         all_permissions.append(p_all)
 
+    # Permiso especial: invitar usuarios (no forma parte del CRUD estándar)
+    _get_or_create_permission("user:invite", "Invitar Usuarios a la Organización")
+
     db.flush()
 
-    # --- 2. Roles del Sistema (Plantillas globales) ---
+    # --- 2. Roles del Sistema (Plantillas en org admin) ---
+    admin_org = db.query(Organization).filter_by(id=ADMIN_ORG_ID).first()
+    if not admin_org:
+        raise RuntimeError(f"No se encontró la organización admin (id={ADMIN_ORG_ID}). Ejecutá seed_admin_org primero.")
+
     def _get_or_create_system_role(name, code):
-        role = db.query(Role).filter_by(code=code, organization_id=None).first()
+        role = db.query(Role).filter_by(code=code, organization_id=ADMIN_ORG_ID).first()
         if not role:
-            role = Role(name=name, code=code, organization_id=None)
+            role = Role(name=name, code=code, organization_id=ADMIN_ORG_ID)
             db.add(role)
             db.flush()
         return role
 
-    r_admin = _get_or_create_system_role("Admin Global", "admin")
-
-    # Asignamos TODOS los permisos al rol Admin Global
+    # -- Rol Admin: todos los permisos --
+    r_admin = _get_or_create_system_role("Administrador", "admin")
     all_db_perms = db.query(Permission).all()
     r_admin.permissions = all_db_perms
 
-    # --- 3. Usuario SuperAdmin ---
+    # -- Rol Agent: operaciones del día a día, sin configuración del sistema --
+    r_agent = _get_or_create_system_role("Agente", "agent")
+    AGENT_PERMS = [
+        # Leads
+        "lead:view", "lead:create", "lead:update", "lead:delete",
+        # Comentarios
+        "lead_comment:view", "lead_comment:create", "lead_comment:update", "lead_comment:delete",
+        # Vistas propias
+        "lead_view:view", "lead_view:view_all", "lead_view:create", "lead_view:update", "lead_view:delete",
+        # Etiquetas
+        "tag:view", "tag:view_all", "tag:create",
+        # Lectura de catálogos
+        "campaign:view", "workspace:view",
+        "lead_field:view", "lead_field:view_all",
+        "lead_field_type:view", "lead_field_type:view_all",
+        "lead_field_subtype:view", "lead_field_subtype:view_all",
+        "lead_state:view", "lead_state:view_all",
+        "lead_state_transition:view", "lead_state_transition:view_all",
+        "lead_flow:view", "lead_flow:view_all",
+        "nomenclator:view", "nomenclator:view_all",
+        "nomenclator_item:view", "nomenclator_item:view_all",
+        # Historial
+        "lead_state_history:view", "lead_state_history:view_all",
+        "lead_activity_history:view", "lead_activity_history:view_all",
+        # Equipo (solo lectura)
+        "team:view", "team_member:view", "team_member:view_all",
+    ]
+    agent_perms = db.query(Permission).filter(Permission.codename.in_(AGENT_PERMS)).all()
+    r_agent.permissions = agent_perms
+
+    # -- Rol Viewer: solo lectura --
+    r_viewer = _get_or_create_system_role("Visualizador", "viewer")
+    VIEWER_PERMS = [
+        "lead:view", "lead:view_all",
+        "lead_comment:view", "lead_comment:view_all",
+        "campaign:view", "workspace:view",
+        "lead_field:view", "lead_field:view_all",
+        "lead_state:view", "lead_state:view_all",
+        "lead_flow:view", "lead_flow:view_all",
+        "nomenclator:view", "nomenclator:view_all",
+        "nomenclator_item:view", "nomenclator_item:view_all",
+        "lead_state_history:view", "lead_state_history:view_all",
+        "lead_activity_history:view", "lead_activity_history:view_all",
+        "tag:view", "tag:view_all",
+        "team:view", "team_member:view",
+    ]
+    viewer_perms = db.query(Permission).filter(Permission.codename.in_(VIEWER_PERMS)).all()
+    r_viewer.permissions = viewer_perms
+
+    db.flush()
+
+    # --- 3. Usuario SuperAdmin + membresía en org admin ---
     def _get_or_create_superadmin(email):
+        from app.core.security import hash_password
         user = db.query(User).filter_by(email=email).first()
         if not user:
-            user = User(name="Super Admin", email=email, is_superuser=True)
+            user = User(
+                name="Super Admin",
+                email=email,
+                is_superuser=True,
+                hashed_password=hash_password("admin1234"),  # cambiar en producción
+            )
             db.add(user)
             db.flush()
+        elif not user.hashed_password:
+            user.hashed_password = hash_password("admin1234")
+
+        # Vincular superadmin a la org admin como owner (si no existe ya)
+        link = db.query(UserOrganization).filter_by(
+            user_id=user.id, organization_id=ADMIN_ORG_ID
+        ).first()
+        if not link:
+            link = UserOrganization(
+                user_id=user.id,
+                organization_id=ADMIN_ORG_ID,
+                is_owner=True,
+            )
+            db.add(link)
+            db.flush()
+
         return user
 
     _get_or_create_superadmin("admin@crm.com")
     db.commit()
-    print(f"✅ RBAC Procesado. Se sincronizaron {len(SYSTEM_ENTITIES_REGISTRY)} entidades.")
+    print(f"✅ RBAC Procesado. Se sincronizaron {len(SYSTEM_ENTITIES_REGISTRY)} entidades. Roles: admin, agent, viewer.")
 
-def seed_test_tenants(db):
-    print("🏢 Iniciando Seed de Organizaciones de Prueba (Multi-Tenant)...")
 
-    # 1. Crear Organizaciones
-    org_alpha = db.query(Organization).filter_by(name="Empresa Alpha").first()
-    if not org_alpha:
-        org_alpha = Organization(name="Empresa Alpha", description="Tenant A para pruebas")
-        db.add(org_alpha)
-    
-    org_beta = db.query(Organization).filter_by(name="Empresa Beta").first()
-    if not org_beta:
-        org_beta = Organization(name="Empresa Beta", description="Tenant B para pruebas")
-        db.add(org_beta)
-
-    db.flush() # Flush para que la DB les asigne los IDs
-
-    # 2. Obtener el rol global de Admin (creado previamente por seed_rbac)
-    role_base = db.query(Role).filter_by(code="admin", organization_id=None).first()
-    if not role_base:
-        print("⚠️ Advertencia: No se encontró el rol 'admin'. Asegúrate de ejecutar seed_rbac primero.")
-        return
-
-    # 3. Helper interno para crear al usuario y sus membresías
-    def _create_test_user(name, email, memberships_info):
-        """
-        memberships_info es una lista de tuplas: [(org_obj, role_obj), ...]
-        """
-        user = db.query(User).filter_by(email=email).first()
-        if not user:
-            # IMPORTANTE: is_superuser=False para que la seguridad actúe sobre ellos
-            user = User(name=name, email=email, is_superuser=False)
-            db.add(user)
-            db.flush()
-
-        for org_obj, role_obj in memberships_info:
-            from app.models.security_models import UserOrganization
-            
-            membership = db.query(UserOrganization).filter_by(
-                user_id=user.id, 
-                organization_id=org_obj.id
-            ).first()
-            
-            if not membership:
-                membership = UserOrganization(
-                    user_id=user.id,
-                    organization_id=org_obj.id,
-                    active=True
-                )
-                # Asignamos el rol a esta membresía específica
-                membership.roles = [role_obj]
-                db.add(membership)
-        
+def get_or_create_nomenclator(db, name, parent_id=None, org_id=ADMIN_ORG_ID):
+    nom = db.query(Nomenclator).filter_by(name=name, organization_id=org_id).first()
+    if not nom:
+        nom = Nomenclator(name=name, parent_nomenclator_id=parent_id, organization_id=org_id)
+        db.add(nom)
         db.flush()
-        return user
+    return nom
 
-    # 4. Crear los Usuarios de Prueba
-    
-    # A. Usuario de una sola empresa (Alpha)
-    _create_test_user("User Alpha", "user_alpha@test.com", [(org_alpha, role_base)])
-    
-    # B. Usuario de una sola empresa (Beta)
-    _create_test_user("User Beta", "user_beta@test.com", [(org_beta, role_base)])
-    
-    # C. Usuario Multi-Empresa (Alpha y Beta)
-    user_multi = _create_test_user("User Multi", "user_multi@test.com", [
-        (org_alpha, role_base), 
-        (org_beta, role_base)
-    ])
-
-    print("✅ Organizaciones y Usuarios de prueba creados con éxito.")
-
-
-def get_or_create_nomenclator(db, name, parent_id=None):
-        nom = db.query(Nomenclator).filter_by(name=name).first()
-        if not nom:
-            nom = Nomenclator(name=name, parent_nomenclator_id=parent_id)
-            db.add(nom)
-            db.flush()
-        return nom
-
-def get_or_create_nomenclator_item(db, nomenclator_id, value, parent_id):
+def get_or_create_nomenclator_item(db, nomenclator_id, value, parent_id, org_id=ADMIN_ORG_ID):
     item = db.query(NomenclatorItem).filter_by(value=value, nomenclator_id=nomenclator_id).first()
     if not item:
         item = NomenclatorItem(
             value=value,
             nomenclator_id=nomenclator_id,
-            parent_item_id=parent_id
+            parent_item_id=parent_id,
+            organization_id=org_id,
         )
         db.add(item)
         db.flush()
@@ -417,8 +453,3 @@ def seed_nomenclator_sex(db):
             value=item["value"],
             parent_id=None
         )
-
-
-
-
-

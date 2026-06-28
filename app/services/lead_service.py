@@ -617,11 +617,22 @@ class LeadService(BaseService):
             ).first()
 
             # 5. Motor de enrutamiento (determina equipo automático)
+            # Inyectamos los campos nativos conocidos al momento de creación
+            # (lead_obj no existe aún, por eso se enriquece manualmente)
+            native_ctx: dict = {
+                "__native__current_state_id": initial_state.id,
+                "__native__campaign_id":      campaign.id,
+            }
+            if obj_in.assigned_to_user_id is not None:
+                native_ctx["__native__assigned_to_user_id"] = obj_in.assigned_to_user_id
+            if obj_in.team_id is not None:
+                native_ctx["__native__team_id"] = obj_in.team_id
+
             assigned_team_id = RoutingRuleEvaluatorService.evaluate(
                 session=uow.session,
                 campaign_id=campaign.id,
                 organization_id=campaign.organization_id,
-                context_data=context_data,
+                context_data={**context_data, **native_ctx},
                 field_defs_list=current_campaign_defs,
                 lead_obj=None,
             )

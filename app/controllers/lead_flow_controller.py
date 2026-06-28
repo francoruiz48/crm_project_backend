@@ -15,7 +15,7 @@ class LeadFlowController(BaseController):
     schema_out = LeadFlowResponse
     schema_out_detail = LeadFlowDetailedResponse
 
-    enabled_methods = {"GET_ALL", "GET_ONE", "POST", "PUT", "DELETE"}
+    enabled_methods = {"GET_ALL", "GET_ONE", "POST", "PUT", "DELETE", "DEACTIVATE"}
 
     allowed_filter_fields = {"name", "description"}
 

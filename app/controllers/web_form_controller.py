@@ -10,7 +10,7 @@ class WebFormController(BaseController):
     schema_update = WebFormUpdate
     schema_out = WebFormResponse
     schema_out_detail = WebFormDetailedResponse
-    enabled_methods = READ_WRITE
+    enabled_methods = READ_WRITE | {"DEACTIVATE"}
 
     allowed_filter_fields = {"campaign_id", "name", "description"}
 

@@ -116,7 +116,7 @@ class LeadViewService(BaseService):
         return cls._execute(action="Actualizar Lead View", obj_id=obj_id, func=do_update)
 
     @classmethod
-    def delete(cls, obj_id: int, user_context: Optional[UserContext] = None):
+    def delete(cls, obj_id: int, user_context: Optional[UserContext] = None, force: bool = False):
         def do_delete(uow):
             current_view = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context, detailed=False)
             if not current_view:

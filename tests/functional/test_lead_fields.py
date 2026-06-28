@@ -555,8 +555,8 @@ def test_reorder_atomic_rollback_on_failure(api, db_session, initial_fields):
         [
             {"field_id": f1_id, "order": 99},
             {"field_id": 0, "order": 100} # ID inválido
-        ], 
-        expected_status=400
+        ],
+        expected_status=422  # Pydantic rechaza field_id=0 (gt=0) con 422
     )
 
     # Verificamos que el campo 1 SIGA teniendo su orden original (1)

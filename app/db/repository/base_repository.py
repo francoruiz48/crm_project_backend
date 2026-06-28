@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional
 from math import ceil
 from sqlalchemy.orm import selectinload
 from app.core.exceptions.exceptions import AppException, NotFoundException
+from app.core.constans import DeleteStrategy, ADMIN_ORG_ID
 from app.core.error_messages import ERROR_DATABASE, ERROR_NOT_FOUND
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func, inspect, or_
@@ -18,6 +19,11 @@ class BaseRepository:
     default_sort_column = "id"
     default_sort_asc = False
 
+    # --- Delete Strategy ---
+    # Ver DeleteStrategy en app/core/constans.py para documentación de cada variante.
+    delete_strategy: str = DeleteStrategy.HARD_DELETE_ALWAYS
+    delete_blockers: list = []   # relaciones que BLOQUEAN el hard delete (Variante E)
+
     # ===============================================================
     # Inyección automática de Tenant (Multi-empresa)
     # ===============================================================
@@ -25,28 +31,28 @@ class BaseRepository:
     def _apply_tenant_filter(cls, query, is_read_operation: bool = True):
         """
         is_read_operation:
-          - True (Lectura): Trae registros del tenant actual O globales (NULL).
-          - False (Escritura): Trae SOLO registros del tenant actual (protege los globales).
+          - True (Lectura): Trae registros del tenant actual O de la org admin (datos compartidos).
+          - False (Escritura): Trae SOLO registros del tenant actual (nunca toca la org admin).
         """
 
         if hasattr(cls.model, "organization_id"):
 
             org_id = TENANT_ORG_ID.get()
-            
-            # Si hay un tenant activo en el contexto
+
             if org_id is not None:
                 if is_read_operation:
-                    # LECTURA: Ve los suyos O los del sistema (NULL)
+                    # LECTURA: Ve los suyos + los de la org admin (nomencladores globales, etc.)
+                    # Si ya estamos en la org admin, el OR es redundante pero correcto.
                     query = query.filter(
                         or_(
                             cls.model.organization_id == org_id,
-                            cls.model.organization_id.is_(None)
+                            cls.model.organization_id == ADMIN_ORG_ID,
                         )
                     )
                 else:
-                    # ESCRITURA: Solo puede tocar los suyos. (Excluye los NULL)
+                    # ESCRITURA: Solo puede tocar sus propios registros.
                     query = query.filter(cls.model.organization_id == org_id)
-                    
+
         return query
 
     # ----------------- Helpers internos -----------------
@@ -435,71 +441,125 @@ class BaseRepository:
             session.rollback()
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
 
+    # ==========================================
+    # HELPERS DE BORRADO
+    # ==========================================
     @classmethod
-    def delete(cls, session, obj_id: int, user_context: Optional[UserContext] = None,) -> Dict[str, str]:
-        """
-        Intenta eliminar un objeto físicamente.
-        
-        Comportamiento:
-        Si hay dependencias (Error de Integridad o Validación):
-           - Si el modelo tiene campo 'active', realiza un Soft Delete (Deshabilitar).
-           - Si no tiene campo 'active', lanza el error original.
-           
-        Returns:
-            Dict con claves 'action' ('deleted' | 'disabled') y 'message'.
-        """
+    def _do_soft_delete(cls, session, obj, updated_by=None) -> Dict[str, str]:
+        """Establece active=False. Retorna {"action": "disabled"}."""
+        obj.active = False
+        if updated_by is not None and hasattr(obj, "updated_by"):
+            obj.updated_by = updated_by
+        session.add(obj)
+        session.flush()
+        return {"action": "disabled"}
 
-        updated_by = None
-        is_super_admin = False
-        is_owner = False
-        
-        if user_context is not None:
-            updated_by = user_context.user.id
-            is_super_admin = user_context.is_superuser
-            is_owner = user_context.is_owner
-
-        query = session.query(cls.model).filter(cls.model.id == obj_id)
-        # PASAMOS FALSE: Para asegurar que no pueda editar un registro global (NULL)
-        query = cls._apply_tenant_filter(query, is_read_operation=False)
-        obj = query.first()
-
-        if not obj:
-            raise NotFoundException(detail=f"{cls.model.__name__} no encontrado.")
-        
-
+    @classmethod
+    def _do_hard_delete(cls, session, obj) -> Dict[str, str]:
+        """Elimina físicamente. Lanza AppException si hay FK violation."""
         try:
             with session.begin_nested():
                 session.delete(obj)
                 session.flush()
-            
-            return {
-                "action": "deleted"
-            }
-
-        except (IntegrityError, AppException) as e:            
-            obj_fresh = session.get(cls.model, obj_id)
-            # Verificamos si el modelo soporta 'active' (Soft Delete)
-            if obj_fresh and hasattr(obj_fresh, 'active'):
-                obj_fresh.active = False
-                if updated_by is not None and hasattr(cls.model, "updated_by"):
-                    obj_fresh.updated_by = updated_by
-
-                session.add(obj_fresh)
-                session.flush()
-                session.refresh(obj_fresh)
-                
-                return {
-                    "action": "disabled"
-                }
-            
-            # Si no soporta 'active', no nos queda otra que fallar con el error original
-            if isinstance(e, IntegrityError):
-                cls._handle_integrity_error(e) # Esto lanza AppException
-            raise e # Relanzamos AppException original
-
+            return {"action": "deleted"}
+        except IntegrityError as e:
+            cls._handle_integrity_error(e)
         except Exception as e:
-            session.rollback()
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
+
+    @classmethod
+    def _check_blockers(cls, session, obj) -> list:
+        """
+        Verifica si hay registros en las relaciones de delete_blockers.
+        Retorna lista de dicts {"relation": ..., "count": ...} para los que tienen hijos.
+        """
+        from sqlalchemy import inspect as sa_inspect
+        blocked_by = []
+        inst = sa_inspect(type(obj))
+        for rel_name in cls.delete_blockers:
+            if rel_name not in inst.relationships:
+                continue
+            rel_prop = inst.relationships[rel_name]
+            child_model = rel_prop.mapper.class_
+            pairs = rel_prop.synchronize_pairs
+            if not pairs:
+                continue
+            local_col, remote_col = pairs[0]
+            parent_val = getattr(obj, local_col.key)
+            count = session.query(func.count()).select_from(child_model).filter(
+                remote_col == parent_val
+            ).scalar() or 0
+            if count > 0:
+                blocked_by.append({"relation": rel_name, "count": count})
+        return blocked_by
+
+    @classmethod
+    def delete(cls, session, obj_id: int, user_context: Optional[UserContext] = None, force: bool = False) -> Dict[str, str]:
+        """
+        Elimina un objeto según la estrategia configurada en delete_strategy:
+          HARD_DELETE_ALWAYS:      hard delete siempre
+          SOFT_DELETE_ALWAYS:      soft delete siempre
+          SOFT_DELETE_HARD_OPT:    soft por defecto, hard con force=True
+          PROTECTED:               nunca borrable
+          SMART_DELETE:            auto: sin blockers → hard delete, con blockers → soft delete
+          HARD_DELETE_WITH_TOGGLE: hard delete (deactivate via endpoint separado)
+        """
+        strategy = cls.delete_strategy
+        updated_by = user_context.user.id if user_context and user_context.user else None
+
+        # D: Protegido
+        if strategy == DeleteStrategy.PROTECTED:
+            raise AppException(detail="Este registro está protegido y no puede ser eliminado.")
+
+        query = session.query(cls.model).filter(cls.model.id == obj_id)
+        query = cls._apply_tenant_filter(query, is_read_operation=False)
+        obj = query.first()
+        if not obj:
+            raise NotFoundException(detail=f"{cls.model.__name__} no encontrado.")
+
+        # B: Siempre soft delete
+        if strategy == DeleteStrategy.SOFT_DELETE_ALWAYS:
+            return cls._do_soft_delete(session, obj, updated_by)
+
+        # A: Hard delete, 409 si FK violation
+        if strategy == DeleteStrategy.HARD_DELETE_ALWAYS:
+            return cls._do_hard_delete(session, obj)
+
+        # F: Hard delete (el toggle se maneja via deactivate())
+        if strategy == DeleteStrategy.HARD_DELETE_WITH_TOGGLE:
+            return cls._do_hard_delete(session, obj)
+
+        # C: Soft por defecto, hard con force=True
+        if strategy == DeleteStrategy.SOFT_DELETE_HARD_OPT:
+            if not force:
+                return cls._do_soft_delete(session, obj, updated_by)
+            return cls._do_hard_delete(session, obj)
+
+        # E: Auto-detect: sin blockers → hard delete, con blockers → soft delete
+        if strategy == DeleteStrategy.SMART_DELETE:
+            blocked = cls._check_blockers(session, obj)
+            if not blocked:
+                return cls._do_hard_delete(session, obj)
+            return cls._do_soft_delete(session, obj, updated_by)
+
+        # Fallback
+        return cls._do_hard_delete(session, obj)
+
+    @classmethod
+    def deactivate(cls, session, obj_id: int, user_context: Optional[UserContext] = None) -> Dict[str, str]:
+        """
+        Establece active=False explícitamente.
+        Disponible para estrategias B, C, E, F (cualquier entidad con campo active).
+        """
+        if not hasattr(cls.model, "active"):
+            raise AppException(detail=f"{cls.model.__name__} no soporta desactivación.")
+        updated_by = user_context.user.id if user_context and user_context.user else None
+        query = session.query(cls.model).filter(cls.model.id == obj_id)
+        query = cls._apply_tenant_filter(query, is_read_operation=False)
+        obj = query.first()
+        if not obj:
+            raise NotFoundException(detail=f"{cls.model.__name__} no encontrado.")
+        return cls._do_soft_delete(session, obj, updated_by)
 
     # ----------------- Upsert relaciones One-to-Many -----------------
     @classmethod
@@ -608,13 +668,13 @@ class BaseRepository:
                 results["deleted"].append(obj_id)
 
             except (IntegrityError, AppException) as e:
-                # Ocurrió un error (ej: FK restrict). Intentamos Soft Delete.
+                # Ocurrió un error. Aplicamos estrategia: si es B/C/E intentamos soft delete.
+                strategy = cls.delete_strategy
                 obj_fresh = session.get(cls.model, obj_id)
-                if obj_fresh and hasattr(obj_fresh, 'active'):
+                if obj_fresh and hasattr(obj_fresh, 'active') and strategy in (DeleteStrategy.SOFT_DELETE_ALWAYS, DeleteStrategy.SOFT_DELETE_HARD_OPT, DeleteStrategy.SMART_DELETE, DeleteStrategy.HARD_DELETE_WITH_TOGGLE):
                     obj_fresh.active = False
                     if updated_by is not None and hasattr(cls.model, "updated_by"):
                         obj_fresh.updated_by = updated_by
-
                     session.add(obj_fresh)
                     session.flush()
                     session.refresh(obj_fresh)
@@ -673,7 +733,5 @@ class BaseRepository:
                         results["activated"].append(obj_id)
 
             except Exception as e:
-                # Si por algún motivo de base de datos falla la actualización
+                # Si por algun motivo de base de datos falla la actualizacion
                 results["failed"].append(obj_id)
-
-        return results

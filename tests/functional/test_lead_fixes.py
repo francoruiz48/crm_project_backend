@@ -17,6 +17,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 from io import BytesIO
 
+from app.core.constans import ADMIN_ORG_ID
 from app.models.lead import Lead
 from app.models.lead_field import LeadField
 from app.models.lead_field_section import LeadFieldSection
@@ -300,8 +301,8 @@ class TestNomenclatorItemValidation:
         nom_b = Nomenclator(name="Nomenclador B", organization_id=org_id)
         db.add_all([nom_a, nom_b])
         db.flush()
-        item_a = NomenclatorItem(value="Opcion A", nomenclator_id=nom_a.id)
-        item_b = NomenclatorItem(value="Opcion B", nomenclator_id=nom_b.id)
+        item_a = NomenclatorItem(value="Opcion A", nomenclator_id=nom_a.id, organization_id=org_id)
+        item_b = NomenclatorItem(value="Opcion B", nomenclator_id=nom_b.id, organization_id=org_id)
         db.add_all([item_a, item_b])
         db.flush()
         return nom_a, nom_b, item_a, item_b
@@ -354,10 +355,10 @@ class TestNomenclatorItemValidation:
         org_id     = initial_structure["org_id"]
         section_id = initial_structure["section_id"]
 
-        global_nom = Nomenclator(name="Global Nom", organization_id=None)
+        global_nom = Nomenclator(name="Global Nom", organization_id=ADMIN_ORG_ID)
         db_session.add(global_nom)
         db_session.flush()
-        global_item = NomenclatorItem(value="Global Item", nomenclator_id=global_nom.id)
+        global_item = NomenclatorItem(value="Global Item", nomenclator_id=global_nom.id, organization_id=ADMIN_ORG_ID)
         db_session.add(global_item)
         db_session.flush()
 

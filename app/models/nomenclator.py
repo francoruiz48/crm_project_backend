@@ -13,5 +13,5 @@ class Nomenclator(BaseModelDB):
 
     items = relationship("NomenclatorItem", back_populates="nomenclator", cascade="all, delete-orphan")
 
-    organization_id = Column(Integer, ForeignKey("organization.id"), nullable=True)
+    organization_id = Column(Integer, ForeignKey("organization.id"), nullable=False)
     organization = relationship("Organization", foreign_keys=[organization_id])

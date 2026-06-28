@@ -10,7 +10,7 @@ class CampaignController(BaseController):
     schema_update = CampaignUpdate
     schema_out = CampaignResponse
     schema_out_detail = CampaignDetailedResponse
-    enabled_methods = READ_WRITE
+    enabled_methods = READ_WRITE | {"DEACTIVATE"}
     allowed_filter_fields = {"workspace_id", "name", "is_public", "lead_flow_id"}
 
 router = CampaignController.get_router()

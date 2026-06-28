@@ -1,7 +1,9 @@
 from typing import Optional
+from app.core.constans import DeleteStrategy
 from sqlalchemy.orm import aliased
 from sqlalchemy import cast, Float, or_, and_, func, insert, delete
 from app.db.repository.base_repository import BaseRepository
+from app.models.campaign import Campaign
 from app.models.lead import Lead
 from app.models.nomenclator_item import NomenclatorItem
 from app.models.team import Team
@@ -20,6 +22,7 @@ LEAD_NATIVE_FILTER_FIELDS = {
 
 class LeadRepository(BaseRepository):
     model = Lead
+    delete_strategy = DeleteStrategy.HARD_DELETE_ALWAYS
     schema_out = LeadResponse
     schema_out_detail = LeadDetailedResponse
     
@@ -69,23 +72,32 @@ class LeadRepository(BaseRepository):
         if user_context is None or user_context.user is None:
             return query
 
+        # Superadmin, owner o usuario con permiso explícito lead:view_all → sin filtro
         if user_context.is_superuser or user_context.is_owner:
+            return query
+
+        if "lead:view_all" in (user_context.permissions or []):
             return query
 
         consulted_by = user_context.user.id
 
+        # Join para filtro de equipo
         query = query.outerjoin(Team, cls.model.team_id == Team.id) \
                      .outerjoin(TeamMember, and_(Team.id == TeamMember.team_id, TeamMember.user_id == consulted_by))
 
+        # Join para filtro de campaña pública
+        query = query.outerjoin(Campaign, cls.model.campaign_id == Campaign.id)
+
         security_condition = or_(
-            cls.model.assigned_to_user_id == consulted_by,    # 1. Es mi lead directo
-            cls.model.created_by == consulted_by,             # 2. Yo mismo lo creé
+            Campaign.is_public.is_(True),                          # Campaña pública: visible para todos
+            cls.model.assigned_to_user_id == consulted_by,        # Es mi lead directo
+            cls.model.created_by == consulted_by,                  # Yo mismo lo creé
             and_(
-                TeamMember.id.isnot(None),               # 4. Pertenezco al equipo del lead
+                TeamMember.id.isnot(None),                         # Pertenezco al equipo del lead
                 or_(
-                    TeamMember.role == "MANAGER",        # -> Y soy el jefe
-                    Team.is_visibility_shared == True,   # -> O somos un equipo colaborativo
-                    cls.model.assigned_to_user_id.is_(None) # -> O está en mi equipo pero nadie lo tomó
+                    TeamMember.role == "MANAGER",                  # -> Y soy el jefe
+                    Team.is_visibility_shared == True,             # -> O somos un equipo colaborativo
+                    cls.model.assigned_to_user_id.is_(None)        # -> O está en mi equipo pero nadie lo tomó
                 )
             )
         )

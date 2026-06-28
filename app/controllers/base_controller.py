@@ -134,8 +134,8 @@ class BaseController:
 
         if "DELETE" in cls.enabled_methods:
             @router.delete("/{obj_id}", dependencies=cls._get_deps("delete"))
-            def delete(obj_id: int, user_context = Depends(get_current_user_roles)):
-                return cls.service.delete(obj_id, user_context=user_context)
+            def delete(obj_id: int, force: bool = Query(False, description="Hard delete forzado (solo estrategias C y E)"), user_context = Depends(get_current_user_roles)):
+                return cls.service.delete(obj_id, user_context=user_context, force=force)
             
         if "DELETE" in cls.enabled_methods:                
             @router.post("/bulk-delete", dependencies=cls._get_deps("delete"))
@@ -158,6 +158,12 @@ class BaseController:
                 if not payload.ids:
                     raise HTTPException(status_code=400, detail="Debe proporcionar al menos un ID para activar.")
                 return cls.service.bulk_set_active(payload.ids, user_context=user_context)
+
+        if "DEACTIVATE" in cls.enabled_methods:
+            @router.delete("/active/{obj_id}", dependencies=cls._get_deps("delete"))
+            def deactivate(obj_id: int, user_context = Depends(get_current_user_roles)):
+                """Desactiva (active=False) sin eliminar el registro."""
+                return cls.service.deactivate(obj_id, user_context=user_context)
             
         if "GET_ONE" in cls.enabled_methods:
             @router.get("/{obj_id}", 
