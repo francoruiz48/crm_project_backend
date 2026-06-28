@@ -129,7 +129,7 @@ def seed_admin_org(db):
     org = db.query(Organization).filter_by(id=ADMIN_ORG_ID).first()
     if not org:
         org = Organization(
-            name="Administrador",
+            name="Panel Global",
             description="Organización interna del sistema.",
         )
         db.add(org)
