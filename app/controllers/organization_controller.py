@@ -17,9 +17,6 @@ class OrganizationController(BaseController):
     @classmethod
     def _get_deps(cls, action: str):
         if action in ("create", "read"):
-            # Chicken-and-egg: para listar/crear organizaciones el usuario aún
-            # no tiene una org seleccionada, así que no puede tener X-Organization-Id.
-            # La autorización real se delega al servicio (filtra por membresía).
             return []
         return super()._get_deps(action)
 
