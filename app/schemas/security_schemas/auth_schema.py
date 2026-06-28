@@ -1,4 +1,6 @@
-from pydantic import BaseModel, EmailStr
+from datetime import date, timedelta
+from typing import Optional
+from pydantic import BaseModel, EmailStr, field_validator
 
 
 class LoginRequest(BaseModel):
@@ -8,8 +10,22 @@ class LoginRequest(BaseModel):
 
 class RegisterRequest(BaseModel):
     name: str
+    last_name: str
     email: EmailStr
     password: str
+    phone: Optional[str] = None
+    date_of_birth: Optional[date] = None
+
+    @field_validator("date_of_birth")
+    @classmethod
+    def must_be_18_or_older(cls, v: Optional[date]) -> Optional[date]:
+        if v is None:
+            return v
+        today = date.today()
+        age = today.year - v.year - ((today.month, today.day) < (v.month, v.day))
+        if age < 18:
+            raise ValueError("Debés tener al menos 18 años para registrarte.")
+        return v
 
 
 class TokenResponse(BaseModel):
