@@ -20,9 +20,11 @@ from faker import Faker
 # ---------------------------------------------------------------------------
 # CONFIGURACIÓN
 # ---------------------------------------------------------------------------
-BASE_URL = "http://localhost:8000"
-LOCALE    = "es_AR"
-fake      = Faker(LOCALE)
+BASE_URL      = "http://localhost:8000"
+SEED_EMAIL    = "francoruiz.admin@crm.com"
+SEED_PASSWORD = "ADQSilR4aAKCO%a^"
+LOCALE        = "es_AR"
+fake          = Faker(LOCALE)
 
 session = requests.Session()
 session.headers.update({"Content-Type": "application/json"})
@@ -48,6 +50,23 @@ def warn_calculated(field_name: str, expected, got):
     log(f"CALCULATED '{field_name}': esperado≈{expected}, obtenido={got}", "WARN", indent=6)
     if len(_calc_warnings) == MAX_CALC_WARNINGS:
         log("(Se alcanzó el límite de warnings de CALCULATED, no se emitirán más)", "WARN", indent=6)
+
+
+# ---------------------------------------------------------------------------
+# AUTENTICACIÓN
+# ---------------------------------------------------------------------------
+def login(email: str = SEED_EMAIL, password: str = SEED_PASSWORD):
+    r = requests.post(
+        f"{BASE_URL}/auth/login",
+        json={"email": email, "password": password},
+        headers={"Content-Type": "application/json"},
+    )
+    if r.status_code != 200:
+        log(f"Login fallido ({r.status_code}): {r.text}", "ERR")
+        raise SystemExit(1)
+    token = r.json()["access_token"]
+    session.headers.update({"Authorization": f"Bearer {token}"})
+    log(f"Autenticado como {email}", "OK")
 
 
 # ---------------------------------------------------------------------------
@@ -1695,6 +1714,7 @@ def run():
     print("=" * 65)
     start = time.time()
 
+    login()
     build_org_salud()
     #print()
     #build_org_inmobiliaria()

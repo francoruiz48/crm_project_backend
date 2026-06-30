@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
 from app.core.security import PermissionChecker, _get_current_user
+from app.db.session import get_db
 from app.models.security_models import User
 from app.schemas.security_schemas.auth_schema import (
     ChangePasswordRequest,
@@ -11,9 +13,32 @@ from app.schemas.security_schemas.auth_schema import (
     RegisterRequest,
     TokenResponse,
 )
+from app.schemas.security_schemas.user_schema import UserResponse, UserUpdate
 from app.services.security_services.auth_service import AuthService
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
+
+
+@router.get("/me", response_model=UserResponse)
+def me(current_user: User = Depends(_get_current_user)):
+    """Devuelve los datos del usuario autenticado."""
+    return current_user
+
+
+@router.put("/me", response_model=UserResponse)
+def update_me(
+    data: UserUpdate,
+    current_user: User = Depends(_get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Actualiza los datos del perfil del usuario autenticado."""
+    for field in ("name", "last_name", "email", "phone", "date_of_birth"):
+        value = getattr(data, field, None)
+        if value is not None:
+            setattr(current_user, field, value)
+    db.commit()
+    db.refresh(current_user)
+    return current_user
 
 
 @router.post("/register", response_model=TokenResponse)

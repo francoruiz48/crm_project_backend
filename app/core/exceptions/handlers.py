@@ -55,7 +55,10 @@ async def pydantic_exception_handler(request: Request, exc: RequestValidationErr
             message = f"El valor debe ser mayor o igual a {limit}."
 
         elif error_type == "value_error":
-             message = message.replace("Value error, ", "")
+            message = message.replace("Value error, ", "")
+            # EmailStr produce mensajes en inglés — los traducimos
+            if "valid email" in message.lower() or "email address" in message.lower():
+                message = "Ingresá un email válido."
 
         errors_list.append({
             "field": field_name,

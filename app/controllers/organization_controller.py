@@ -16,11 +16,7 @@ class OrganizationController(BaseController):
 
     @classmethod
     def _get_deps(cls, action: str):
-        if action == "create":
-            # Cualquier usuario autenticado puede crear su primera organización.
-            # El límite (1 org por usuario no-superadmin) se valida en OrganizationService.
-            # Retornar deps vacíos evita el problema chicken-and-egg:
-            # el usuario necesitaría pertenecer a una org para tener permiso de crear una.
+        if action in ("create", "read"):
             return []
         return super()._get_deps(action)
 

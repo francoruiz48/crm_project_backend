@@ -129,7 +129,7 @@ def seed_admin_org(db):
     org = db.query(Organization).filter_by(id=ADMIN_ORG_ID).first()
     if not org:
         org = Organization(
-            name="Sistema",
+            name="Panel Global",
             description="Organización interna del sistema.",
         )
         db.add(org)
@@ -324,21 +324,22 @@ def seed_rbac(db):
 
     db.flush()
 
-    # --- 3. Usuario SuperAdmin + membresía en org admin ---
-    def _get_or_create_superadmin(email):
+    # --- 3. Usuarios SuperAdmin + membresía en org admin ---
+    def _get_or_create_superadmin(name, last_name, email, password):
         from app.core.security import hash_password
         user = db.query(User).filter_by(email=email).first()
         if not user:
             user = User(
-                name="Super Admin",
+                name=name,
+                last_name=last_name,
                 email=email,
                 is_superuser=True,
-                hashed_password=hash_password("admin1234"),  # cambiar en producción
+                hashed_password=hash_password(password),
             )
             db.add(user)
             db.flush()
         elif not user.hashed_password:
-            user.hashed_password = hash_password("admin1234")
+            user.hashed_password = hash_password(password)
 
         # Vincular superadmin a la org admin como owner (si no existe ya)
         link = db.query(UserOrganization).filter_by(
@@ -355,7 +356,8 @@ def seed_rbac(db):
 
         return user
 
-    _get_or_create_superadmin("admin@crm.com")
+    _get_or_create_superadmin("Franco",  "Ruiz",   "francoruiz.admin@crm.com",   "ADQSilR4aAKCO%a^")
+    _get_or_create_superadmin("Gonzalo", "Maunas", "gonzalomaunas.admin@crm.com", "e&Kr**JtgoK5aNmy")
     db.commit()
     print(f"✅ RBAC Procesado. Se sincronizaron {len(SYSTEM_ENTITIES_REGISTRY)} entidades. Roles: admin, agent, viewer.")
 
