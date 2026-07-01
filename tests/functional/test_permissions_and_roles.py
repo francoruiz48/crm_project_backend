@@ -242,6 +242,7 @@ class TestUserInvitePermission:
 
         admin_user = User(
             name="Admin Inviter",
+            last_name="Test",
             email="admin_inviter@test.com",
             hashed_password=hash_password("pass123"),
         )
@@ -272,6 +273,7 @@ class TestUserInvitePermission:
 
         agent_user = User(
             name="Agent No Invite",
+            last_name="Test",
             email="agent_noinvite@test.com",
             hashed_password=hash_password("pass123"),
         )
@@ -301,6 +303,7 @@ class TestUserInvitePermission:
 
         admin_user = User(
             name="Admin Bad Role",
+            last_name="Test",
             email="admin_badrole@test.com",
             hashed_password=hash_password("pass123"),
         )
@@ -330,6 +333,7 @@ class TestUserInvitePermission:
 
         admin_user = User(
             name="Admin Accept",
+            last_name="Test",
             email="admin_accept@test.com",
             hashed_password=hash_password("pass123"),
         )
@@ -355,11 +359,16 @@ class TestUserInvitePermission:
         assert resp_invite.status_code == 200
         invite_token = resp_invite.json()["invite_token"]
 
-        # Aceptar la invitación
-        resp_accept = plain_client.post(
-            f"/auth/accept-invite?invite_token={invite_token}&name=Invitee&password=pass1234"
-        )
+        # Usuario nuevo → se registra con el invite_token en el body
+        resp_accept = plain_client.post("/auth/register", json={
+            "name": "Invitee",
+            "last_name": "Test",
+            "email": "invitee_role@test.com",
+            "password": "Pass1234ab",
+            "invite_token": invite_token,
+        })
         assert resp_accept.status_code == 200
+        assert resp_accept.json().get("invite_warning") is None
 
         # Verificar que el rol asignado es el agent de la org (no el global)
         db_session.expire_all()
@@ -383,6 +392,7 @@ class TestUserInvitePermission:
 
         admin_user = User(
             name="Admin Default",
+            last_name="Test",
             email="admin_default@test.com",
             hashed_password=hash_password("pass123"),
         )
@@ -408,10 +418,15 @@ class TestUserInvitePermission:
         assert resp_invite.status_code == 200
         invite_token = resp_invite.json()["invite_token"]
 
-        resp_accept = plain_client.post(
-            f"/auth/accept-invite?invite_token={invite_token}&name=Default&password=pass1234"
-        )
+        resp_accept = plain_client.post("/auth/register", json={
+            "name": "Default",
+            "last_name": "Test",
+            "email": "default_invitee@test.com",
+            "password": "Pass1234ab",
+            "invite_token": invite_token,
+        })
         assert resp_accept.status_code == 200
+        assert resp_accept.json().get("invite_warning") is None
 
         db_session.expire_all()
         new_user = db_session.query(User).filter_by(email="default_invitee@test.com").first()

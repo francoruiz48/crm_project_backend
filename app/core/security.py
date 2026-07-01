@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -25,6 +26,37 @@ def hash_password(plain_password: str) -> str:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
+
+
+# ---------------------------------------------------------------------------
+# Política de contraseñas
+# ---------------------------------------------------------------------------
+# Única fuente de verdad para "contraseña segura": la usan tanto el registro
+# (RegisterRequest.password) como el cambio de contraseña
+# (ChangePasswordRequest.new_password). Para endurecer o relajar la regla,
+# alcanza con tocar esta función — no hay que buscar duplicados en otro lado.
+MIN_PASSWORD_LENGTH = 10
+MAX_PASSWORD_LENGTH = 72  # bcrypt trunca (e ignora) todo lo que exceda 72 bytes
+
+
+def validate_password_strength(password: str) -> str:
+    """
+    Exige: longitud mínima, al menos una mayúscula, una minúscula y un número.
+    Pensada para usarse como @field_validator en los schemas de Pydantic:
+    devuelve la contraseña si es válida, o lanza ValueError con un mensaje
+    en español (el handler global lo traduce al formato estándar de error).
+    """
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise ValueError(f"La contraseña debe tener al menos {MIN_PASSWORD_LENGTH} caracteres.")
+    if len(password) > MAX_PASSWORD_LENGTH:
+        raise ValueError(f"La contraseña no puede tener más de {MAX_PASSWORD_LENGTH} caracteres.")
+    if not re.search(r"[A-Z]", password):
+        raise ValueError("La contraseña debe tener al menos una letra mayúscula.")
+    if not re.search(r"[a-z]", password):
+        raise ValueError("La contraseña debe tener al menos una letra minúscula.")
+    if not re.search(r"[0-9]", password):
+        raise ValueError("La contraseña debe tener al menos un número.")
+    return password
 
 
 # ---------------------------------------------------------------------------

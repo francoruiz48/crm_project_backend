@@ -50,13 +50,13 @@ def registered_user(plain_client):
         "name": "Test User",
         "last_name": "Security",
         "email": "testuser@security.com",
-        "password": "password123",
+        "password": "Password123",
     })
     assert resp.status_code == 200, f"Register falló: {resp.text}"
     tokens = resp.json()
     return {
         "email": "testuser@security.com",
-        "password": "password123",
+        "password": "Password123",
         "access_token": tokens["access_token"],
         "refresh_token": tokens["refresh_token"],
     }
@@ -72,7 +72,7 @@ class TestRegister:
             "name": "Franco",
             "last_name": "Ruiz",
             "email": "franco@newuser.com",
-            "password": "securepass123",
+            "password": "Securepass123",
         })
         assert resp.status_code == 200
         data = resp.json()
@@ -81,7 +81,7 @@ class TestRegister:
         assert data["token_type"] == "bearer"
 
     def test_register_duplicate_email(self, plain_client):
-        payload = {"name": "Duplicado", "last_name": "Test", "email": "dup@test.com", "password": "pass123"}
+        payload = {"name": "Duplicado", "last_name": "Test", "email": "dup@test.com", "password": "Pass123456"}
         plain_client.post("/auth/register", json=payload)
         resp = plain_client.post("/auth/register", json=payload)
         assert resp.status_code == 400
@@ -96,6 +96,34 @@ class TestRegister:
         # pydantic_exception_handler devuelve 422 para errores de schema
         assert resp.status_code == 422
 
+    @pytest.mark.parametrize("weak_password", [
+        "abc123",        # muy corta (menos de 10)
+        "password12345", # sin mayúscula
+        "PASSWORD12345", # sin minúscula
+        "Passwordabcde",  # sin número
+    ])
+    def test_register_rejects_weak_password(self, plain_client, weak_password):
+        """La política de contraseñas (10+ caracteres, mayúscula, minúscula y número) aplica en el registro."""
+        resp = plain_client.post("/auth/register", json={
+            "name": "Debil",
+            "last_name": "Password",
+            "email": f"debil_{len(weak_password)}@test.com",
+            "password": weak_password,
+        })
+        assert resp.status_code == 422
+        fields = [e["field"] for e in resp.json()["detail"]]
+        assert "password" in fields
+
+    def test_register_accepts_strong_password(self, plain_client):
+        """Contraparte del test anterior: una contraseña que cumple la política sí registra."""
+        resp = plain_client.post("/auth/register", json={
+            "name": "Fuerte",
+            "last_name": "Password",
+            "email": "fuerte@test.com",
+            "password": "Fuerte1234",
+        })
+        assert resp.status_code == 200
+
 
 # ---------------------------------------------------------------------------
 # LOGIN
@@ -104,7 +132,7 @@ class TestRegister:
 class TestLogin:
     def test_login_success(self, plain_client, db_session):
         # Crear usuario con password hasheada directamente
-        user = User(name="Login User", email="login@test.com",
+        user = User(name="Login User", last_name="Test", email="login@test.com",
                     hashed_password=hash_password("mypass123"))
         db_session.add(user)
         db_session.commit()
@@ -119,7 +147,7 @@ class TestLogin:
         assert "refresh_token" in data
 
     def test_login_wrong_password(self, plain_client, db_session):
-        user = User(name="Wrong Pass", email="wrongpass@test.com",
+        user = User(name="Wrong Pass", last_name="Test", email="wrongpass@test.com",
                     hashed_password=hash_password("correct"))
         db_session.add(user)
         db_session.commit()
@@ -138,7 +166,7 @@ class TestLogin:
         assert resp.status_code == 401
 
     def test_login_inactive_user(self, plain_client, db_session):
-        user = User(name="Inactive", email="inactive@test.com",
+        user = User(name="Inactive", last_name="Test", email="inactive@test.com",
                     hashed_password=hash_password("pass123"), active=False)
         db_session.add(user)
         db_session.commit()
@@ -151,7 +179,7 @@ class TestLogin:
 
     def test_login_user_without_password(self, plain_client, db_session):
         """Usuario creado sin password (ej: por seed antiguo) no puede logearse."""
-        user = User(name="No Pass", email="nopass@test.com", hashed_password=None)
+        user = User(name="No Pass", last_name="Test", email="nopass@test.com", hashed_password=None)
         db_session.add(user)
         db_session.commit()
 
@@ -233,7 +261,7 @@ class TestInvite:
         db_session.add(org)
         db_session.flush()
 
-        owner = User(name="Owner", email="owner@invite.com",
+        owner = User(name="Owner", last_name="Test", email="owner@invite.com",
                      hashed_password=hash_password("ownerpass"))
         db_session.add(owner)
         db_session.flush()
@@ -268,12 +296,18 @@ class TestInvite:
         assert resp_invite.status_code == 200
         invite_token = resp_invite.json()["invite_token"]
 
-        # 4. Aceptar invitación
-        resp_accept = plain_client.post(
-            f"/auth/accept-invite?invite_token={invite_token}&name=Invitado&password=pass1234"
-        )
+        # 4. Usuario nuevo → se registra normalmente, con el invite_token en el body
+        #    (el que invita no elige nombre/apellido/contraseña, eso lo define el invitado).
+        resp_accept = plain_client.post("/auth/register", json={
+            "name": "Invitado",
+            "last_name": "Test",
+            "email": "invited@test.com",
+            "password": "Pass1234ab",
+            "invite_token": invite_token,
+        })
         assert resp_accept.status_code == 200
         assert "access_token" in resp_accept.json()
+        assert resp_accept.json().get("invite_warning") is None
 
         # 5. Verificar que el usuario fue creado y vinculado a la org
         db_session.expire_all()
@@ -284,13 +318,147 @@ class TestInvite:
         ).first()
         assert membership is not None
 
+    def test_accept_invite_existing_user_joins_org(self, plain_client, db_session):
+        """Un usuario que YA tiene cuenta usa /auth/accept-invite (autenticado) para unirse a otra org."""
+        # 1. Crear org + owner que invita
+        org = Organization(name="Org Invite Existente")
+        db_session.add(org)
+        db_session.flush()
+
+        owner = User(name="Owner", last_name="Test", email="owner2@invite.com",
+                     hashed_password=hash_password("ownerpass"))
+        db_session.add(owner)
+        db_session.flush()
+
+        link = UserOrganization(user_id=owner.id, organization_id=org.id, is_owner=True)
+        db_session.add(link)
+        db_session.flush()
+
+        from app.models.security_models import Role
+        admin_role = db_session.query(Role).filter_by(code="admin", organization_id=ADMIN_ORG_ID).first()
+        if admin_role:
+            link.roles = [admin_role]
+
+        # 2. Usuario ya existente (registrado antes, sin relación con esta org)
+        existing = User(name="Ya Existo", last_name="Test", email="yaexisto@test.com",
+                         hashed_password=hash_password("mipass123"))
+        db_session.add(existing)
+        db_session.commit()
+
+        # 3. Owner invita al email del usuario existente
+        resp_login_owner = plain_client.post("/auth/login", json={
+            "email": "owner2@invite.com", "password": "ownerpass",
+        })
+        owner_token = resp_login_owner.json()["access_token"]
+
+        resp_invite = plain_client.post(
+            "/auth/invite",
+            json={"email": "yaexisto@test.com", "organization_id": org.id},
+            headers={
+                "Authorization": f"Bearer {owner_token}",
+                "X-Organization-Id": str(org.id),
+            },
+        )
+        assert resp_invite.status_code == 200
+        invite_token = resp_invite.json()["invite_token"]
+
+        # 4. El usuario existente se loguea con SU propia contraseña (no la elige quien invita)
+        resp_login_existing = plain_client.post("/auth/login", json={
+            "email": "yaexisto@test.com", "password": "mipass123",
+        })
+        assert resp_login_existing.status_code == 200
+        existing_token = resp_login_existing.json()["access_token"]
+
+        # 5. Acepta la invitación ya autenticado, sin mandar contraseña
+        resp_accept = plain_client.post(
+            "/auth/accept-invite",
+            json={"invite_token": invite_token},
+            headers={"Authorization": f"Bearer {existing_token}"},
+        )
+        assert resp_accept.status_code == 200
+        assert resp_accept.json()["organization_id"] == org.id
+
+        db_session.expire_all()
+        membership = db_session.query(UserOrganization).filter_by(
+            user_id=existing.id, organization_id=org.id
+        ).first()
+        assert membership is not None
+
+    def test_accept_invite_rejects_mismatched_email(self, plain_client, db_session):
+        """Si el token es para un email distinto al usuario autenticado, se rechaza con 403."""
+        org = Organization(name="Org Invite Mismatch")
+        db_session.add(org)
+        db_session.flush()
+
+        owner = User(name="Owner", last_name="Test", email="owner3@invite.com",
+                     hashed_password=hash_password("ownerpass"))
+        db_session.add(owner)
+        db_session.flush()
+
+        link = UserOrganization(user_id=owner.id, organization_id=org.id, is_owner=True)
+        db_session.add(link)
+        db_session.flush()
+
+        from app.models.security_models import Role
+        admin_role = db_session.query(Role).filter_by(code="admin", organization_id=ADMIN_ORG_ID).first()
+        if admin_role:
+            link.roles = [admin_role]
+
+        # Otro usuario, ajeno a la invitación
+        intruder = User(name="Intruso", last_name="Test", email="intruso@test.com",
+                         hashed_password=hash_password("intrusopass"))
+        db_session.add(intruder)
+        db_session.commit()
+
+        resp_login_owner = plain_client.post("/auth/login", json={
+            "email": "owner3@invite.com", "password": "ownerpass",
+        })
+        owner_token = resp_login_owner.json()["access_token"]
+
+        resp_invite = plain_client.post(
+            "/auth/invite",
+            json={"email": "destinatario@test.com", "organization_id": org.id},
+            headers={
+                "Authorization": f"Bearer {owner_token}",
+                "X-Organization-Id": str(org.id),
+            },
+        )
+        assert resp_invite.status_code == 200
+        invite_token = resp_invite.json()["invite_token"]
+
+        resp_login_intruder = plain_client.post("/auth/login", json={
+            "email": "intruso@test.com", "password": "intrusopass",
+        })
+        intruder_token = resp_login_intruder.json()["access_token"]
+
+        resp_accept = plain_client.post(
+            "/auth/accept-invite",
+            json={"invite_token": invite_token},
+            headers={"Authorization": f"Bearer {intruder_token}"},
+        )
+        assert resp_accept.status_code == 403
+
+    def test_register_with_invalid_invite_token_still_creates_account(self, plain_client, db_session):
+        """Un invite_token roto/vencido no debe impedir el registro, pero debe avisar por qué no se unió a la org."""
+        resp = plain_client.post("/auth/register", json={
+            "name": "Cuenta",
+            "last_name": "Suelta",
+            "email": "cuentasuelta@test.com",
+            "password": "Pass1234ab",
+            "invite_token": "esto-no-es-un-jwt-valido",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "access_token" in data
+        assert data.get("invite_warning") is not None
+
     def test_invite_outsider_cannot_invite(self, plain_client, db_session):
         """Un usuario que no pertenece a la org no puede invitar."""
         org = Organization(name="Org Ajena")
         db_session.add(org)
         db_session.flush()
 
-        outsider = User(name="Outsider", email="outsider@noinvite.com",
+        outsider = User(name="Outsider", last_name="Test", email="outsider@noinvite.com",
                         hashed_password=hash_password("pass123"))
         db_session.add(outsider)
         db_session.commit()
@@ -311,6 +479,29 @@ class TestInvite:
             },
         )
         assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# CAMBIO DE CONTRASEÑA — misma política que el registro
+# ---------------------------------------------------------------------------
+
+class TestChangePassword:
+    def test_change_password_rejects_weak_new_password(self, client):
+        """change-password usa la misma validate_password_strength que /auth/register (fuente única)."""
+        resp = client.post("/auth/change-password", json={
+            "current_password": "ADQSilR4aAKCO%a^",
+            "new_password": "debil123",
+        })
+        assert resp.status_code == 422
+        fields = [e["field"] for e in resp.json()["detail"]]
+        assert "new_password" in fields
+
+    def test_change_password_accepts_strong_new_password(self, client):
+        resp = client.post("/auth/change-password", json={
+            "current_password": "ADQSilR4aAKCO%a^",
+            "new_password": "NuevaClave123",
+        })
+        assert resp.status_code == 200
 
 
 # ---------------------------------------------------------------------------
@@ -479,9 +670,9 @@ class TestUsersInOrg:
         db_session.add(org)
         db_session.flush()
 
-        user1 = User(name="Member 1", email="m1@test.com",
+        user1 = User(name="Member 1", last_name="Test", email="m1@test.com",
                      hashed_password=hash_password("pass123"))
-        user2 = User(name="Member 2", email="m2@test.com",
+        user2 = User(name="Member 2", last_name="Test", email="m2@test.com",
                      hashed_password=hash_password("pass123"))
         db_session.add_all([user1, user2])
         db_session.flush()
@@ -510,7 +701,7 @@ class TestUsersInOrg:
         db_session.add(org)
         db_session.flush()
 
-        outsider = User(name="Outsider", email="outsider@members.com",
+        outsider = User(name="Outsider", last_name="Test", email="outsider@members.com",
                         hashed_password=hash_password("pass123"))
         db_session.add(outsider)
         db_session.commit()
@@ -532,7 +723,7 @@ class TestUsersInOrg:
         db_session.add(org)
         db_session.flush()
 
-        user = User(name="Schema User", email="schema@test.com",
+        user = User(name="Schema User", last_name="Test", email="schema@test.com",
                     hashed_password=hash_password("pass123"), is_superuser=True)
         db_session.add(user)
         db_session.flush()

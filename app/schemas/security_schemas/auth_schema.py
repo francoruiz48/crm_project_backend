@@ -2,6 +2,8 @@ from datetime import date, timedelta
 from typing import Optional
 from pydantic import BaseModel, EmailStr, field_validator
 
+from app.core.security import validate_password_strength
+
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -15,6 +17,7 @@ class RegisterRequest(BaseModel):
     password: str
     phone: Optional[str] = None
     date_of_birth: Optional[date] = None
+    invite_token: Optional[str] = None  # si viene de un link de invitación, une a la org automáticamente
 
     @field_validator("date_of_birth")
     @classmethod
@@ -27,12 +30,18 @@ class RegisterRequest(BaseModel):
             raise ValueError("Debés tener al menos 18 años para registrarte.")
         return v
 
+    @field_validator("password")
+    @classmethod
+    def password_must_be_strong(cls, v: str) -> str:
+        return validate_password_strength(v)
+
 
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
     expires_in: int  # segundos hasta que expira el access token
+    invite_warning: Optional[str] = None  # informativo: se completó el registro pero no se pudo unir a la org
 
 
 class RefreshRequest(BaseModel):
@@ -51,6 +60,20 @@ class InviteResponse(BaseModel):
     message: str
 
 
+class AcceptInviteRequest(BaseModel):
+    invite_token: str
+
+
+class AcceptInviteResponse(BaseModel):
+    message: str
+    organization_id: int
+
+
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def new_password_must_be_strong(cls, v: str) -> str:
+        return validate_password_strength(v)

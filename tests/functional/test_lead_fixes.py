@@ -39,7 +39,7 @@ from app.models.team import Team
 # =============================================================================
 
 def _make_user(db, name, email):
-    u = User(name=name, email=email)
+    u = User(name=name, last_name="Test", email=email)
     db.add(u)
     db.flush()
     return u
