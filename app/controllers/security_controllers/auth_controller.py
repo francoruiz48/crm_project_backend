@@ -5,6 +5,8 @@ from app.core.security import PermissionChecker, _get_current_user
 from app.db.session import get_db
 from app.models.security_models import User
 from app.schemas.security_schemas.auth_schema import (
+    AcceptInviteRequest,
+    AcceptInviteResponse,
     ChangePasswordRequest,
     InviteRequest,
     InviteResponse,
@@ -89,11 +91,17 @@ def change_password(
     return AuthService.change_password(data, current_user)
 
 
-@router.post("/accept-invite", response_model=TokenResponse)
-def accept_invite(invite_token: str, name: str, password: str):
-    """El usuario invitado acepta la invitación y crea su cuenta (o se une si ya tiene cuenta)."""
+@router.post("/accept-invite", response_model=AcceptInviteResponse)
+def accept_invite(
+    data: AcceptInviteRequest,
+    current_user: User = Depends(_get_current_user),
+):
+    """
+    Un usuario YA AUTENTICADO usa un invite_token para unirse a la organización
+    indicada. Para usuarios nuevos, el alta se hace vía /auth/register
+    (incluyendo invite_token en el body), no por acá.
+    """
     return AuthService.accept_invite(
-        invite_token=invite_token,
-        name=name,
-        password=password,
+        invite_token=data.invite_token,
+        current_user=current_user,
     )

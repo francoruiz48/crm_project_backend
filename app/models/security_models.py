@@ -71,7 +71,7 @@ class User(BaseModelDB):
     __tablename__ = "user"
 
     name = Column(String, nullable=False)
-    last_name = Column(String, nullable=True)   # nullable para no romper filas existentes
+    last_name = Column(String, nullable=False)   # obligatorio: ver docs/autenticacion.md §11
     email = Column(String, unique=True, index=True, nullable=False)
     phone = Column(String, nullable=True)
     date_of_birth = Column(Date, nullable=True)

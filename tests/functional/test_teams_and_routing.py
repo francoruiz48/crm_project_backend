@@ -26,7 +26,7 @@ def two_users(db_session, initial_structure, api):
     _link_user_to_org(db_session, user_a, org_id)
     _link_user_to_org(db_session, user_b, org_id)
     db_session.commit()
-    superadmin = db_session.query(User).filter_by(email="admin@crm.com").first()
+    superadmin = db_session.query(User).filter_by(email="francoruiz.admin@crm.com").first()
     return {
         "manager":    user_a,
         "agent":      user_b,
@@ -41,7 +41,7 @@ def two_users(db_session, initial_structure, api):
 
 def test_create_team_adds_creator_as_manager(api, db_session):
     """El creador de un equipo queda automáticamente como MANAGER."""
-    superadmin = db_session.query(User).filter_by(email="admin@crm.com").first()
+    superadmin = db_session.query(User).filter_by(email="francoruiz.admin@crm.com").first()
     team = api.create_team(name="Equipo Auto-Manager")
     assert team["id"] > 0
     db_session.expire_all()
@@ -78,7 +78,7 @@ def test_team_same_name_different_orgs_allowed(api, db_session):
 
 def test_duplicate_member_rejected(api, db_session):
     """No se puede agregar al mismo usuario dos veces al mismo equipo."""
-    superadmin = db_session.query(User).filter_by(email="admin@crm.com").first()
+    superadmin = db_session.query(User).filter_by(email="francoruiz.admin@crm.com").first()
     team = api.create_team("Equipo Duplicado")
     # El superadmin ya está como MANAGER (auto-agregado al crear el equipo)
     api.add_team_member(team["id"], user_id=superadmin.id, role="AGENT", expected_status=400)

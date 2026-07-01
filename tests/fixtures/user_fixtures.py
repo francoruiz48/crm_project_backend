@@ -7,8 +7,8 @@ from app.core.constans import ADMIN_ORG_ID
 from tests.helpers.api_helpers import ApiClient
 
 
-def _make_user(db_session, name: str, email: str, is_superuser: bool = False) -> User:
-    user = User(name=name, email=email, is_superuser=is_superuser)
+def _make_user(db_session, name: str, email: str, is_superuser: bool = False, last_name: str = "Test") -> User:
+    user = User(name=name, last_name=last_name, email=email, is_superuser=is_superuser)
     db_session.add(user)
     db_session.flush()
     return user
