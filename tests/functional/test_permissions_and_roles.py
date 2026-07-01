@@ -480,7 +480,7 @@ class TestUserViewAllPermission:
         from app.main import app
 
         org_id = initial_structure["org_id"]
-        superadmin = db_session.query(User).filter_by(email="admin@crm.com").first()
+        superadmin = db_session.query(User).filter_by(email="francoruiz.admin@crm.com").first()
         _apply_user_overrides(app, superadmin, org_id)
         try:
             # Sin header → 400
@@ -564,7 +564,7 @@ class TestPromoteSuperuser:
         from app.main import app
 
         target = _make_user(db_session, "To Be Super", "tobsuper@test.com")
-        superadmin = db_session.query(User).filter_by(email="admin@crm.com").first()
+        superadmin = db_session.query(User).filter_by(email="francoruiz.admin@crm.com").first()
         db_session.commit()
 
         _apply_user_overrides(app, superadmin)
@@ -721,7 +721,7 @@ class TestLeadVisibility:
         from app.main import app
 
         org_id = initial_structure["org_id"]
-        superadmin = db_session.query(User).filter_by(email="admin@crm.com").first()
+        superadmin = db_session.query(User).filter_by(email="francoruiz.admin@crm.com").first()
 
         private_camp = _make_campaign(db_session, org_id, "Camp Priv Super", is_public=False)
         lead_priv = _make_lead(db_session, private_camp.id, org_id)

@@ -16,7 +16,7 @@ def client(db_session):
     # sin validar ningún JWT. Todos los tests existentes siguen funcionando igual.
     def override_get_current_user():
         from app.models.security_models import User
-        superadmin = db_session.query(User).filter_by(email="admin@crm.com").first()
+        superadmin = db_session.query(User).filter_by(email="francoruiz.admin@crm.com").first()
         if not superadmin:
             # Fallback: primer usuario de la DB
             superadmin = db_session.query(User).first()

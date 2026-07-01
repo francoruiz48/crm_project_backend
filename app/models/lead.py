@@ -30,7 +30,10 @@ class Lead(BaseModelDB):
     )
 
     team_id = Column(Integer, ForeignKey("team.id", ondelete="SET NULL"), nullable=True)
+    team = relationship("Team", foreign_keys=[team_id])
+
     assigned_to_user_id = Column(Integer, ForeignKey("user.id", ondelete="SET NULL"), nullable=True)
+    assigned_to_user = relationship("User", foreign_keys=[assigned_to_user_id])
 
     tags = relationship("Tag", secondary=lead_tag_association, back_populates="leads")
 

@@ -48,6 +48,7 @@ def registered_user(plain_client):
     """Registra un usuario de prueba y devuelve sus credenciales + tokens."""
     resp = plain_client.post("/auth/register", json={
         "name": "Test User",
+        "last_name": "Security",
         "email": "testuser@security.com",
         "password": "password123",
     })
@@ -68,7 +69,8 @@ def registered_user(plain_client):
 class TestRegister:
     def test_register_success(self, plain_client):
         resp = plain_client.post("/auth/register", json={
-            "name": "Franco Ruiz",
+            "name": "Franco",
+            "last_name": "Ruiz",
             "email": "franco@newuser.com",
             "password": "securepass123",
         })
@@ -79,7 +81,7 @@ class TestRegister:
         assert data["token_type"] == "bearer"
 
     def test_register_duplicate_email(self, plain_client):
-        payload = {"name": "Duplicado", "email": "dup@test.com", "password": "pass123"}
+        payload = {"name": "Duplicado", "last_name": "Test", "email": "dup@test.com", "password": "pass123"}
         plain_client.post("/auth/register", json=payload)
         resp = plain_client.post("/auth/register", json=payload)
         assert resp.status_code == 400
@@ -339,7 +341,7 @@ class TestOrgLimit:
 
     def test_superadmin_can_create_multiple_orgs(self, client, db_session):
         """El superadmin puede crear múltiples organizaciones."""
-        superadmin = db_session.query(User).filter_by(email="admin@crm.com").first()
+        superadmin = db_session.query(User).filter_by(email="francoruiz.admin@crm.com").first()
 
         from tests.fixtures.user_fixtures import _apply_user_overrides, _remove_user_overrides
         from app.main import app
@@ -377,7 +379,7 @@ class TestUserEndpoints:
 
     def test_get_all_users_allowed_for_superadmin(self, client, db_session, initial_structure):
         """GET /users funciona para superadmin (con X-Organization-Id requerido)."""
-        superadmin = db_session.query(User).filter_by(email="admin@crm.com").first()
+        superadmin = db_session.query(User).filter_by(email="francoruiz.admin@crm.com").first()
         org_id = initial_structure["org_id"]
 
         from tests.fixtures.user_fixtures import _apply_user_overrides, _remove_user_overrides
@@ -450,7 +452,7 @@ class TestUserEndpoints:
     def test_superadmin_can_update_any_user(self, client, db_session, initial_structure):
         """El superadmin puede actualizar cualquier usuario."""
         target = _make_user(db_session, "Target User", "target@test.com")
-        superadmin = db_session.query(User).filter_by(email="admin@crm.com").first()
+        superadmin = db_session.query(User).filter_by(email="francoruiz.admin@crm.com").first()
         db_session.commit()
 
         from tests.fixtures.user_fixtures import _apply_user_overrides, _remove_user_overrides
