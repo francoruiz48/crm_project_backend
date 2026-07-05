@@ -10,7 +10,7 @@ class LeadFieldSectionController(BaseController):
     schema_update = LeadFieldSectionUpdate
     schema_out = LeadFieldSectionResponse
     schema_out_detail = LeadFieldSectionDetailedResponse
-    enabled_methods = READ_WRITE
+    enabled_methods = READ_WRITE | {"DEACTIVATE"}
 
     allowed_filter_fields = {"name"}
 

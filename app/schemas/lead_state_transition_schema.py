@@ -6,7 +6,7 @@ from app.schemas.lead_state_schema import LeadStateDetailedResponse
 
 class LeadStateTransitionBase(BaseModel):
     lead_flow_id: int = Field(gt=0)
-    from_state_id: Optional[int] = Field(default=None, gt=0)
+    from_state_id: int = Field(gt=0)
     to_state_id: int = Field(gt=0)
 
 class LeadStateTransitionCreate(LeadStateTransitionBase, BaseCreate):

@@ -55,7 +55,10 @@ async def pydantic_exception_handler(request: Request, exc: RequestValidationErr
             message = f"El valor debe ser mayor o igual a {limit}."
 
         elif error_type == "value_error":
-             message = message.replace("Value error, ", "")
+            message = message.replace("Value error, ", "")
+            # EmailStr produce mensajes en inglés — los traducimos
+            if "valid email" in message.lower() or "email address" in message.lower():
+                message = "Ingresá un email válido."
 
         errors_list.append({
             "field": field_name,
@@ -63,7 +66,7 @@ async def pydantic_exception_handler(request: Request, exc: RequestValidationErr
         })
 
     return JSONResponse(
-        status_code=status.HTTP_400_BAD_REQUEST,
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={"detail": errors_list},
     )
 

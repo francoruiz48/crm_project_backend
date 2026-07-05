@@ -10,7 +10,7 @@ class TeamController(BaseController):
     schema_update = TeamUpdate
     schema_out = TeamResponse
     schema_out_detail = TeamDetailedResponse
-    enabled_methods = READ_WRITE
+    enabled_methods = READ_WRITE | {"DEACTIVATE"}
 
     allowed_filter_fields = {"name", "is_visibility_shared"}
 

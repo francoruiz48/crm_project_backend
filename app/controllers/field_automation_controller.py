@@ -10,7 +10,7 @@ class FieldAutomationController(BaseController):
     schema_update = FieldAutomationUpdate
     schema_out = FieldAutomationResponse
     schema_out_detail = FieldAutomationDetailedResponse
-    enabled_methods = READ_WRITE
+    enabled_methods = READ_WRITE | {"DEACTIVATE"}
     allowed_filter_fields = {"description", "name", "campaign_id"}
 
 router = FieldAutomationController.get_router()

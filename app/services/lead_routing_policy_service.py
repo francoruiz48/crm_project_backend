@@ -19,6 +19,7 @@ from app.schemas.lead_routing_policy_schema import (
     LeadRoutingPolicyValidateResponse,
 )
 from app.services.base_service import BaseService
+from app.core.constans import DeleteStrategy
 from app.services.routing_rule_evaluator_service import RoutingRuleEvaluatorService
 from app.core.constans import SystemAuditLogAction
 
@@ -27,6 +28,7 @@ class LeadRoutingPolicyRepository(BaseRepository):
     model             = LeadRoutingPolicy
     schema_out        = LeadRoutingPolicyResponse
     schema_out_detail = LeadRoutingPolicyDetailedResponse
+    delete_strategy   = DeleteStrategy.HARD_DELETE_WITH_TOGGLE
 
 
 def _assert_manager(session, user_context: Optional[UserContext], team_id: int):

@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from app.controllers.security_controllers.auth_controller import router as auth_router
 from app.controllers.lead_controller import router as leads_router
 from app.controllers.lead_field_controller import router as lead_fields_router
 from app.controllers.lead_field_type_controller import router as lead_field_types_router
@@ -37,9 +38,11 @@ from app.controllers.web_form_controller import router as web_form_router
 from app.controllers.web_form_public_controller import router as web_form_public_router
 from app.controllers.lead_flow_graph_controller import router as lead_flow_graph_router
 from app.controllers.field_automation_controller import router as field_automation_router
+from app.controllers.dashboard_controller import router as dashboard_router
 
 router = APIRouter()
 
+router.include_router(auth_router)
 router.include_router(leads_router)
 router.include_router(lead_fields_router)
 router.include_router(lead_field_types_router)
@@ -78,3 +81,4 @@ router.include_router(web_form_router)
 router.include_router(web_form_public_router)
 router.include_router(lead_flow_graph_router)
 router.include_router(field_automation_router)
+router.include_router(dashboard_router)

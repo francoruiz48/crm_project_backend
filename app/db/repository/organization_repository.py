@@ -1,4 +1,5 @@
 from app.db.repository.base_repository import BaseRepository
+from app.core.constans import DeleteStrategy
 from app.models.organization import Organization
 from app.models.security_models import UserOrganization
 from app.schemas.organization_schema import OrganizationResponse, OrganizationDetailedResponse
@@ -7,6 +8,7 @@ from app.core.security import UserContext
 
 class OrganizationRepository(BaseRepository):
     model = Organization
+    delete_strategy = DeleteStrategy.PROTECTED
     schema_out = OrganizationResponse
     schema_out_detail = OrganizationDetailedResponse
 

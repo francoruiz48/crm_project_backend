@@ -101,3 +101,25 @@ class TeamMemberService(BaseService):
             return updated
  
         return cls._execute(action="Actualizar Miembro", obj_id=obj_id, func=do_update)
+
+    @classmethod
+    def delete(cls, obj_id: int, user_context: Optional[UserContext] = None, force: bool = False):
+        def do_delete(uow):
+            member = uow.session.query(TeamMember).filter_by(id=obj_id).first()
+            if not member:
+                cls._not_found(obj_id)
+
+            caller = _caller_role(uow.session, user_context, member.team_id)
+            if caller != "MANAGER":
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN,
+                    detail="Solo un MANAGER del equipo puede eliminar miembros.",
+                )
+
+            cls._log_audit(uow.session, member, action=SystemAuditLogAction.DELETED, changes=None,
+                           user_id=user_context.user.id if user_context and user_context.user else None)
+            uow.session.delete(member)
+            uow.session.flush()
+            return {"detail": f"TeamMember({obj_id}) eliminado correctamente."}
+
+        return cls._execute(action="Eliminar Miembro del Equipo", obj_id=obj_id, func=do_delete)

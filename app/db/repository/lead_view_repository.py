@@ -1,4 +1,5 @@
 from sqlalchemy import or_, and_
+from app.core.constans import DeleteStrategy
 from app.db.repository.base_repository import BaseRepository
 from app.models.lead_view import LeadView
 from app.models.team_member import TeamMember
@@ -7,6 +8,7 @@ from app.core.security import UserContext
 
 class LeadViewRepository(BaseRepository):
     model = LeadView
+    delete_strategy = DeleteStrategy.HARD_DELETE_ALWAYS
     schema_in = LeadViewCreate
     schema_out = LeadViewResponse
     schema_out_detail = LeadViewDetailedResponse

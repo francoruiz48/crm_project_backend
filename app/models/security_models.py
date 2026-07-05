@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, ForeignKey, Table, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, Integer, String, ForeignKey, Table, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.models.base_model import BaseModelDB
 
@@ -30,7 +30,7 @@ class Role(BaseModelDB):
     code = Column(String, nullable=False) 
     
     permissions = relationship("Permission", secondary=role_permissions, backref="roles")
-    organization_id = Column(Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=True)
+    organization_id = Column(Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False)
     organization = relationship("Organization")
 
     __table_args__ = (
@@ -69,9 +69,13 @@ class UserOrganization(BaseModelDB):
 
 class User(BaseModelDB):
     __tablename__ = "user"
-    
+
     name = Column(String, nullable=False)
+    last_name = Column(String, nullable=False)   # obligatorio: ver docs/autenticacion.md §11
     email = Column(String, unique=True, index=True, nullable=False)
+    phone = Column(String, nullable=True)
+    date_of_birth = Column(Date, nullable=True)
+    hashed_password = Column(String, nullable=True)  # nullable para no romper seeds/tests existentes
     is_superuser = Column(Boolean, default=False)
     
     organizations_access = relationship("UserOrganization", foreign_keys="[UserOrganization.user_id]", back_populates="user", cascade="all, delete-orphan")

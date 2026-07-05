@@ -14,4 +14,10 @@ class OrganizationController(BaseController):
 
     allowed_filter_fields = {"name", "description"}
 
+    @classmethod
+    def _get_deps(cls, action: str):
+        if action in ("create", "read"):
+            return []
+        return super()._get_deps(action)
+
 router = OrganizationController.get_router()

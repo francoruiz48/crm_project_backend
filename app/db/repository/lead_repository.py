@@ -1,7 +1,9 @@
 from typing import Optional
+from app.core.constans import DeleteStrategy
 from sqlalchemy.orm import aliased
 from sqlalchemy import cast, Float, or_, and_, func, insert, delete
 from app.db.repository.base_repository import BaseRepository
+from app.models.campaign import Campaign
 from app.models.lead import Lead
 from app.models.nomenclator_item import NomenclatorItem
 from app.models.team import Team
@@ -16,10 +18,12 @@ from app.core.security import UserContext
 LEAD_NATIVE_FILTER_FIELDS = {
     "campaign_id", "current_state_id", "contact_state_id",
     "team_id", "assigned_to_user_id", "active",
+    "created_at", "updated_at",
 }
 
 class LeadRepository(BaseRepository):
     model = Lead
+    delete_strategy = DeleteStrategy.HARD_DELETE_ALWAYS
     schema_out = LeadResponse
     schema_out_detail = LeadDetailedResponse
     
@@ -69,23 +73,32 @@ class LeadRepository(BaseRepository):
         if user_context is None or user_context.user is None:
             return query
 
+        # Superadmin, owner o usuario con permiso explícito lead:view_all → sin filtro
         if user_context.is_superuser or user_context.is_owner:
+            return query
+
+        if "lead:view_all" in (user_context.permissions or []):
             return query
 
         consulted_by = user_context.user.id
 
+        # Join para filtro de equipo
         query = query.outerjoin(Team, cls.model.team_id == Team.id) \
                      .outerjoin(TeamMember, and_(Team.id == TeamMember.team_id, TeamMember.user_id == consulted_by))
 
+        # Join para filtro de campaña pública
+        query = query.outerjoin(Campaign, cls.model.campaign_id == Campaign.id)
+
         security_condition = or_(
-            cls.model.assigned_to_user_id == consulted_by,    # 1. Es mi lead directo
-            cls.model.created_by == consulted_by,             # 2. Yo mismo lo creé
+            Campaign.is_public.is_(True),                          # Campaña pública: visible para todos
+            cls.model.assigned_to_user_id == consulted_by,        # Es mi lead directo
+            cls.model.created_by == consulted_by,                  # Yo mismo lo creé
             and_(
-                TeamMember.id.isnot(None),               # 4. Pertenezco al equipo del lead
+                TeamMember.id.isnot(None),                         # Pertenezco al equipo del lead
                 or_(
-                    TeamMember.role == "MANAGER",        # -> Y soy el jefe
-                    Team.is_visibility_shared == True,   # -> O somos un equipo colaborativo
-                    cls.model.assigned_to_user_id.is_(None) # -> O está en mi equipo pero nadie lo tomó
+                    TeamMember.role == "MANAGER",                  # -> Y soy el jefe
+                    Team.is_visibility_shared == True,             # -> O somos un equipo colaborativo
+                    cls.model.assigned_to_user_id.is_(None)        # -> O está en mi equipo pero nadie lo tomó
                 )
             )
         )
@@ -103,20 +116,24 @@ class LeadRepository(BaseRepository):
 
         # Si hay búsqueda global, pre-armamos la query con sus JOINs
         if search:
-            query = query.join(LeadFieldValue, cls.model.field_values)
-            conditions = [LeadFieldValue.value.ilike(f"%{search}%")]
+            # Tipos de campo donde tiene sentido buscar texto libre
+            TEXT_SEARCH_TYPES = ('STRING', 'SELECTOR')
 
+            query = query.join(LeadFieldValue, cls.model.field_values)
+            query = query.join(LeadField, LeadFieldValue.field)
             query = query.outerjoin(LeadFieldValue.nomenclator_items)
-            conditions.append(NomenclatorItem.value.ilike(f"%{search}%"))
+
+            conditions = [
+                LeadFieldValue.value.ilike(f"%{search}%"),
+                NomenclatorItem.value.ilike(f"%{search}%"),
+            ]
 
             if search_fields:
-                query = query.join(LeadField, LeadFieldValue.field)
-                query = query.filter(
-                    LeadField.name.in_(search_fields),
-                    or_(*conditions)
-                )
+                # Modo explícito: filtrar por nombres de campo específicos
+                query = query.filter(LeadField.name.in_(search_fields), or_(*conditions))
             else:
-                query = query.filter(or_(*conditions))
+                # Modo automático: solo campos STRING y SELECTOR
+                query = query.filter(LeadField.field_type_code.in_(TEXT_SEARCH_TYPES), or_(*conditions))
 
             query = query.distinct()
 
@@ -139,7 +156,7 @@ class LeadRepository(BaseRepository):
         )
 
     @classmethod
-    def search(cls, session, search_params, user_context: Optional[UserContext] = None, detailed: bool = False, page: int = 0, page_size: int = 0, order_by: str = None, ascending: bool = True):
+    def search(cls, session, search_params, user_context: Optional[UserContext] = None, detailed: bool = False, page: int = 0, page_size: int = 0, order_by: str = None, ascending: bool = True, only_active: bool = True, campaign_id: Optional[int] = None):
         query = session.query(cls.model)
 
         query = cls._apply_tenant_filter(query)
@@ -148,136 +165,137 @@ class LeadRepository(BaseRepository):
         if user_context is not None and user_context.user is not None:
             query = cls.apply_security_filter(session, query, user_context)
 
+        # Filtrar leads activos/inactivos (igual que en get_all)
+        if only_active and hasattr(cls.model, "active"):
+            query = query.filter(cls.model.active == True)
+
+        # Filtrar por campaña (igual que en get_all)
+        if campaign_id is not None:
+            query = query.filter(cls.model.campaign_id == campaign_id)
+
+        # ── Filtros nativos (columnas directas del modelo) — se aplican con AND ──
+        # Los campos nativos NO se agrupan con OR porque el tablero añade su propio
+        # filtro de columna sobre el mismo campo (contact_state_id); si se ORaran
+        # los leads aparecerían en todas las columnas.
+        # El multi-select del usuario ya usa operator='in', que maneja varios valores
+        # en un solo filtro sin necesidad de duplicar la fila.
         for f in search_params.filters:
-
-            # Si el field_id es un string y está en la whitelist de campos nativos filtrables
-            if isinstance(f.field_id, str) and f.field_id in LEAD_NATIVE_FILTER_FIELDS:
-                column = getattr(cls.model, f.field_id)
-                val = f.value
-                
-                if f.operator == "eq": query = query.filter(column == val)
-                elif f.operator == "neq": query = query.filter(column != val)
-                elif f.operator == "in" and isinstance(val, list): query = query.filter(column.in_(val))
-                elif f.operator == "between" and isinstance(val, list) and len(val) == 2: query = query.filter(column.between(val[0], val[1]))
-                elif f.operator == "gt": query = query.filter(column > val)
-                elif f.operator == "lt": query = query.filter(column < val)
-                elif f.operator == "gte": query = query.filter(column >= val)
-                elif f.operator == "lte": query = query.filter(column <= val)
-                elif f.operator == "like": query = query.filter(column.contains(val))
-                elif f.operator == "ilike": query = query.filter(column.ilike(f"%{val}%"))
-                
-                # Continuamos con el siguiente filtro, ignorando la lógica EAV para este
+            if not (isinstance(f.field_id, str) and f.field_id in LEAD_NATIVE_FILTER_FIELDS):
                 continue
+            column = getattr(cls.model, f.field_id)
+            val = f.value
+            if f.operator == "eq": query = query.filter(column == val)
+            elif f.operator == "neq": query = query.filter(column != val)
+            elif f.operator == "in" and isinstance(val, list): query = query.filter(column.in_(val))
+            elif f.operator == "between" and isinstance(val, list) and len(val) == 2: query = query.filter(column.between(val[0], val[1]))
+            elif f.operator == "gt": query = query.filter(column > val)
+            elif f.operator == "lt": query = query.filter(column < val)
+            elif f.operator == "gte": query = query.filter(column >= val)
+            elif f.operator == "lte": query = query.filter(column <= val)
+            elif f.operator == "like": query = query.filter(column.contains(val))
+            elif f.operator == "ilike": query = query.filter(column.ilike(f"%{val}%"))
 
+        # ── Filtros EAV (campos custom) — OR merging dentro del mismo campo ───
+        # Permite "Nombre contains 'Juan'" + "Nombre contains 'Pedro'" → OR.
+        # Un JOIN separado por field_id distinto; condiciones del mismo field_id → OR.
+        from collections import defaultdict
+        eav_groups: dict = defaultdict(list)   # field_id (int) → [LeadFilter]
+        for f in search_params.filters:
+            if not (isinstance(f.field_id, str) and f.field_id in LEAD_NATIVE_FILTER_FIELDS) and f.field_id is not None:
+                eav_groups[f.field_id].append(f)
+
+        # ── Filtros EAV (campos custom, un JOIN por field_id) ─────────────────
+        for field_id, filters in eav_groups.items():
             lv_alias = aliased(LeadFieldValue)
             query = query.join(lv_alias, cls.model.field_values)
-            
-            # Condición base: El valor debe pertenecer al campo correcto
-            field_condition = lv_alias.field_id == f.field_id
-            
-            # Acumulador de condiciones para este filtro (AND interno)
-            # Empezamos solo con el field_id, luego agregamos la condición de valor
-            conditions = [field_condition]
 
-            db_val = lv_alias.value 
-            val = f.value           
+            db_val = lv_alias.value
+            per_filter_conds = []   # una condición de valor por filtro del grupo → se combinan con OR
 
-            # ---------------------------------------------------------
-            # 1. Operador BETWEEN (Rango) - Generalmente solo para Text/Number/Date
-            # ---------------------------------------------------------
-            if f.operator == "between":
-                if not isinstance(val, list) or len(val) != 2:
-                    continue 
-                
-                try:
-                    # Intento Numérico
-                    val_min = float(val[0])
-                    val_max = float(val[1])
-                    db_val_num = cast(db_val, Float)
-                    
-                    conditions.append(db_val_num >= val_min)
-                    conditions.append(db_val_num <= val_max)
-                except (ValueError, TypeError):
-                    # Fallback Texto / Fechas
-                    v_min = str(val[0]).lower()
-                    v_max = str(val[1]).lower()
-                    
-                    conditions.append(func.lower(db_val) >= v_min)
-                    conditions.append(func.lower(db_val) <= v_max)
+            for f in filters:
+                val = f.value
+                cond = None     # condición de valor para este filtro
 
-            # ---------------------------------------------------------
-            # 2. Operador IN (Lista) - AQUI CAMBIA PARA SOPORTAR MULTIPLES
-            # ---------------------------------------------------------
-            elif f.operator == "in":
-                if isinstance(val, list):
-                    # A. Búsqueda en Texto (Normalizamos a string minúsculas)
-                    val_strs = [str(v).lower() for v in val]
-                    cond_text = func.lower(db_val).in_(val_strs)
+                # ---------------------------------------------------------
+                # 1. Operador BETWEEN (Rango)
+                # ---------------------------------------------------------
+                if f.operator == "between":
+                    if not isinstance(val, list) or len(val) != 2:
+                        continue
+                    try:
+                        val_min = float(val[0])
+                        val_max = float(val[1])
+                        db_val_num = cast(db_val, Float)
+                        cond = and_(db_val_num >= val_min, db_val_num <= val_max)
+                    except (ValueError, TypeError):
+                        v_min = str(val[0]).lower()
+                        v_max = str(val[1]).lower()
+                        cond = and_(func.lower(db_val) >= v_min, func.lower(db_val) <= v_max)
 
-                    # B. Búsqueda en Relación Nomenclador (Many-to-Many)
-                    # "Existe algún item en la lista del lead cuyo ID esté en la lista de búsqueda"
-                    cond_relation = lv_alias.nomenclator_items.any(NomenclatorItem.id.in_(val))
+                # ---------------------------------------------------------
+                # 2. Operador IN (Lista)
+                # ---------------------------------------------------------
+                elif f.operator == "in":
+                    if isinstance(val, list):
+                        val_strs = [str(v).lower() for v in val]
+                        cond_text = func.lower(db_val).in_(val_strs)
+                        cond_relation = lv_alias.nomenclator_items.any(NomenclatorItem.id.in_(val))
+                        cond = or_(cond_text, cond_relation)
 
-                    # Aplicamos OR: O está en el texto O está en la relación
-                    conditions.append(or_(cond_text, cond_relation))
+                # ---------------------------------------------------------
+                # 3. Operadores de Comparación (GT, LT, GTE, LTE)
+                # ---------------------------------------------------------
+                elif f.operator in ["gt", "lt", "gte", "lte"]:
+                    try:
+                        val_float = float(val)
+                        db_val_num = cast(db_val, Float)
+                        ops = {"gt": db_val_num > val_float, "lt": db_val_num < val_float,
+                               "gte": db_val_num >= val_float, "lte": db_val_num <= val_float}
+                        cond = ops[f.operator]
+                    except (ValueError, TypeError):
+                        val_str = str(val).lower()
+                        db_val_lower = func.lower(db_val)
+                        ops = {"gt": db_val_lower > val_str, "lt": db_val_lower < val_str,
+                               "gte": db_val_lower >= val_str, "lte": db_val_lower <= val_str}
+                        cond = ops[f.operator]
 
-            # ---------------------------------------------------------
-            # 3. Operadores de Comparación (GT, LT, GTE, LTE)
-            # ---------------------------------------------------------
-            elif f.operator in ["gt", "lt", "gte", "lte"]:
-                try:
-                    val_float = float(val)
-                    db_val_num = cast(db_val, Float)
-                    
-                    if f.operator == "gt": conditions.append(db_val_num > val_float)
-                    elif f.operator == "lt": conditions.append(db_val_num < val_float)
-                    elif f.operator == "gte": conditions.append(db_val_num >= val_float)
-                    elif f.operator == "lte": conditions.append(db_val_num <= val_float)
-                
-                except (ValueError, TypeError):
-                    val_str = str(val).lower()
-                    db_val_lower = func.lower(db_val)
-                    
-                    if f.operator == "gt": conditions.append(db_val_lower > val_str)
-                    elif f.operator == "lt": conditions.append(db_val_lower < val_str)
-                    elif f.operator == "gte": conditions.append(db_val_lower >= val_str)
-                    elif f.operator == "lte": conditions.append(db_val_lower <= val_str)
+                # ---------------------------------------------------------
+                # 4. Igualdad (EQ, NEQ)
+                # ---------------------------------------------------------
+                elif f.operator == "eq":
+                    cond_text = func.lower(db_val) == str(val).lower()
+                    cond_relation = lv_alias.nomenclator_items.any(NomenclatorItem.id == val)
+                    cond = or_(cond_text, cond_relation)
 
-            # ---------------------------------------------------------
-            # 4. Operadores de Igualdad (EQ, NEQ) - CAMBIA PARA SOPORTAR ID UNICO
-            # ---------------------------------------------------------
-            elif f.operator == "eq": 
-                # A. Texto exacto
-                cond_text = func.lower(db_val) == str(val).lower()
-                
-                # B. Relación (El Lead tiene este ID seleccionado en su lista)
-                cond_relation = lv_alias.nomenclator_items.any(NomenclatorItem.id == val)
-                
-                conditions.append(or_(cond_text, cond_relation))
-            
-            elif f.operator == "neq": 
-                # A. Distinto texto
-                cond_text = func.lower(db_val) != str(val).lower()
-                
-                # B. Relación (No tiene este ID)
-                # Nota: Negar .any() es "no tiene ninguno que coincida"
-                cond_relation = ~lv_alias.nomenclator_items.any(NomenclatorItem.id == val)
-                
-                conditions.append(and_(cond_text, cond_relation))
-            
-            # ---------------------------------------------------------
-            # 5. Operadores de Texto Parcial (LIKE, ILIKE)
-            # ---------------------------------------------------------
-            elif f.operator == "like": 
-                # Solo aplica a columna valor texto
-                conditions.append(func.lower(db_val).contains(str(val).lower()))
-            
-            elif f.operator == "ilike": 
-                conditions.append(db_val.ilike(f"%{val}%"))
+                elif f.operator == "neq":
+                    cond_text = func.lower(db_val) != str(val).lower()
+                    cond_relation = ~lv_alias.nomenclator_items.any(NomenclatorItem.id == val)
+                    cond = and_(cond_text, cond_relation)
 
-            # Aplicamos los filtros de esta iteración (AND con los joins anteriores)
-            query = query.filter(and_(*conditions))
-        
+                # ---------------------------------------------------------
+                # 5. Texto Parcial (LIKE, ILIKE)
+                # ---------------------------------------------------------
+                elif f.operator == "like":
+                    cond = func.lower(db_val).contains(str(val).lower())
+
+                elif f.operator == "ilike":
+                    cond = db_val.ilike(f"%{val}%")
+
+                if cond is not None:
+                    per_filter_conds.append(cond)
+
+            if per_filter_conds:
+                field_cond = lv_alias.field_id == field_id
+                value_cond = or_(*per_filter_conds) if len(per_filter_conds) > 1 else per_filter_conds[0]
+                query = query.filter(and_(field_cond, value_cond))
+
+        # Si hubo JOINs EAV, el query tiene filas duplicadas (una por cada field_value
+        # que matchea). Reemplazamos el query por uno limpio usando los IDs como subquery,
+        # así el ORDER BY y la paginación operan sobre filas únicas sin duplicados.
+        if eav_groups:
+            id_subq = query.order_by(False).with_entities(cls.model.id).distinct().subquery()
+            query = session.query(cls.model).filter(cls.model.id.in_(id_subq))
+
         query = cls._apply_dynamic_ordering(query, order_by, ascending)
 
         # Paginación y Ejecución
@@ -382,8 +400,5 @@ class LeadRepository(BaseRepository):
     def has_leads_in_campaign(cls, session, campaign_id: int) -> bool:
         """Devuelve True si existe al menos un lead en la campaña."""
         query = session.query(cls.model.id).filter(cls.model.campaign_id == campaign_id)
-        
         query = cls._apply_tenant_filter(query)
-        
         return query.limit(1).first() is not None
-    

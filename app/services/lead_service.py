@@ -1,6 +1,7 @@
 from datetime import date, datetime
 import re
 from fastapi import HTTPException, UploadFile, status
+from sqlalchemy import func
 from app.core.constans import ALLOWED_DOCUMENT_TYPES, ALLOWED_IMAGE_TYPES, DATE_FORMAT, DATE_TIME_FORMAT, DEFAULT_PAGE_SIZE, NOMENCLATOR_FIELD_TYPES, SystemAuditLogAction
 from app.core.exceptions.exceptions import ValidationError 
 from app.models.lead import Lead
@@ -617,11 +618,22 @@ class LeadService(BaseService):
             ).first()
 
             # 5. Motor de enrutamiento (determina equipo automático)
+            # Inyectamos los campos nativos conocidos al momento de creación
+            # (lead_obj no existe aún, por eso se enriquece manualmente)
+            native_ctx: dict = {
+                "__native__current_state_id": initial_state.id,
+                "__native__campaign_id":      campaign.id,
+            }
+            if obj_in.assigned_to_user_id is not None:
+                native_ctx["__native__assigned_to_user_id"] = obj_in.assigned_to_user_id
+            if obj_in.team_id is not None:
+                native_ctx["__native__team_id"] = obj_in.team_id
+
             assigned_team_id = RoutingRuleEvaluatorService.evaluate(
                 session=uow.session,
                 campaign_id=campaign.id,
                 organization_id=campaign.organization_id,
-                context_data=context_data,
+                context_data={**context_data, **native_ctx},
                 field_defs_list=current_campaign_defs,
                 lead_obj=None,
             )
@@ -1102,6 +1114,16 @@ class LeadService(BaseService):
 
                 user_id = user_context.user.id if user_context else None
 
+                # Si hubo cambios reales en los field values, forzamos el "touch" del Lead.
+                # upsert_values() solo modifica filas de lead_field_value (con su propio
+                # updated_at), por lo que sin esto lead.updated_at quedaba desactualizado.
+                if changes:
+                    lead_obj = uow.session.query(Lead).filter_by(id=obj_id).first()
+                    if lead_obj:
+                        lead_obj.updated_at = func.now()
+                        if user_id is not None:
+                            lead_obj.updated_by = user_id
+
                 # Registro duro del sistema (con IDs)
                 cls._log_audit(uow.session, current_lead, action=SystemAuditLogAction.UPDATED, changes=changes, user_id=user_id)
 
@@ -1118,7 +1140,7 @@ class LeadService(BaseService):
         return cls.get_by_id(obj_id, detailed=True)
 
     @classmethod
-    def search(cls, user_context: Optional[UserContext] = None, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, detailed: bool = False, search_req=None, order_by=None, ascending: bool = True):
+    def search(cls, user_context: Optional[UserContext] = None, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, detailed: bool = False, search_req=None, order_by=None, ascending: bool = True, only_active: bool = True, campaign_id: Optional[int] = None):
         def do_search(uow):
             total, items = cls.repository.search(
                 session=uow.session, user_context=user_context,
@@ -1127,7 +1149,9 @@ class LeadService(BaseService):
                 search_params=search_req,
                 detailed=detailed,
                 order_by=order_by,
-                ascending=ascending
+                ascending=ascending,
+                only_active=only_active,
+                campaign_id=campaign_id
             )
             
             for item in items:

@@ -1,4 +1,5 @@
 from typing import Optional
+from app.core.constans import DeleteStrategy
 from sqlalchemy import or_
 from app.core.context import TENANT_ORG_ID
 from app.core.security import UserContext
@@ -8,6 +9,7 @@ from app.schemas.lead_contact_state_schema import LeadContactStateResponse, Lead
 
 class LeadContactStateRepository(BaseRepository):
     model = LeadContactState
+    delete_strategy = DeleteStrategy.SOFT_DELETE_ALWAYS
     schema_out = LeadContactStateResponse
     schema_out_detail = LeadContactStateDetailedResponse
 
