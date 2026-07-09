@@ -23,6 +23,7 @@ from faker import Faker
 BASE_URL      = "http://localhost:8000"
 SEED_EMAIL    = "francoruiz.admin@crm.com"
 SEED_PASSWORD = "ADQSilR4aAKCO%a^"
+SEED_USER_PASSWORD = "Semilla2026Crm"  # contraseña de los usuarios seed (invite+register)
 LOCALE        = "es_AR"
 fake          = Faker(LOCALE)
 
@@ -307,31 +308,50 @@ def create_custom_flow(name: str, states_def: list[dict], transitions_pairs: lis
 # ---------------------------------------------------------------------------
 # HELPERS: USUARIOS Y EQUIPOS
 # ---------------------------------------------------------------------------
-def create_user(name: str, email: str) -> int | None:
-    r = api_post("/users/", {"name": name, "email": email})
-    if r.status_code in (200, 201):
-        return r.json()["id"]
-    # Si ya existe, buscarlo
-    r2 = api_get("/users", params={"search": email, "page_size": 5})
-    if r2.status_code == 200:
-        items = r2.json().get("items", [])
-        match = next((u for u in items if u["email"] == email), None)
+def get_org_members(org_id: int) -> list:
+    """Lista los usuarios de una organización vía /users/in-org/members."""
+    r = session.get(f"{BASE_URL}/users/in-org/members", headers={"X-Organization-Id": str(org_id)})
+    return r.json() if r.status_code == 200 else []
+
+def create_user(name: str, email: str, org_id: int, role_code: str = "agent") -> int | None:
+    """
+    Crea un usuario nuevo y lo une a la organización usando el flujo real:
+    1. /auth/invite (como admin/superuser) genera un invite_token para ese email+rol.
+    2. /auth/register (público, sin auth) crea la cuenta y, al incluir el
+       invite_token, la une automáticamente a la organización con ese rol.
+    Es idempotente: si el email ya existe, busca el usuario en la org y lo reusa.
+    """
+    first_name, _, last_name = name.partition(" ")
+    last_name = last_name or first_name
+
+    inv = api_post("/auth/invite", {"email": email, "organization_id": org_id, "role_code": role_code})
+    if inv.status_code != 200:
+        log(f"Error invitando a '{email}': {inv.text}", "ERR")
+        return None
+    invite_token = inv.json()["invite_token"]
+
+    r = requests.post(
+        f"{BASE_URL}/auth/register",
+        json={
+            "name": first_name, "last_name": last_name, "email": email,
+            "password": SEED_USER_PASSWORD, "invite_token": invite_token,
+        },
+        headers={"Content-Type": "application/json"},
+    )
+    if r.status_code not in (200, 201):
+        # Si ya existía la cuenta, la buscamos entre los miembros de la org (script idempotente)
+        match = next((u for u in get_org_members(org_id) if u["email"] == email), None)
         if match:
             return match["id"]
-    return None
+        log(f"Error registrando usuario '{email}': {r.text}", "ERR")
+        return None
 
-def get_or_create_org_role(org_id: int) -> int | None:
-    """Obtiene el rol admin global (organization_id=NULL) para asignar a usuarios."""
-    r = api_get("/roles", params={"page_size": 50})
-    if r.status_code == 200:
-        for role in r.json().get("items", []):
-            if role.get("code") == "admin" and role.get("organization_id") is None:
-                return role["id"]
-    return None
-
-def assign_user_to_org(user_id: int, org_id: int):
-    """Promueve un usuario como owner de la org (esto crea el UserOrganization)."""
-    api_put(f"/users/organization/{org_id}/promote-owner/{user_id}", {})
+    # /auth/register solo devuelve tokens, no el user id: lo buscamos en la org.
+    match = next((u for u in get_org_members(org_id) if u["email"] == email), None)
+    if not match:
+        log(f"Usuario '{email}' registrado pero no encontrado en la org {org_id}", "WARN")
+        return None
+    return match["id"]
 
 def create_team(name: str, visibility_shared: bool = True) -> int | None:
     r = api_post("/teams/", {"name": name, "is_visibility_shared": visibility_shared})
@@ -508,18 +528,33 @@ def create_lead_view(campaign_id: int, name: str, view_type: str = "LIST", visib
 
 
 # ---------------------------------------------------------------------------
-# HELPERS: ROUTING RULES
+# HELPERS: POLÍTICAS DE ENRUTAMIENTO (v3)
 # ---------------------------------------------------------------------------
-def create_routing_rule(campaign_id: int, condition_type: str, condition_target_id: int,
-                         condition_value: str, target_team_id: int, order: int):
-    api_post("/lead_routing_rules/", {
-        "campaign_id": campaign_id,
-        "condition_type": condition_type,
-        "condition_target_id": condition_target_id,
-        "condition_value": str(condition_value),
+def create_routing_policy(name: str, target_team_id: int, priority: int, conditions: list[dict],
+                           campaign_id: int = None, logical_operator: str = "AND",
+                           description: str = None) -> int | None:
+    """
+    Crea una política de enrutamiento v3 (POST /lead_routing_policies/), con sus
+    condiciones en la misma llamada. Cada condición debe traer 'position' y,
+    exactamente uno de 'lead_field_id' / 'native_field' más su modo
+    (simple: operator + value_str | lista: operator in/not_in/eq_strict + value_list).
+    """
+    payload = {
+        "name": name,
+        "priority": priority,
+        "logical_operator": logical_operator,
         "target_team_id": target_team_id,
-        "order": order,
-    })
+        "conditions": conditions,
+    }
+    if campaign_id:
+        payload["campaign_id"] = campaign_id
+    if description:
+        payload["description"] = description
+    r = api_post("/lead_routing_policies/", payload)
+    if r.status_code in (200, 201):
+        return r.json()["id"]
+    log(f"Error creando política de enrutamiento '{name}': {r.text}", "ERR")
+    return None
 
 
 # ===========================================================================
@@ -545,10 +580,13 @@ def build_org_salud():
         ("Valentina Suárez",   "vsuarez@medicare.com"),
         ("Rodrigo Fernández",  "rfernandez@medicare.com"),
         ("Camila Torres",      "ctorres@medicare.com"),
+        ("Julieta Gómez",      "jgomez@medicare.com"),
+        ("Nicolás Herrera",    "nherrera@medicare.com"),
+        ("Agustina Molina",    "amolina@medicare.com"),
+        ("Franco Ibáñez",      "fibanez@medicare.com"),
     ]:
-        uid = create_user(name, email)
+        uid = create_user(name, email, org_id)
         if uid:
-            assign_user_to_org(uid, org_id)
             users.append(uid)
     log(f"Usuarios creados: {len(users)}", indent=2)
 
@@ -575,10 +613,12 @@ def build_org_salud():
     team_medicos  = create_team("Equipo Médico",         visibility_shared=False)
     if team_admision and users:
         add_team_member(team_admision, users[0], "MANAGER")
-        if len(users) > 1:
-            add_team_member(team_admision, users[1], "AGENT")
+        for u in users[1:2] + users[3:5]:  # Rodrigo, Julieta, Nicolás
+            add_team_member(team_admision, u, "AGENT")
     if team_medicos and len(users) > 2:
         add_team_member(team_medicos, users[2], "MANAGER")
+        for u in users[5:7]:  # Agustina, Franco
+            add_team_member(team_medicos, u, "AGENT")
 
     # Dar acceso al workspace
     if team_admision and ws_pacientes:
@@ -873,6 +913,55 @@ def build_org_salud():
 
         log(f"    {len(lead_ids_est)} leads estética generados", indent=4)
 
+    # -----------------------------------------------------------------------
+    # POLÍTICAS DE ENRUTAMIENTO (v3) — ejemplos con campo dinámico y campo nativo
+    # -----------------------------------------------------------------------
+    if camp_pacientes and team_admision and team_medicos and f.get("obra_social"):
+        items_os_pol, _ = get_or_create_campaign_nomenclator(
+            "Cobertura Médica",
+            ["OSDE", "Swiss Medical", "Galeno", "PAMI", "Particular", "Sancor Salud"],
+            camp_pacientes,
+        )
+        item_particular = next((i for i in items_os_pol if i["value"] == "Particular"), None)
+        ids_premium = [i["id"] for i in items_os_pol if i["value"] in ("OSDE", "Swiss Medical")]
+
+        # Ejemplo de campo DINÁMICO (SELECTOR), modo simple: obra_social = "Particular"
+        if item_particular:
+            create_routing_policy(
+                "Particulares a Admisión", team_admision, priority=10,
+                campaign_id=camp_pacientes,
+                description="Pacientes sin cobertura médica (particulares) se asignan directo a Admisión.",
+                conditions=[{
+                    "position": 0, "lead_field_id": f["obra_social"],
+                    "operator": "eq", "value_str": str(item_particular["id"]),
+                }],
+            )
+
+        # Ejemplo de campo DINÁMICO (SELECTOR), modo lista: obra_social in [OSDE, Swiss Medical]
+        if ids_premium:
+            create_routing_policy(
+                "Coberturas Premium a Equipo Médico", team_medicos, priority=5,
+                campaign_id=camp_pacientes,
+                description="Pacientes con OSDE o Swiss Medical se derivan directo al equipo médico.",
+                conditions=[{
+                    "position": 0, "lead_field_id": f["obra_social"],
+                    "operator": "in", "value_list": [str(i) for i in ids_premium],
+                }],
+            )
+
+    # Ejemplo de campo NATIVO, política global (sin campaign_id): toda consulta
+    # de la campaña de Estética se deriva al equipo médico.
+    if camp_estetica and team_medicos:
+        create_routing_policy(
+            "Consultas de Estética al Equipo Médico", team_medicos, priority=20,
+            description="Política global: toda consulta de la campaña de Medicina Estética va al equipo médico.",
+            conditions=[{
+                "position": 0, "native_field": "campaign_id",
+                "operator": "eq", "value_str": str(camp_estetica),
+            }],
+        )
+
+    log("  Políticas de enrutamiento creadas", indent=2)
     log(f"Organización SALUD completada ✓", indent=2)
 
 
@@ -907,9 +996,8 @@ def build_org_inmobiliaria():
         ("Natalia Vega",      "nvega@propiedadesdelsur.com"),
     ]
     for name, email in agentes_data:
-        uid = create_user(name, email)
+        uid = create_user(name, email, org_id)
         if uid:
-            assign_user_to_org(uid, org_id)
             users.append(uid)
     log(f"Usuarios creados: {len(users)}", indent=2)
 
@@ -1177,9 +1265,8 @@ def build_org_fintech():
         ("Verónica Salinas",  "vsalinas@creditofacil.com"),
         ("Martín Díaz",       "mdiaz@creditofacil.com"),
     ]:
-        uid = create_user(name, email)
+        uid = create_user(name, email, org_id)
         if uid:
-            assign_user_to_org(uid, org_id)
             users.append(uid)
 
     # Nomencladores
@@ -1366,9 +1453,8 @@ def build_org_concesionaria():
         ("Laura Sosa",       "lsosa@autoelite.com"),
         ("Pablo Morales",    "pmorales@autoelite.com"),
     ]:
-        uid = create_user(name, email)
+        uid = create_user(name, email, org_id)
         if uid:
-            assign_user_to_org(uid, org_id)
             users.append(uid)
 
     items_marca, nom_marca = get_or_create_org_nomenclator(
@@ -1550,9 +1636,8 @@ def build_org_marketing_b2b():
         ("Ricardo Velázquez", "rvelazquez@digitalboost.com"),
         ("Jimena Paredes",    "jparedes@digitalboost.com"),
     ]:
-        uid = create_user(name, email)
+        uid = create_user(name, email, org_id)
         if uid:
-            assign_user_to_org(uid, org_id)
             users.append(uid)
 
     # Nomencladores

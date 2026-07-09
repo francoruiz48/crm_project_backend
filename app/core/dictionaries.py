@@ -15,8 +15,8 @@ LEAD_SEARCH_OPERATORS = [
 ]
 
 LEAD_ROUTING_RULE_CONDITION_TYPES = [
-    {"code": "NOMENCLATOR", "label": "Valor de Nomenclador"},
-    {"code": "CUSTOM_FIELD", "label": "Campo Personalizado"}
+    {"code": "NATIVE", "label": "Campo Nativo del Lead"},
+    {"code": "DYNAMIC", "label": "Campo Personalizado (Dinámico)"}
 ]
 
 TEAM_ROLES = [
