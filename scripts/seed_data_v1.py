@@ -231,8 +231,8 @@ def create_workspace(name: str, description: str = None) -> int | None:
     log(f"Error creando workspace '{name}': {r.text}", "ERR")
     return None
 
-def create_campaign(name: str, workspace_id: int, lead_flow_id: int = None) -> int | None:
-    payload = {"name": name, "workspace_id": workspace_id, "active": True}
+def create_campaign(name: str, workspace_id: int, lead_flow_id: int = None, is_public: bool = True) -> int | None:
+    payload = {"name": name, "workspace_id": workspace_id, "active": True, "is_public": is_public}
     if lead_flow_id:
         payload["lead_flow_id"] = lead_flow_id
     r = api_post("/campaigns/", payload)
@@ -445,9 +445,12 @@ def add_validation_rule(field_id: int, template_code: str, params: dict = None, 
 # ---------------------------------------------------------------------------
 # HELPERS: LEADS
 # ---------------------------------------------------------------------------
-def create_lead(campaign_id: int, values: list[dict]) -> int | None:
+def create_lead(campaign_id: int, values: list[dict], assigned_to_user_id: int = None) -> int | None:
     clean = [v for v in values if v.get("field_id") is not None and v.get("value") is not None]
-    r = api_post("/leads/", {"campaign_id": campaign_id, "values": clean})
+    payload = {"campaign_id": campaign_id, "values": clean}
+    if assigned_to_user_id is not None:
+        payload["assigned_to_user_id"] = assigned_to_user_id
+    r = api_post("/leads/", payload)
     if r.status_code in (200, 201):
         return r.json()["id"]
     return None
@@ -660,7 +663,7 @@ def build_org_salud():
     # CAMPAÑA 1: Pacientes Clínica General
     # -----------------------------------------------------------------------
     log("  Campaña: Pacientes Clínica General", "INFO")
-    camp_pacientes = create_campaign("Pacientes Clínica General", ws_pacientes)
+    camp_pacientes = create_campaign("Pacientes Clínica General", ws_pacientes, is_public=False)
     if team_admision and camp_pacientes:
         give_team_campaign_access(team_admision, camp_pacientes)
 
@@ -708,12 +711,45 @@ def build_org_salud():
         create_lead_view(camp_pacientes, "Todos los Pacientes",       "LIST",   "PUBLIC")
         create_lead_view(camp_pacientes, "Kanban por Estado",         "KANBAN", "PUBLIC")
 
-        # --- Generar leads ---
-        log("    Generando leads pacientes...", indent=4)
+        # --- Políticas de enrutamiento (deben existir ANTES de crear los leads:
+        #     el motor solo enruta en el momento de la creación) ---
         items_os_c, _ = get_or_create_campaign_nomenclator("Cobertura Médica",
             ["OSDE", "Swiss Medical", "Galeno", "PAMI", "Particular", "Sancor Salud"], camp_pacientes)
+        if team_admision and team_medicos and f.get("obra_social"):
+            item_particular = next((i for i in items_os_c if i["value"] == "Particular"), None)
+            ids_premium = [i["id"] for i in items_os_c if i["value"] in ("OSDE", "Swiss Medical")]
+
+            # Ejemplo de campo DINÁMICO (SELECTOR), modo simple: obra_social = "Particular"
+            if item_particular:
+                create_routing_policy(
+                    "Particulares a Admisión", team_admision, priority=10,
+                    campaign_id=camp_pacientes,
+                    description="Pacientes sin cobertura médica (particulares) se asignan directo a Admisión.",
+                    conditions=[{
+                        "position": 0, "lead_field_id": f["obra_social"],
+                        "operator": "eq", "value_str": str(item_particular["id"]),
+                    }],
+                )
+
+            # Ejemplo de campo DINÁMICO (SELECTOR), modo lista: obra_social in [OSDE, Swiss Medical]
+            if ids_premium:
+                create_routing_policy(
+                    "Coberturas Premium a Equipo Médico", team_medicos, priority=5,
+                    campaign_id=camp_pacientes,
+                    description="Pacientes con OSDE o Swiss Medical se derivan directo al equipo médico.",
+                    conditions=[{
+                        "position": 0, "lead_field_id": f["obra_social"],
+                        "operator": "in", "value_list": [str(i) for i in ids_premium],
+                    }],
+                )
+
+        # --- Generar leads ---
+        log("    Generando leads pacientes...", indent=4)
         _, _gnom = get_global_nomenclator("Genero")
         items_g, _   = get_global_nomenclator("Genero")
+
+        # Agentes de Admisión para simular algunos leads ya tomados (el resto queda sin asignar)
+        admision_agent_ids = (users[1:2] + users[3:5]) if len(users) > 4 else []
 
         lead_ids_pac = []
         for i in range(50):
@@ -742,7 +778,10 @@ def build_org_salud():
             if f.get("prox_turno") and random.random() > 0.5:
                 vals.append({"field_id": f["prox_turno"],  "value": futuro.strftime("%Y-%m-%d %H:%M:%S")})
 
-            lid = create_lead(camp_pacientes, vals)
+            # ~40% de los leads quedan tomados por un agente puntual; el resto sin asignar
+            asignado = random.choice(admision_agent_ids) if admision_agent_ids and random.random() < 0.4 else None
+
+            lid = create_lead(camp_pacientes, vals, assigned_to_user_id=asignado)
             if lid:
                 lead_ids_pac.append((lid, imc_exp))
 
@@ -794,7 +833,7 @@ def build_org_salud():
     # CAMPAÑA 2: Medicina Estética (flujo personalizado)
     # -----------------------------------------------------------------------
     log("  Campaña: Medicina Estética", "INFO")
-    camp_estetica = create_campaign("Consultas Estética", ws_estetica, lead_flow_id=flow_estetica_id)
+    camp_estetica = create_campaign("Consultas Estética", ws_estetica, lead_flow_id=flow_estetica_id, is_public=False)
     if team_medicos and camp_estetica:
         give_team_campaign_access(team_medicos, camp_estetica)
 
@@ -844,8 +883,24 @@ def build_org_salud():
 
         create_lead_view(camp_estetica, "Pipeline Estética", "KANBAN", "PUBLIC")
 
+        # Política de enrutamiento (debe existir ANTES de crear los leads).
+        # Ejemplo de campo NATIVO, política global (sin campaign_id): toda consulta
+        # de la campaña de Estética se deriva al equipo médico.
+        if team_medicos:
+            create_routing_policy(
+                "Consultas de Estética al Equipo Médico", team_medicos, priority=20,
+                description="Política global: toda consulta de la campaña de Medicina Estética va al equipo médico.",
+                conditions=[{
+                    "position": 0, "native_field": "campaign_id",
+                    "operator": "eq", "value_str": str(camp_estetica),
+                }],
+            )
+
         # Generar leads
         log("    Generando leads estética...", indent=4)
+        # Agentes del Equipo Médico para simular algunos leads ya tomados
+        medicos_agent_ids = users[5:7] if len(users) > 6 else []
+
         lead_ids_est = []
         for _ in range(30):
             sesiones   = random.randint(1, 8)
@@ -875,7 +930,10 @@ def build_org_salud():
             if fe.get("instagram") and random.random() > 0.6:
                 vals.append({"field_id": fe["instagram"],  "value": f"@{fake.user_name()}"})
 
-            lid = create_lead(camp_estetica, vals)
+            # ~40% de los leads quedan tomados por un agente puntual; el resto sin asignar
+            asignado = random.choice(medicos_agent_ids) if medicos_agent_ids and random.random() < 0.4 else None
+
+            lid = create_lead(camp_estetica, vals, assigned_to_user_id=asignado)
             if lid:
                 lead_ids_est.append((lid, costo_tot_exp))
 
@@ -913,55 +971,6 @@ def build_org_salud():
 
         log(f"    {len(lead_ids_est)} leads estética generados", indent=4)
 
-    # -----------------------------------------------------------------------
-    # POLÍTICAS DE ENRUTAMIENTO (v3) — ejemplos con campo dinámico y campo nativo
-    # -----------------------------------------------------------------------
-    if camp_pacientes and team_admision and team_medicos and f.get("obra_social"):
-        items_os_pol, _ = get_or_create_campaign_nomenclator(
-            "Cobertura Médica",
-            ["OSDE", "Swiss Medical", "Galeno", "PAMI", "Particular", "Sancor Salud"],
-            camp_pacientes,
-        )
-        item_particular = next((i for i in items_os_pol if i["value"] == "Particular"), None)
-        ids_premium = [i["id"] for i in items_os_pol if i["value"] in ("OSDE", "Swiss Medical")]
-
-        # Ejemplo de campo DINÁMICO (SELECTOR), modo simple: obra_social = "Particular"
-        if item_particular:
-            create_routing_policy(
-                "Particulares a Admisión", team_admision, priority=10,
-                campaign_id=camp_pacientes,
-                description="Pacientes sin cobertura médica (particulares) se asignan directo a Admisión.",
-                conditions=[{
-                    "position": 0, "lead_field_id": f["obra_social"],
-                    "operator": "eq", "value_str": str(item_particular["id"]),
-                }],
-            )
-
-        # Ejemplo de campo DINÁMICO (SELECTOR), modo lista: obra_social in [OSDE, Swiss Medical]
-        if ids_premium:
-            create_routing_policy(
-                "Coberturas Premium a Equipo Médico", team_medicos, priority=5,
-                campaign_id=camp_pacientes,
-                description="Pacientes con OSDE o Swiss Medical se derivan directo al equipo médico.",
-                conditions=[{
-                    "position": 0, "lead_field_id": f["obra_social"],
-                    "operator": "in", "value_list": [str(i) for i in ids_premium],
-                }],
-            )
-
-    # Ejemplo de campo NATIVO, política global (sin campaign_id): toda consulta
-    # de la campaña de Estética se deriva al equipo médico.
-    if camp_estetica and team_medicos:
-        create_routing_policy(
-            "Consultas de Estética al Equipo Médico", team_medicos, priority=20,
-            description="Política global: toda consulta de la campaña de Medicina Estética va al equipo médico.",
-            conditions=[{
-                "position": 0, "native_field": "campaign_id",
-                "operator": "eq", "value_str": str(camp_estetica),
-            }],
-        )
-
-    log("  Políticas de enrutamiento creadas", indent=2)
     log(f"Organización SALUD completada ✓", indent=2)
 
 
