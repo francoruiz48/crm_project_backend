@@ -32,7 +32,9 @@ Archivos principales:
 Organization ──< UserOrganization >── User
 ```
 
-Campos propios: `name`, `description`, `require_lead_state_notes` (booleano). El nombre sugiere "exigir notas al cambiar de estado un lead", pero **no se encontró ninguna referencia a este campo en todo el código de `app/`** fuera de su propia declaración en el modelo — `LeadService.change_state` (ver `lead.md` §7) acepta `notes` como parámetro siempre opcional, sin consultar este flag. Es un campo de configuración que existe en el modelo y probablemente en el schema, pero no está conectado a ninguna lógica de negocio todavía.
+Campos propios: `name`, `description`, `require_lead_state_notes` (booleano). El nombre sugiere "exigir notas al cambiar de estado un lead", pero **es un flag completamente muerto (confirmado 2026-07-10)**: no aparece en ningún lado de `app/` fuera de su propia declaración en el modelo — ni siquiera está expuesto en `OrganizationCreate`/`OrganizationUpdate`, así que hoy **no se puede setear a `True` ni vía API**. `LeadService.change_state` (ver `lead.md` §7) acepta `notes` como parámetro siempre opcional, sin consultar este flag en ningún punto.
+
+**Decisión (2026-07-10):** por ahora queda documentado como pendiente, sin implementar ni eliminar — el usuario no está seguro todavía de si van a construir esta feature tal como está pensada. Si se retoma, las dos opciones son: (a) exponer el flag en los schemas y hacer que `change_state` exija `notes` cuando esté activo, o (b) eliminar la columna del modelo (y de la DB, con un script de migración como los de `scripts/`) si se decide no implementarla nunca. Ver `hallazgos_agente/organizaciones.md`.
 
 `delete_strategy = PROTECTED` (ver `convenciones_generales.md` §9) — una organización nunca se borra vía API, ni soft ni hard.
 

@@ -7,7 +7,7 @@ Documentación técnica del endpoint de búsqueda global (barra de búsqueda tip
 1. [Visión general](#1-visión-general)
 2. [Endpoint](#2-endpoint)
 3. [Qué entidades busca y por qué campos](#3-qué-entidades-busca-y-por-qué-campos)
-4. [Punto menor: `code` no existe en `NomenclatorItem`](#4-punto-menor-code-no-existe-en-nomenclatoritem)
+4. [RESUELTO: `code` no existe en `NomenclatorItem`](#4-resuelto-code-no-existe-en-nomenclatoritem)
 5. [Cómo se testea](#5-cómo-se-testea)
 
 ---
@@ -44,12 +44,14 @@ No se busca en `Tag`, `User`, `LeadField`, `WebForm` ni ninguna otra entidad —
 
 ---
 
-## 4. Punto menor: `code` no existe en `NomenclatorItem`
+## 4. [RESUELTO] `code` no existe en `NomenclatorItem`
 
-`search_fields=["code", "value"]` para `NomenclatorItem` incluye `"code"`, pero el modelo `NomenclatorItem` (ver `nomencladores.md` §2) no tiene ninguna columna `code` — solo `value`. El motor de búsqueda genérico (`BaseRepository.get_all`) ignora en silencio los campos que no existen en el modelo (`hasattr(cls.model, field)`), así que esto no rompe nada, simplemente la búsqueda de nomencladores termina funcionando solo por `value`, no por los dos campos que el código sugiere. No es un bug funcional, pero es código que aparenta más de lo que hace — vale la pena limpiarlo (quitar `"code"`) la próxima vez que se toque este archivo.
+**Antes (hasta 2026-07-10):** `search_fields=["code", "value"]` para `NomenclatorItem` incluía `"code"`, pero el modelo `NomenclatorItem` (ver `nomencladores.md` §2) no tiene ninguna columna `code` — solo `value`. El motor de búsqueda genérico (`BaseRepository.get_all`) ignora en silencio los campos que no existen en el modelo (`hasattr(cls.model, field)`), así que no rompía nada — la búsqueda de nomencladores funcionaba solo por `value`, no por los dos campos que el código sugería. No era un bug funcional, era código que aparentaba más de lo que hacía.
+
+**Fix aplicado:** se quitó `"code"` de `search_fields` en `SearchService.global_search` (`app/services/search_service.py`), dejando solo `["value"]` — sin cambio de comportamiento real, solo limpieza.
 
 ---
 
 ## 5. Cómo se testea
 
-No se encontró ningún test para `GET /search` — ni el caso feliz (que devuelva resultados de las 5 categorías), ni la validación de `min_length=3`, ni el aislamiento de tenant en los resultados combinados.
+Desde 2026-07-10, `tests/functional/test_global_search.py` cubre: validación de `min_length=3` (`422` con query de 2 caracteres), caso feliz para `Campaign`/`Workspace`/`Nomenclator`/`NomenclatorItem` (búsqueda por `value`, confirmando que el fix de §4 sigue encontrando resultados), y aislamiento de tenant (un nomenclador/item de otra organización no aparece en los resultados). **Sigue sin haber cobertura específica** para la búsqueda de `Lead` (que usa un mecanismo distinto, sin `search_fields` explícito) ni para el caso de que una búsqueda devuelva resultados combinados de las 5 categorías a la vez.
