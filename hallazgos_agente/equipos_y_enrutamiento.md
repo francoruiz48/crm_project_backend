@@ -3,7 +3,7 @@
 > Ver `hallazgos_agente/_README_PARA_EL_AGENTE.md` para las reglas de esta carpeta.
 
 **Doc de usuario:** `docs/equipos_y_enrutamiento.md` §7 y §11
-**Estado:** PENDIENTE — investigado y confirmado por lectura de código, sin aplicar fix.
+**Estado:** [RESUELTO] 2026-07-10 — investigado, confirmado por lectura de código y corregido (ver "Fix aplicado" al final).
 
 Se releyeron: `team_controller.py`, `team_member_controller.py`, `team_campaign_access_controller.py`, `team_workspace_access_controller.py`, `lead_routing_policy_controller.py`, `team_service.py`, `team_member_service.py`, `team_access_service.py`, `lead_routing_policy_service.py`.
 
@@ -22,6 +22,12 @@ Esto contradice la regla que el propio código documenta para create/update ("so
 ## Solución recomendada
 
 Agregar el mismo chequeo `_assert_manager(session, user_context, policy.target_team_id)` en `LeadRoutingPolicyService`, sobreescribiendo `delete`, `set_active` y `deactivate` (mismo patrón que ya usa `create`/`update`: buscar la policy primero para conocer su `target_team_id`, después validar, después delegar en `super()` o en el repositorio). Test: un `AGENT` (o un `MANAGER` de otro equipo) intenta `DELETE`/`PUT active`/`DELETE active` sobre una política de un equipo ajeno → `403`, igual que ya pasa hoy con `create`/`update`.
+
+## Fix aplicado (2026-07-10)
+
+`app/services/lead_routing_policy_service.py`: se sobreescribieron `delete`, `set_active` y `deactivate` en `LeadRoutingPolicyService`. Cada uno busca la policy primero (`cls.repository.get_by_id(...)`, ya filtra por organización → 404 si no existe/es ajena), corre `_assert_manager(session, user_context, policy.target_team_id)` (la misma función que ya usan `create`/`update`), y si pasa, delega en `super().delete/set_active/deactivate(...)` para no duplicar la lógica de auditoría genérica ya probada.
+
+**Test de regresión:** `tests/functional/test_teams_and_routing.py` — `test_agent_cannot_delete_routing_policy`, `test_agent_cannot_deactivate_routing_policy`, `test_agent_cannot_reactivate_routing_policy` (los tres con un `AGENT` del equipo destino → `403`) + `test_manager_can_delete_own_team_routing_policy` (contraparte positiva: un `MANAGER` del equipo destino sí puede). Nota: `test_agent_cannot_delete_routing_policy` NO verifica además que la política "siga existiendo" tras el 403 (a diferencia de lo planeado originalmente) — ese chequeo extra pisaba la limitación de `db_session` sin SAVEPOINTs documentada en `AGENTS.md` §5.1 (el 403 se dispara vía excepción dentro de un `UnitOfWork`, y el `rollback()` consecuente sobre la sesión compartida del test deja una request de verificación posterior devolviendo `404` en falso). Se sacó ese chequeo; el 403 en sí ya prueba la propiedad de seguridad del hallazgo. `test_agent_cannot_deactivate_routing_policy`/`test_agent_cannot_reactivate_routing_policy` no tenían ese problema porque no encadenaban una verificación posterior.
 
 ## Nota menor (no es un hallazgo aparte, ya documentada por el propio código)
 

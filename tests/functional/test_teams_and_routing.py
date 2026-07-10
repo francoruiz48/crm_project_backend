@@ -809,6 +809,95 @@ def test_routing_policy_native_field_assigned_to_user(api, db_session, initial_s
     assert lead_libre["team_id"]    is None,        "El lead sin asignar no debería rutearse."
 
 
+def test_agent_cannot_delete_routing_policy(api, two_users, initial_structure):
+    """Hallazgo #16: DELETE de una política requiere ser MANAGER del equipo destino,
+    igual que create/update — antes no lo exigía.
+
+    Nota (2026-07-10): no se verifica acá que la política "siga existiendo" después
+    del intento bloqueado — ese chequeo adicional pisa la limitación conocida de
+    `db_session` documentada en AGENTS.md §5.1 (el 403 se dispara vía excepción
+    dentro de un UnitOfWork, y el rollback consecuente sobre la sesión compartida
+    del test puede dejar inaccesibles otros datos del test, incluida la respuesta
+    de una request de verificación posterior). El 403 en sí — la propiedad de
+    seguridad real de este hallazgo — es lo que importa acá.
+    """
+    camp_id = initial_structure["campaign_id"]
+    team = api.create_team("Equipo Delete Policy Perm")
+    api.add_team_member(team["id"], two_users["agent"].id, role="AGENT")
+    f_x = api.create_lead_field(camp_id, "Campo Delete Policy", "INT")
+
+    policy = api.create_routing_policy(
+        name="Política a borrar sin permiso", target_team_id=team["id"],
+        conditions=[{"lead_field_id": f_x["id"], "operator": "eq",
+                     "value_str": "1", "position": 0}],
+        priority=97, campaign_id=camp_id,
+    )
+
+    with as_user(api, two_users["agent"]):
+        resp = api.client.delete(f"/lead_routing_policies/{policy['id']}", headers=api.headers)
+    assert resp.status_code == 403, "Un AGENT no debería poder borrar una política de enrutamiento."
+
+
+def test_agent_cannot_deactivate_routing_policy(api, two_users, initial_structure):
+    """Hallazgo #16: mismo chequeo para DELETE /active/{id} (desactivar)."""
+    camp_id = initial_structure["campaign_id"]
+    team = api.create_team("Equipo Deactivate Policy Perm")
+    api.add_team_member(team["id"], two_users["agent"].id, role="AGENT")
+    f_x = api.create_lead_field(camp_id, "Campo Deactivate Policy", "INT")
+
+    policy = api.create_routing_policy(
+        name="Política a desactivar sin permiso", target_team_id=team["id"],
+        conditions=[{"lead_field_id": f_x["id"], "operator": "eq",
+                     "value_str": "1", "position": 0}],
+        priority=96, campaign_id=camp_id,
+    )
+
+    with as_user(api, two_users["agent"]):
+        resp = api.client.delete(f"/lead_routing_policies/active/{policy['id']}", headers=api.headers)
+    assert resp.status_code == 403, "Un AGENT no debería poder desactivar una política de enrutamiento."
+
+
+def test_agent_cannot_reactivate_routing_policy(api, two_users, initial_structure):
+    """Hallazgo #16: mismo chequeo para PUT /active/{id} (reactivar)."""
+    camp_id = initial_structure["campaign_id"]
+    team = api.create_team("Equipo Reactivate Policy Perm")
+    api.add_team_member(team["id"], two_users["agent"].id, role="AGENT")
+    f_x = api.create_lead_field(camp_id, "Campo Reactivate Policy", "INT")
+
+    policy = api.create_routing_policy(
+        name="Política a reactivar sin permiso", target_team_id=team["id"],
+        conditions=[{"lead_field_id": f_x["id"], "operator": "eq",
+                     "value_str": "1", "position": 0}],
+        priority=95, campaign_id=camp_id,
+    )
+    # El creador (superadmin) la desactiva primero, para tener algo que reactivar.
+    resp_deact = api.client.delete(f"/lead_routing_policies/active/{policy['id']}", headers=api.headers)
+    assert resp_deact.status_code == 200
+
+    with as_user(api, two_users["agent"]):
+        resp = api.client.put(f"/lead_routing_policies/active/{policy['id']}", headers=api.headers)
+    assert resp.status_code == 403, "Un AGENT no debería poder reactivar una política de enrutamiento."
+
+
+def test_manager_can_delete_own_team_routing_policy(api, two_users, initial_structure):
+    """Contraparte positiva: un MANAGER del equipo destino sí puede borrar su política."""
+    camp_id = initial_structure["campaign_id"]
+    team = api.create_team("Equipo Delete Policy Manager OK")
+    api.add_team_member(team["id"], two_users["manager"].id, role="MANAGER")
+    f_x = api.create_lead_field(camp_id, "Campo Delete Policy OK", "INT")
+
+    policy = api.create_routing_policy(
+        name="Política que el manager sí puede borrar", target_team_id=team["id"],
+        conditions=[{"lead_field_id": f_x["id"], "operator": "eq",
+                     "value_str": "1", "position": 0}],
+        priority=94, campaign_id=camp_id,
+    )
+
+    with as_user(api, two_users["manager"]):
+        resp = api.client.delete(f"/lead_routing_policies/{policy['id']}", headers=api.headers)
+    assert resp.status_code == 200
+
+
 def test_routing_policy_inactive_does_not_route(api, db_session, initial_structure):
     """
     Una política con active=False no debe rutear leads, aunque sus condiciones matcheen.
