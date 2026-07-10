@@ -10,7 +10,7 @@ Documentación técnica de los tres mecanismos de auditoría/historial del siste
 4. [`LeadStateHistory`: historial puro de cambios de estado](#4-leadstatehistory-historial-puro-de-cambios-de-estado)
 5. [Endpoints](#5-endpoints)
 6. [Inmutabilidad y `delete_strategy`](#6-inmutabilidad-y-delete_strategy)
-7. [Punto pendiente: filtro de tenant con `organization_id` nulo](#7-punto-pendiente-filtro-de-tenant-con-organization_id-nulo)
+7. [RESUELTO: filtro de tenant con `organization_id` nulo](#7-resuelto-filtro-de-tenant-con-organization_id-nulo)
 8. [Cómo se testea](#8-cómo-se-testea)
 
 ---
@@ -78,14 +78,22 @@ Los tres tienen `delete_strategy = PROTECTED` (ver `convenciones_generales.md` �
 
 ---
 
-## 7. Punto pendiente: filtro de tenant con `organization_id` nulo
+## 7. [RESUELTO] Filtro de tenant con `organization_id` nulo
 
-`SystemAuditLog.organization_id` es `nullable=True`, y `_log_audit` lo llena con `getattr(obj, "organization_id", None)` — es decir, si el objeto auditado no tiene atributo `organization_id` (por ejemplo, entidades que no son multi-tenant directamente), la fila de auditoría queda con `organization_id = NULL`.
+**Bug (hasta 2026-07-10):** `SystemAuditLog.organization_id` es `nullable=True`, y `_log_audit` lo llenaba con `getattr(obj, "organization_id", None)` — si el objeto auditado no tenía atributo `organization_id`, la fila de auditoría quedaba con `organization_id = NULL`.
 
-El filtro de tenant estándar en lectura (`_apply_tenant_filter`, ver `convenciones_generales.md` §6) filtra por `organization_id == org_id OR organization_id == ADMIN_ORG_ID` — una fila con `organization_id = NULL` no matchea ninguna de las dos condiciones, así que **quedaría invisible** en `GET /audit-logs/` para cualquier organización, incluida la que originó el cambio. No se confirmó cuántas entidades del sistema carecen de `organization_id` (la mayoría sí lo tiene), pero si existe alguna, sus eventos de auditoría quedarían huérfanos: se graban, pero nadie puede consultarlos por API. No se investigó más a fondo por estar fuera del alcance de esta ronda de documentación.
+El filtro de tenant estándar en lectura (`_apply_tenant_filter`, ver `convenciones_generales.md` §6) filtra por `organization_id == org_id OR organization_id == ADMIN_ORG_ID` — una fila con `organization_id = NULL` no matchea ninguna de las dos condiciones (semántica SQL de `NULL`), así que quedaba **invisible** en `GET /audit-logs/` para cualquier organización, incluida la que originó el cambio.
+
+**Confirmado que ocurría en la práctica** (no era solo teórico): se relevaron los modelos auditables sin columna `organization_id` propia — `LeadComment`, `FieldAutomation`, `LeadFieldSubtype`, `LeadFieldType`, `LeadStateTransition`, `TeamMember`, `TeamAccess`. De estos, `LeadComment` es el caso más claro: su service (`lead_comment_service.py`) no tiene ningún override sobre el CRUD genérico, así que **cada comentario creado/editado/borrado en el sistema generaba una fila de auditoría huérfana**, invisible por API para siempre.
+
+**Fix aplicado:** en `_log_audit` (`app/services/base_service.py`), cuando el objeto auditado no tiene `organization_id` propio, se usa como fallback `TENANT_ORG_ID.get()` — la organización activa del request que está ejecutando la acción.
+
+**Regresión detectada en producción tras el primer fix (2026-07-10):** la primera versión usaba `TENANT_ORG_ID.get()` sin validar que esa organización existiera. `system_audit_log.organization_id` tiene una **foreign key real** contra `organization.id` (no es solo `nullable=True`), y `OrganizationController._get_deps` devuelve `[]` para `create`/`read` — es decir, `POST /organizations/` no exige que el header `X-Organization-Id` corresponda a una organización real. Al crear una organización con ese header apuntando a un id inexistente, el `INSERT` en `system_audit_log` violaba la FK (`insert or update on table "system_audit_log" violates foreign key constraint`) y **abortaba la creación completa de la organización** con un `500` — una regresión bastante peor que el bug original (que solo afectaba visibilidad, no rompía nada). Se vio en logs de producción real, no en tests: superadmin creando organizaciones y promoviendo usuarios a superadmin ambos dispararon el error.
+
+**Fix definitivo:** dos ajustes en `_log_audit`: (1) si el modelo auditado es la propia `Organization`, se usa `obj.id` — su propio id, ya garantizado válido porque el `flush()` corre antes que `_log_audit` — en vez de depender del header; (2) para cualquier otro modelo, antes de usar `TENANT_ORG_ID.get()` se verifica con una query liviana que esa organización realmente exista; si no existe, se cae de nuevo a `NULL` (el comportamiento original, seguro aunque menos útil) en lugar de romper la operación.
 
 ---
 
 ## 8. Cómo se testea
 
-No hay un archivo de test dedicado a estos tres módulos como tales; se verifican indirectamente dentro de las suites de los módulos que los generan — por ejemplo `test_automation_engine.py::test_automation_leaves_audit_trace` (confirma que una automatización deja rastro en el historial correspondiente) y aserciones sobre historial dentro de `test_lead_flows_and_states.py` (`test_lead_lifecycle_and_history`). **No se encontraron tests que ejerciten directamente los endpoints `GET /audit-logs/*`, `GET /lead-activity-histories/*` ni `GET /lead_state_history/*`** (paginación, filtros, aislamiento de tenant) — son endpoints de solo lectura pero con datos potencialmente sensibles (quién cambió qué), y hoy dependen solo de la cobertura indirecta de otros módulos.
+No hay un archivo de test dedicado a estos tres módulos como tales; se verifican indirectamente dentro de las suites de los módulos que los generan — por ejemplo `test_automation_engine.py::test_automation_leaves_audit_trace` (confirma que una automatización deja rastro en el historial correspondiente) y aserciones sobre historial dentro de `test_lead_flows_and_states.py` (`test_lead_lifecycle_and_history`). Desde 2026-07-10, `tests/functional/test_system_audit_log.py` cubre el fix de §7 (5 casos): crea un `LeadComment` y verifica que la fila de `SystemAuditLog` resultante tenga `organization_id` correcto (no `NULL`) tanto directo en la DB como visible vía `GET /audit-logs/`; control de que el fallback no pisa el valor real en modelos que sí tienen `organization_id` propio (`Workspace`); y dos tests que cubren específicamente la regresión del FK (crear una organización con un header `X-Organization-Id` inexistente no debe romper, y `_log_audit` no debe reventar si `TENANT_ORG_ID` apunta a una organización que no existe). **Sigue sin haber tests** que ejerciten paginación/filtros/aislamiento de tenant de estos endpoints de forma más exhaustiva, ni cobertura directa de `GET /lead-activity-histories/*` / `GET /lead_state_history/*`.
