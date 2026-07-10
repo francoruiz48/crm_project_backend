@@ -122,6 +122,8 @@ Un helper interno del controller detecta `Content-Type` y devuelve `(lead_dict, 
 - **Campo tipo `LEAD`** (relación entre leads): valida que los IDs sean enteros, que el lead relacionado exista **en la misma organización** (mensaje genérico si no existe, para no filtrar existencia cross-tenant), que no se relacione consigo mismo, y que pertenezca a la campaña configurada en `related_campaign_id`.
 - **Campos calculados**: se evalúan con `ExcelFormulaEvaluatorService` sobre un contexto `{nombre_campo: valor_tipado}`. Si la fórmula tira excepción, el campo calculado queda `None` en vez de bloquear la creación/actualización.
 
+**[PENDIENTE, ronda de bug-hunting 2026-07-10, hallazgo #17]** `_check_duplicates` es un chequeo a nivel de aplicación (`SELECT` seguido de `INSERT`, sin `with_for_update()` ni constraint de DB) — a diferencia de `change_state`, que sí usa `SELECT ... FOR UPDATE` para evitar condiciones de carrera. Dos requests de creación concurrentes con los mismos valores de campos `is_primary` podrían pasar ambas la verificación de duplicados antes de que la primera inserción se confirme, resultando en dos leads "duplicados" según la regla de negocio. Impacto bajo/medio (ventana de carrera muy chica, requiere que dos requests casi simultáneos manden exactamente los mismos datos primarios) y no es trivial de resolver con un constraint de DB real porque `is_primary` es una configuración dinámica por campaña, no una columna fija. Solución recomendada si se prioriza: usar un lock a nivel de aplicación (ej. advisory lock de Postgres por `(campaign_id, hash de valores primarios)`) alrededor de la fase de chequeo+inserción, similar al patrón que ya usa `change_state`. Ver `hallazgos_agente/lead.md`.
+
 ---
 
 ## 6. Archivos adjuntos (dos fases)

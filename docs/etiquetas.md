@@ -48,6 +48,8 @@ Campos propios: `name`, `color` (default `#3B82F6`), `organization_id` (`ondelet
 
 Única regla propia: **nombre único por organización** (case-insensitive), tanto en creación como en actualización (solo revalida si el nombre efectivamente cambió). No hay jerarquía, ni protección especial para tags "globales" (no existe el concepto acá, a diferencia de `Nomenclator`).
 
+**[PENDIENTE, hallazgo #25]** `TagService.update` resuelve el objeto con una query cruda (`session.query(Tag).filter_by(id=obj_id)`), sin pasar por el repositorio tenant-aware — mismo patrón sistémico documentado en `hallazgos_agente/patron_queries_sin_tenant_filter.md` (afecta también a `LeadContactState`, `NomenclatorItem`, `Nomenclator`, `LeadFlow`). No es un write cross-tenant real (la escritura final sigue protegida), pero un `obj_id` de otra organización probablemente termina en `500` en vez de `404`.
+
 ---
 
 ## 5. Cómo se testea

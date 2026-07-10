@@ -20,3 +20,16 @@ Se movió el cálculo de `org_id` al principio de `do_update`, antes de la Regla
 `tests/functional/test_lead_contact_states.py::test_lead_contact_state_set_initial_without_changing_name_returns_400`: hace un `PUT` con `is_initial=True` sin tocar `name` y verifica que devuelva `400` (antes rompía con `500`).
 
 Confirmado por el usuario: suite completa OK.
+
+---
+
+# Hallazgo #22 — `update` lee el objeto sin filtro de tenant (ronda de bug-hunting, 2026-07-10)
+
+**Doc de usuario:** `docs/estados_de_contacto.md` §6
+**Estado:** PENDIENTE — prioridad baja/media (no es un write cross-tenant completo, pero sí un crash + posible leak menor de información).
+
+`LeadContactStateService.update` resuelve `current_obj` con `uow.session.query(LeadContactState).filter_by(id=obj_id).first()` — consulta cruda, sin pasar por el repositorio (que sí es tenant-aware). Si `obj_id` pertenece a otra organización, `current_obj` se encuentra igual, y las reglas de unicidad de nombre / único estado inicial corren usando ese objeto ajeno. La persistencia final (`cls.repository.update(...)`) sí filtra por tenant (`LeadContactState` tiene `organization_id`), así que el `UPDATE` real no llega a pisar la fila ajena — pero `repository.update` devuelve `None` en ese caso, y el código que sigue (`cls._log_audit(uow.session, updated_obj, ...)`) probablemente rompe con un error no manejado en vez de un `404` limpio.
+
+**Solución recomendada:** resolver `current_obj` con `cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)` en vez de la query cruda; si no se encuentra, `cls._not_found(obj_id)` inmediatamente. Test: `PUT /lead_contact_states/{id}` de otra organización → `404`, no `500`.
+
+Encontrado en simultáneo con el hallazgo #21 (`hallazgos_agente/flujo_de_leads.md`), mismo patrón de revisión (queries crudas sin tenant filter en vez de usar el repositorio).

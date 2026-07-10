@@ -47,3 +47,44 @@ Cualquier fallback a `TENANT_ORG_ID.get()` en código que escribe a una columna 
 5. `test_log_audit_falls_back_to_null_when_tenant_org_id_does_not_exist` — nivel más bajo: `_log_audit` llamado directamente con `TENANT_ORG_ID` apuntando a una org inexistente no debe lanzar `IntegrityError`, debe caer a `organization_id=NULL`.
 
 Confirmado por el usuario: suite completa OK (después del fix de #5b).
+
+---
+
+# Hallazgo #26 — `LeadActivityHistory`/`LeadStateHistory`: fuga de lectura cross-tenant confirmada (ronda de bug-hunting, 2026-07-10)
+
+**Doc de usuario:** `docs/auditoria.md` §5, §7
+**Estado:** [RESUELTO] 2026-07-10 — confirmado por lectura de código y corregido (ver "Fix aplicado" al final), misma familia que #18/#20/#21.
+
+## Qué se encontró
+
+`LeadActivityHistory` (`app/models/audit/lead_activity_history.py`) y `LeadStateHistory` (`app/models/audit/lead_state_history.py`) **no tienen columna `organization_id`** — solo `lead_id`. Sus repositorios no sobreescriben `apply_security_filter`, y sus controllers son `BaseController` genéricos con `enabled_methods = READ_ONLY`, sin `allowed_filter_fields` declarado.
+
+No se detectó en el barrido original del hallazgo #18 porque el grep de esa vez (`grep -q organization_id app/models/*.py`) no bajaba a subcarpetas — estos dos modelos viven en `app/models/audit/`. Se encontró recién al revisar el módulo de Auditoría aplicando el mismo criterio a todos los modelos, incluyendo subcarpetas (ver comando abajo).
+
+**Resultado confirmado:** cualquier usuario autenticado con el permiso genérico `lead_activity_history:view_all`/`lead_state_history:view_all` (que cualquier rol de **cualquier** organización tiene por default) puede leer, vía `GET /lead-activity-histories/?lead_id=<id>` o `GET /lead_state_history/?lead_id=<id>`, el timeline completo y el historial de cambios de estado de **cualquier lead de cualquier organización**. `LeadActivityHistory.details` (JSONB) puede incluir cambios de campos con valores viejos/nuevos (el propio modelo trae como ejemplo en su comentario `{"field_id": 85, "field_name": "Sueldo", "old_value": "1000", "new_value": "2000"}`) — datos potencialmente sensibles de negocio de otra organización, no solo metadata.
+
+## Relación con el hallazgo #5
+
+Es la otra cara de la misma moneda que el hallazgo #5: ahí el bug era que filas de `SystemAuditLog` quedaban con `organization_id = NULL` e **invisibles** para todos. Acá, `LeadActivityHistory`/`LeadStateHistory` ni siquiera tienen la columna — están **visibles para cualquiera**.
+
+## Solución recomendada
+
+Igual que #18/#20: sobreescribir `apply_security_filter` en `LeadActivityHistoryRepository`/`LeadStateHistoryRepository` con un `JOIN` contra `Lead` (`Lead.organization_id == user_context.organization_id`, o `is_superuser`), sin necesidad de migrar el esquema. Alternativa más robusta a largo plazo: agregar `organization_id` real a ambos modelos (derivable de `Lead.organization_id` al crear).
+
+Tests: usuario de la Org A crea un lead con actividad/cambios de estado; usuario de la Org B intenta `GET /lead-activity-histories/?lead_id=<id de A>` y `GET /lead_state_history/?lead_id=<id de A>` → deben devolver vacío/`403`/`404`, no los datos reales.
+
+## Comando de verificación (incluye subcarpetas — el que se usó en la ronda anterior no las cubría)
+
+```bash
+find app/models -name '*.py' | grep -v __pycache__ | grep -v __init__ | xargs -I{} sh -c 'grep -q organization_id {} || echo {}'
+```
+
+Con este hallazgo, el criterio ya se aplicó a todos los modelos del backend (incluyendo subcarpetas) — no debería quedar ninguna instancia más de esta familia de bug sin revisar.
+
+## Fix aplicado (2026-07-10)
+
+Mismo patrón que #18/#20: se agregó `apply_security_filter` a ambos repositorios (`app/db/repository/audit/lead_activity_history_repository.py` y `.../lead_state_history_repository.py`) — `join` contra `Lead` y filtro por `Lead.organization_id == user_context.organization_id` (bypass superusuario). Como ambos controllers son `READ_ONLY`, no hace falta ninguna validación adicional en el service (no hay `create`/`update`/`delete` expuestos por API para estos modelos).
+
+**Test de regresión:** `tests/functional/test_tenant_isolation.py::TestLeadHistoryIsolation` — no-visibilidad cross-tenant y visibilidad normal en la propia org, para ambos endpoints.
+
+**Nota de test (corrida 2026-07-10, primera vuelta falló):** `test_activity_history_visible_from_own_org` falló con `TypeError: string indices must be integers, not 'str'` — bug del test, no del fix. Asumí que `GET /lead-activity-histories/` devolvía una lista plana; en realidad devuelve la forma paginada (`{"items": [...], "total": ...}`, ver `convenciones_generales.md` §8), así que iterar directo sobre `resp.json()` iteraba las *keys* del dict (strings) en vez de los items. Fix: se agregó el helper `_items(resp)` en `test_tenant_isolation.py` (analógo a `_ids`, ya existente) que maneja ambas formas, y se reescribió el test para usarlo. De paso se fortaleció `test_state_history_visible_from_own_org`, que pasaba pero con un assert vacuo (`resp.json() != []` es siempre `True` para un dict paginado, no verificaba nada real).

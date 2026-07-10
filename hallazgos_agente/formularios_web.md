@@ -29,3 +29,34 @@ Falló `TestWebFormPrivateCRUD::test_create_web_form_rejects_field_from_other_ca
 Diagnosticado leyendo `tests/logs/summary.log` → `tests/logs/functional/test_web_forms.log` (ver `AGENTS.md` §4 para el flujo general de cómo leer esos logs).
 
 Confirmado por el usuario: 17/17 tests pasan, suite completa (471 tests) también.
+
+---
+
+# Hallazgos #9, #10, #11 — Formularios web (ronda de bug-hunting, 2026-07-10)
+
+**Doc de usuario:** `docs/formularios_web.md` §8
+**Estado:** PENDIENTE — investigados y documentados, sin aplicar fix ni preguntar todavía cuál priorizar. No tocar código sin antes preguntar (regla del proyecto).
+
+Contexto: el usuario pidió arrancar una segunda ronda de auditoría, ahora buscando bugs funcionales/de seguridad módulo por módulo (no solo huecos de tests como la ronda anterior). Se re-leyeron enteros: `web_form_service.py`, `web_form_public_controller.py`, `web_form_controller.py`, `web_form_repository.py`, `web_form_schema.py`, `web_form_field_schema.py`, `web_form.py` (modelo), `web_form_field.py` (modelo), `app/core/config.py`.
+
+## Hallazgo #9 — `WebFormField.is_required` nunca se aplica (confirmado, mayor impacto)
+
+`is_required` existe en el modelo (`web_form_field.py:20`) y en el schema (`web_form_field_schema.py:11`), se manda al frontend público vía `GET /public/forms/{uuid}` (`WebFormFieldResponse` lo incluye), pero **nada en `submit_public_form` lo lee** — confirmado con `grep -rn is_required app/`, el único uso real es la declaración en modelo/schema. La única validación de "obligatorio" que sobrevive del lado del backend es el `LeadField.required` original (un flag distinto, a nivel de campo del CRM, no del formulario puntual).
+
+Consecuencia: un visitante puede omitir o mandar vacío un campo marcado `is_required=True` en ese formulario y el lead se crea igual, salvo que el `LeadField` subyacente también sea `required=True` por otra razón. Como el submit es un endpoint público sin login, esto es trivial de explotar llamando directo a la API (sin pasar por el frontend que sí validaría en el cliente).
+
+**Solución recomendada:** en `submit_public_form`, después de armar `form_fields_map`, iterar los `form.fields` con `field_config.is_required=True` y validar que su `key_id` esté en `payload` con un valor no vacío (después de descontar `hidden_value`, que ya se autocompleta y no debería contar como "faltante"); si falta, `400` con detalle del campo. Agregar tests: envío sin un campo requerido → `400`; envío con el campo requerido presente → `200`; campo requerido con `hidden_value` (no debería exigir que venga en el payload, ya se autocompleta).
+
+## Hallazgo #10 — Llamada al proveedor de CAPTCHA sin manejo de errores ni timeout explícito (confirmado)
+
+En `web_form_public_controller.py` líneas ~52-67, el `httpx.AsyncClient().post(...)` a `settings.CAPTCHA_VERIFY_URL` y el `res.json()` posterior no están dentro de ningún `try/except`, y no se pasa `timeout=` (queda en el default de `httpx`). El único `try/except` del endpoint (líneas 107-115) envuelve solamente `LeadService.create`, más abajo. Si el proveedor de CAPTCHA está caído, responde lento, o devuelve algo que no es JSON válido, la excepción se propaga sin capturar y el endpoint responde `500` crudo (sin el mensaje prolijo que sí se usa para el resto de los errores del submit) — y mientras tanto el request queda colgado hasta el timeout default de `httpx`.
+
+**Solución recomendada:** envolver ese bloque en `try/except (httpx.HTTPError, ValueError)` (`ValueError` cubre `res.json()` fallando por respuesta no-JSON) y devolver `400`/`503` con un mensaje del estilo "No se pudo verificar el CAPTCHA, intenta de nuevo" en vez de dejar que reviente como `500`. Agregar `timeout=10.0` (o el valor que el usuario prefiera) explícito en el `client.post`. Test: mockear `httpx.AsyncClient.post` para que tire `httpx.ConnectError` o devuelva texto no-JSON, verificar que el endpoint responde con un error controlado (400/503) y no un 500 sin manejar.
+
+## Hallazgo #11 — `request.client.host` como fuente de IP para rate limit y CAPTCHA `remoteip` (menor confianza, no confirmado)
+
+El rate limit (`@limiter.limit("5/minute")`, vía `get_remote_address` de `slowapi`) y el `remoteip` que se le manda al verificador de CAPTCHA usan ambos `request.client.host`. Si la app corre detrás de un proxy/balanceador (nginx, load balancer, etc. — probable dado que los logs de producción que compartió el usuario mostraban contenedores `crm_backend`/`crm_db`, sugiriendo despliegue con docker-compose y probablemente un proxy delante), esa IP sería la del proxy y no la del visitante real. Efecto: el rate limit de `5/minuto` terminaría compartido por *todos* los visitantes (fácil de agotar por cualquiera, o bloquea a todos por igual si uno abusa), y el `remoteip` mandado al CAPTCHA sería inútil para su propia heurística anti-bot.
+
+**No se pudo confirmar** si el despliegue real efectivamente pasa por un proxy inverso — depende de infraestructura que no es visible desde el código. Antes de tocar esto habría que preguntarle al usuario cómo está desplegado el backend en producción.
+
+**Solución recomendada (si se confirma que hay proxy delante):** usar el header `X-Forwarded-For` (primer IP de la lista) o `X-Real-IP` si el proxy los setea, con `get_remote_address` reemplazado por una función custom que los lea con fallback a `request.client.host`. Si no hay proxy, no hace falta cambiar nada.

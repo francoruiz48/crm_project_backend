@@ -11,6 +11,7 @@ Documentación técnica de los formularios embebibles (landing pages, iframes) q
 5. [Las 4 barreras de seguridad del submit público](#5-las-4-barreras-de-seguridad-del-submit-público)
 6. [Campos ocultos (`hidden_value`)](#6-campos-ocultos-hidden_value)
 7. [RESUELTO: cobertura de tests](#7-resuelto-cobertura-de-tests)
+8. [PENDIENTE: hallazgos de la ronda de bug-hunting](#8-pendiente-hallazgos-de-la-ronda-de-bug-hunting)
 
 ---
 
@@ -101,3 +102,13 @@ Un `WebFormField` con `hidden_value` no se muestra al visitante (el frontend pú
 - El CAPTCHA se testea mockeando `httpx.AsyncClient.post` (no se llama a ningún servicio externo real, ni depende de `CAPTCHA_SECRET_KEY`/`CAPTCHA_VERIFY_URL`).
 - El test de rate limit resetea el `Limiter` del router (`web_form_public_controller.limiter`) antes de cada test de la clase `TestPublicFormSubmit` (vía fixture `autouse`) — ese `Limiter` es una instancia separada de la de `app.main` y sus contadores viven a nivel de módulo/proceso, así que sin el reset los tests de la clase se pisarían la cuota entre sí. No se pudo confirmar en este entorno (sin poder correr pytest) que el comportamiento sea idéntico al de producción — es el test más probable de fallar si algo no es como se documentó acá; revisarlo primero si falla.
 - Sigue habiendo margen para más casos (ej. múltiples formularios por campaña, campos con `custom_label`/`custom_placeholder`, mapeo de campos por combinación multi-criterio como en `importacion_y_exportacion.md`), pero se priorizaron los escenarios de seguridad por ser los de mayor riesgo.
+
+---
+
+## 8. [PENDIENTE] Hallazgos de la ronda de bug-hunting
+
+Detalle completo en `hallazgos_agente/formularios_web.md` (hallazgos #9, #10, #11). Resumen:
+
+- **#9 — `is_required` de `WebFormField` no se aplica nunca.** Es un flag pensado para "obligatorio en este formulario puntual", visible en el modelo/schema y expuesto al frontend público, pero `submit_public_form` nunca lo lee. Un visitante puede omitir un campo marcado obligatorio y el lead se crea igual (llamando la API directo, sin pasar por el frontend). Mayor impacto de los tres, recomendado priorizar.
+- **#10 — La verificación de CAPTCHA no maneja errores.** La llamada al proveedor externo (`httpx`) no tiene `try/except` ni timeout explícito; si el proveedor falla o tarda, el endpoint devuelve un `500` crudo en vez de un error prolijo.
+- **#11 — `request.client.host` puede no ser la IP real si hay proxy delante** (rate limit y CAPTCHA `remoteip`). No confirmado si aplica al despliegue real — depende de la infraestructura.

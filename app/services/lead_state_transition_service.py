@@ -5,6 +5,7 @@ from app.services.base_service import BaseService
 from app.db.unit_of_work import UnitOfWork
 from app.db.repository.lead_state_transition_repository import LeadStateTransitionRepository
 from app.db.repository.lead_state_repository import LeadStateRepository
+from app.db.repository.lead_flow_repository import LeadFlowRepository
 from app.schemas.lead_state_transition_schema import LeadStateTransitionBulkCreate, LeadStateTransitionCreate
 from app.core.security import UserContext
 from app.models.lead_state import LeadState
@@ -14,6 +15,7 @@ from app.core.constans import SystemAuditLogAction
 class LeadStateTransitionService(BaseService):
     repository = LeadStateTransitionRepository()
     state_repository = LeadStateRepository() # Necesitamos leer los estados
+    lead_flow_repository = LeadFlowRepository() # Necesitamos validar pertenencia del flujo a la org (hallazgo #21)
 
     @classmethod
     def create(cls, obj_in: LeadStateTransitionCreate, user_context: Optional[UserContext] = None, **kwargs):
@@ -72,6 +74,16 @@ class LeadStateTransitionService(BaseService):
         created_transitions = []
         
         with UnitOfWork() as uow:
+            # 0. Hallazgo #21: validar que el lead_flow_id pertenezca a la organización activa
+            # ANTES de tocar nada — las consultas de abajo son crudas (session.query directo)
+            # y no aplican el filtro de tenant por sí solas.
+            lead_flow = cls.lead_flow_repository.get_by_id(uow.session, obj_in.lead_flow_id, user_context=user_context)
+            if not lead_flow:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    detail=[{"field": "lead_flow_id", "message": "El flujo de leads no existe o no pertenece a esta organización."}]
+                )
+
             # 1. Recopilar todos los IDs únicos para hacer UNA sola consulta a la DB
             state_ids = set()
             for t in obj_in.transitions:
@@ -145,7 +157,16 @@ class LeadStateTransitionService(BaseService):
         def do_update(uow):
             errors = []
             created_by = user_context.user.id if user_context and user_context.user else None
-            
+
+            # 0. Hallazgo #21: validar que el lead_flow_id pertenezca a la organización activa
+            # ANTES de tocar nada — las consultas de abajo son crudas y no aplican tenant filter.
+            lead_flow = cls.lead_flow_repository.get_by_id(uow.session, obj_in.lead_flow_id, user_context=user_context)
+            if not lead_flow:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    detail=[{"field": "lead_flow_id", "message": "El flujo de leads no existe o no pertenece a esta organización."}]
+                )
+
             # 1. Traer todos los estados ACTIVOS de este flujo para validación rápida
             states_in_db = uow.session.query(cls.state_repository.model).filter_by(
                 lead_flow_id=obj_in.lead_flow_id,
@@ -243,6 +264,12 @@ class LeadStateTransitionService(BaseService):
 
             transition = uow.session.query(LeadStateTransition).filter_by(id=obj_id).first()
             if not transition:
+                cls._not_found(obj_id)
+
+            # Hallazgo #21: LeadStateTransition no tiene organization_id propio — validar que
+            # su lead_flow_id pertenezca a la organización activa antes de borrar nada.
+            lead_flow = cls.lead_flow_repository.get_by_id(uow.session, transition.lead_flow_id, user_context=user_context)
+            if not lead_flow:
                 cls._not_found(obj_id)
 
             from_state_id = transition.from_state_id

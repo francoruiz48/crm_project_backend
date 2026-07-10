@@ -22,3 +22,15 @@ En `app/services/nomenclator_item_service.py`, las tres comparaciones `organizat
 **Nota de la primera corrida:** la primera versión de `test_superadmin_can_update_and_delete_item_in_global_nomenclator` fallaba porque mandaba el header `X-Organization-Id` de una organización de prueba cualquiera en vez de `ADMIN_ORG_ID`. No era un bug del fix: la escritura (a diferencia de la lectura) solo toca filas de la organización activa en el request (`_apply_tenant_filter(is_read_operation=False)`), nunca las de `ADMIN_ORG_ID`, ni siquiera para un superadmin — para editar/borrar un ítem de un nomenclador global hay que operar "parado en" `ADMIN_ORG_ID`. Se corrigió el test, no el código de producción. Este comportamiento quedó documentado en `docs/nomencladores.md` §4.
 
 Confirmado por el usuario: suite completa OK.
+
+---
+
+# Hallazgo #24 — `NomenclatorItemService.update`/`delete` leen el objeto sin filtro de tenant (ronda de bug-hunting, 2026-07-10)
+
+**Estado:** PENDIENTE — prioridad baja/media, mismo patrón que el hallazgo #22 (`LeadContactState`), no un write cross-tenant completo.
+
+`update` y `delete` resuelven `current_item` con `uow.session.query(NomenclatorItem).filter_by(id=obj_id).first()` — consulta cruda, sin pasar por el repositorio (tenant-aware). Si `obj_id` pertenece a un ítem de otra organización (no global), la REGLA 1 ("¿es global? exigir superadmin") no se activa (porque `current_item.organization_id` no es `ADMIN_ORG_ID`, es la otra organización), y el código sigue de largo hasta `cls.repository.update`/`delete`, que sí filtran por tenant y devolverían `None`/fallarían al no encontrar la fila bajo el organization_id correcto — probablemente terminando en un error no manejado (`500`) en vez de un `404` limpio, en vez de un write real cross-tenant.
+
+**Solución recomendada:** igual que el hallazgo #22 — resolver `current_item` con `cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)` en vez de la query cruda, y devolver `404` inmediato si no se encuentra. Aplica también a `create`'s validación del `parent_nom` (`uow.session.query(Nomenclator).filter_by(id=obj_in.nomenclator_id).first()`, línea 18) — mismo patrón, aunque ahí el impacto es menor porque solo se usa para decidir si exigir superadmin, no determina qué fila se escribe.
+
+Este es el mismo patrón detectado en `hallazgos_agente/estados_de_contacto.md` (#22) y `hallazgos_agente/flujo_de_leads.md` (#21, ahí sí con impacto de write real) — vale la pena, cuando se prioricen los fixes, revisar sistemáticamente todos los `update`/`delete` custom del código en busca de `session.query(Modelo).filter_by(id=obj_id)` sin pasar por el repositorio.

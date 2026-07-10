@@ -261,6 +261,12 @@ Importante: **el registro (`/auth/register`) no crea una organización.** Son do
 
 - `POST /auth/invite` devuelve el `invite_token` directo en la respuesta HTTP — asume que el front/quien invita lo va a compartir por un canal seguro (email, etc.) fuera del sistema. No hay envío de mail automático todavía.
 
+**PENDIENTE — hallazgos de la ronda de bug-hunting (2026-07-10, detalle en `hallazgos_agente/autenticacion.md`):**
+
+- **#12 — Sin rate limiting en `/auth/login`** (ni en el resto de `/auth/*`). El módulo ya tiene mitigación de timing-attack, pero nada limita la *cantidad* de intentos de login — fuerza bruta / credential stuffing sin freno. La infraestructura de `slowapi` ya está montada (se usa en WebForm), falta aplicarla acá. Mayor impacto de los tres.
+- **#13 — El email no se normaliza (case-sensitivity)** en `register`/`login` — comparación exacta, sin `.lower()`, a diferencia de la comparación de invitaciones que sí lo hace.
+- **#14 — `PUT /auth/me` permite cambiar el email sin validar formato ni unicidad** — `UserUpdate.email` es `str` plano (no `EmailStr`), y no se chequea colisión antes del `commit()`, lo que puede terminar en un `500` sin manejar si dos usuarios coinciden en el email nuevo.
+
 ---
 
 ## 12. Cómo se testea

@@ -169,7 +169,7 @@ Este controller **no** usa `BaseController` (a diferencia de teams): está escri
 
 Reglas de negocio en `LeadRoutingPolicyService`:
 
-- **Permisos**: solo un `MANAGER` del `target_team_id` (o superadmin/owner) puede crear/actualizar una política que apunte a ese equipo (`_assert_manager`).
+- **Permisos**: solo un `MANAGER` del `target_team_id` (o superadmin/owner) puede crear/actualizar una política que apunte a ese equipo (`_assert_manager`). **[PENDIENTE, hallazgo #16]** Esta regla **no** se aplica a `DELETE /{id}`, `PUT /active/{id}` ni `DELETE /active/{id}` — esos tres solo verifican que la política pertenezca a la organización activa, no que quien llama sea `MANAGER` del equipo destino. Cualquier miembro autenticado de la organización puede hoy borrar/desactivar/reactivar cualquier política. Detalle y solución recomendada en `hallazgos_agente/equipos_y_enrutamiento.md`.
 - **Prioridad única por scope**: no puede existir otra política con la misma `priority` dentro del mismo `(organization_id, campaign_id)` — se valida en el servicio (`_validate_priority`) *además* del constraint de DB, por partida doble.
 - **Condiciones se validan en el servicio** contra la organización activa antes de guardarlas (`RoutingRuleEvaluatorService.validate_conditions`), no solo a nivel de forma (Pydantic).
 
@@ -243,6 +243,7 @@ Igual que el resto del sistema (ver `docs/autenticacion.md` §8), ambos módulos
 - En `TeamWorkspaceAccessRepository.create` / `TeamCampaignAccessRepository.create`, la validación de que el equipo y el workspace/campaña pertenezcan a la misma organización está condicionada a `if org_id:` — si `TENANT_ORG_ID` viniera vacío por el punto anterior, esa validación se saltea en silencio en vez de fallar.
 - No hay protección de unicidad a nivel de DB para "un usuario no puede estar dos veces en el mismo equipo" (`TeamMember`) — es solo una validación de aplicación en `TeamMemberService.create`.
 - `POST /lead_routing_policies/` no valida (a nivel de API) que dos condiciones de la misma política no sean contradictorias o redundantes entre sí (ej. dos condiciones `eq` sobre el mismo campo con valores distintos en `AND`, que nunca puede ser verdadero) — es responsabilidad de quien arma la política.
+- **[PENDIENTE, hallazgo #16]** `DELETE /lead_routing_policies/{id}`, `PUT /active/{id}` y `DELETE /active/{id}` no exigen ser `MANAGER` del equipo destino (a diferencia de create/update) — cualquier miembro de la organización puede borrar/pausar/reactivar cualquier política. Ver `hallazgos_agente/equipos_y_enrutamiento.md`.
 
 ---
 

@@ -43,3 +43,13 @@ En `app/controllers/security_controllers/user_controller.py`, se sacó `dependen
 5. `test_superadmin_can_still_promote` — control: el superadmin sigue funcionando igual que antes del fix.
 
 Pendiente confirmación del usuario corriendo `pytest tests/functional/test_promote_to_org_owner.py -v`.
+
+---
+
+## Revisión de bug-hunting (2026-07-10, ronda 2) — sin hallazgos nuevos
+
+Se releyeron `user_controller.py`, `user_service.py`, `role_controller.py`, `role_service.py`, `permission_controller.py`, `permission_service.py`, `role_schema.py`. No se encontraron bugs nuevos. Puntos verificados explícitamente porque parecían sospechosos y resultaron **no ser un problema**:
+
+- `RoleCreate.organization_id` es un campo del schema que el cliente puede mandar en el body, lo cual a primera vista parece un IDOR (¿un admin de la org A podría crear un `Role` en la org B pasando su `organization_id`?). Se confirmó leyendo `BaseRepository.create` (`app/db/repository/base_repository.py:379-384`) que el `organization_id` del body **siempre se pisa** server-side con `user_context.organization_id`/`TENANT_ORG_ID.get()` antes de insertar — es el patrón genérico usado en todo el sistema, no específico de `Role`. El campo en el schema es en la práctica ignorado en el create; es un poco confuso que el schema lo declare como aceptado sin que tenga efecto, pero no es un problema de seguridad (nota cosmética, no amerita hallazgo propio).
+- `BaseRepository.update` (línea 428-429) borra explícitamente `organization_id` del payload antes de aplicar cambios — confirma que tampoco se puede "transferir" un objeto a otra organización vía update genérico.
+- `promote_to_org_owner`/`promote_to_superuser`: siguen correctos post-fix del hallazgo #6, sin regresiones nuevas detectadas.

@@ -8,7 +8,8 @@ Documentación técnica del endpoint de gestión de organizaciones (el "tenant" 
 2. [Modelo de datos](#2-modelo-de-datos)
 3. [Endpoints](#3-endpoints)
 4. [Todo lo que se crea automáticamente al crear una organización](#4-todo-lo-que-se-crea-automáticamente-al-crear-una-organización)
-5. [Cómo se testea](#5-cómo-se-testea)
+5. [PENDIENTE: hallazgo de la ronda de bug-hunting](#5-pendiente-hallazgo-de-la-ronda-de-bug-hunting)
+6. [Cómo se testea](#6-cómo-se-testea)
 
 ---
 
@@ -64,6 +65,12 @@ Todo esto corre dentro de la misma transacción que la creación de la organizac
 
 ---
 
-## 5. Cómo se testea
+## 5. [PENDIENTE] Hallazgo de la ronda de bug-hunting
+
+**#15 — `PUT /organizations/{id}` mezcla dos criterios de seguridad distintos.** El chequeo de permiso (`organization:update`) se valida contra la organización del header `X-Organization-Id`; el acceso al objeto (`apply_security_filter`, propio de `OrganizationRepository`) se valida contra "cualquier organización de la que el usuario sea miembro", sin mirar el header. Un usuario que pertenece a 2+ organizaciones podría editar `name`/`description` de una organización donde no tiene el permiso, apoyándose en el permiso que sí tiene en otra. Impacto acotado hoy (solo esos dos campos son editables), pero es una inconsistencia real del modelo de permisos. Detalle y solución recomendada en `hallazgos_agente/organizaciones.md` (hallazgo #15).
+
+---
+
+## 6. Cómo se testea
 
 `test_organization_creation_injects_states_and_initial` (`test_lead_contact_states.py`) confirma la inyección de estados de contacto. `test_org_creation_via_api_clones_roles` y `test_org_creator_gets_admin_role` (`test_permissions_and_roles.py`) confirman el clonado de roles y la asignación de `admin` al creador. No se encontró un test que verifique específicamente la creación del `LeadFlow`/sección por defecto de forma aislada (se ejercitan indirectamente porque casi todos los demás tests dependen de que existan, vía el fixture `initial_structure`), ni el límite de "una organización propia por usuario" (§4, paso 1) para el caso no-superadmin.

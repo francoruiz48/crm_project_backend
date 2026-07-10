@@ -22,9 +22,9 @@ Archivos principales:
 |---|---|
 | `app/models/lead_comment.py` | Modelo `LeadComment` |
 | `app/controllers/lead_comment_controller.py` | Endpoints `/lead_comments/*`, 100% genéricos (`BaseController`) |
-| `app/services/lead_comment_service.py` | Vacío salvo por declarar el repositorio (hereda todo de `BaseService`) |
+| `app/services/lead_comment_service.py` | Declara el repositorio; sobreescribe `create` para validar que `lead_id` pertenezca a la organización activa (ver §4) |
 | `app/schemas/lead_comment_shema.py` | Schemas de request/response |
-| `app/db/repository/lead_comment_repository.py` | Solo declara `model` y `delete_strategy` |
+| `app/db/repository/lead_comment_repository.py` | Declara `model`/`delete_strategy`; sobreescribe `apply_security_filter` (ver §4) |
 
 ---
 
@@ -52,11 +52,11 @@ Cuando se borra un `Lead`, sus comentarios se borran en cascada (`Lead.comments`
 
 ## 4. Puntos a tener en cuenta
 
-- No hay validación explícita de que `lead_id` pertenezca a la organización activa a nivel de `LeadCommentService`/`Repository` — al ser un modelo sin `organization_id` propio, el aislamiento de tenant depende de que el `lead_id` referenciado ya haya pasado el filtro de organización en algún otro punto (típicamente, el frontend solo tiene acceso al `lead_id` de leads que ya pudo ver). No se encontró un caso reproducible de bypass, pero es una diferencia frente a otros módulos donde el repositorio valida explícitamente la pertenencia a organización de las FKs que recibe (ej. `Lead.create` valida `team_id`/`assigned_to_user_id`, ver `lead.md` §4).
+- **[RESUELTO, hallazgo #18, 2026-07-10]** `LeadComment` no tiene `organization_id` propio, así que los mecanismos genéricos de aislamiento de tenant (`_apply_tenant_filter`/`apply_security_filter`) no hacían nada para esta entidad — cualquier usuario autenticado, de cualquier organización, podía leer/crear/editar/borrar comentarios de leads de otras organizaciones pasando su `lead_id`. Fix: `LeadCommentRepository.apply_security_filter` ahora hace `join` contra `Lead` y filtra por organización (protege lectura y, por el gatekeeper de dos capas de `BaseService`, también `update`/`delete`); `LeadCommentService.create` valida explícitamente que `lead_id` pertenezca a la organización activa antes de crear. Detalle completo en `hallazgos_agente/comentarios_de_leads.md`.
 - No participa del pipeline de campos dinámicos ni de automatizaciones — es completamente independiente del sistema de `LeadField`.
 
 ---
 
 ## 5. Cómo se testea
 
-No se encontró ningún test que ejercite `LeadComment` (ni un archivo dedicado, ni referencias en la suite de `Lead`). **Recomendación:** agregar al menos un test funcional de CRUD básico (`POST`/`GET`/`PUT`/`DELETE /lead_comments`) y uno que confirme el borrado en cascada al eliminar el `Lead` padre — hoy ese comportamiento depende únicamente de la relación declarada en el modelo (`cascade="all, delete-orphan"`, ver §2) y no está verificado por ningún test.
+`tests/functional/test_tenant_isolation.py::TestLeadCommentIsolation` cubre el aislamiento de tenant (creación bloqueada sobre lead ajeno, no-visibilidad cross-tenant, visibilidad normal en la propia org — ver fix del hallazgo #18 en §4). No se encontró ningún otro test que ejercite `LeadComment` (ni CRUD básico, ni el borrado en cascada). **Recomendación pendiente:** agregar un test funcional de CRUD básico (`POST`/`GET`/`PUT`/`DELETE /lead_comments`) y uno que confirme el borrado en cascada al eliminar el `Lead` padre — hoy ese comportamiento depende únicamente de la relación declarada en el modelo (`cascade="all, delete-orphan"`, ver §2) y no está verificado por ningún test.

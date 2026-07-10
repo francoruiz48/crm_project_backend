@@ -70,6 +70,8 @@ Los tres controllers son `BaseController` con `enabled_methods = READ_ONLY` (`{"
 | `GET /lead-activity-histories/*` | Por `lead_id` |
 | `GET /lead_state_history/*` | Por `lead_id` |
 
+**[RESUELTO, hallazgo #26, 2026-07-10]** `LeadActivityHistory` y `LeadStateHistory` no tienen columna `organization_id` propia y sus repositorios no filtraban por tenant de ninguna otra forma — cualquier usuario autenticado de cualquier organización podía leer, vía `?lead_id=<id>`, el timeline y el historial de estados de un lead de otra organización. Fix: ambos repositorios ahora sobreescriben `apply_security_filter` (`join` contra `Lead`, filtro por organización). Detalle en `hallazgos_agente/auditoria.md`.
+
 ---
 
 ## 6. Inmutabilidad y `delete_strategy`

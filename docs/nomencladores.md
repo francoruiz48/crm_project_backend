@@ -77,6 +77,10 @@ Gracias al comportamiento de lectura multi-tenant descripto en `convenciones_gen
 
 **Fix aplicado:** en `app/services/nomenclator_item_service.py`, las tres comparaciones `organization_id is None` pasaron a `organization_id == ADMIN_ORG_ID` (constante importada desde `app.core.constans`), y la asignación de herencia pasó de `db_item.organization_id = None` a `db_item.organization_id = ADMIN_ORG_ID`.
 
+**[PENDIENTE, hallazgo #24, ronda de bug-hunting 2026-07-10]** `update`/`delete` siguen resolviendo el ítem con una query cruda (`session.query(NomenclatorItem).filter_by(id=obj_id)`), sin pasar por el repositorio tenant-aware. No es un write cross-tenant real (la escritura final sigue protegida), pero editar/borrar un `obj_id` de otra organización probablemente termina en un `500` no manejado en vez de un `404` limpio. Detalle en `hallazgos_agente/nomencladores.md`.
+
+**[PENDIENTE, hallazgo #25]** El mismo patrón aparece también en `NomenclatorService.update`/`delete` (no solo en `NomenclatorItemService`) — mismo diagnóstico y misma solución. Ver `hallazgos_agente/patron_queries_sin_tenant_filter.md` para el listado completo de instancias encontradas en todo el backend.
+
 ---
 
 ## 7. Cómo se testea

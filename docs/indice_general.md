@@ -71,3 +71,35 @@ Durante esta revisión (2026-07-10) se encontraron los siguientes puntos. Los qu
 8. ~~**`busqueda.md` §4** — `search_fields` de `NomenclatorItem` incluía `"code"`, columna que no existe.~~ **RESUELTO (2026-07-10):** se quitó `"code"` (cosmético, sin impacto funcional). Se aprovechó para agregar `tests/functional/test_global_search.py`, que no existía. Ver `busqueda.md` §4 para el detalle.
 
 Con esto se cierran los 8 hallazgos de esta ronda de auditoría (2026-07-10) — 7 resueltos con código/tests, 1 (organizaciones §2) documentado sin implementar por decisión explícita del usuario. Cada uno tiene su detalle completo en la sección correspondiente del documento indicado, y el detalle técnico extendido para el agente en `hallazgos_agente/`.
+
+## Ronda 2: barrido de bug-hunting módulo por módulo (2026-07-10, sesión posterior)
+
+A pedido del usuario, se repitió el barrido completo de los 23 módulos buscando específicamente bugs funcionales/de seguridad (no solo huecos de tests). Se encontraron 18 hallazgos nuevos. Los 4 cross-tenant confirmados (máxima prioridad) ya están **RESUELTOS** (2026-07-10); el resto sigue pendiente, documentado con solución recomendada. Detalle completo del orden de prioridad en `AGENTS.md` §3. Resumen:
+
+**Cross-tenant confirmados — [RESUELTOS 2026-07-10]** (mismo patrón raíz: modelo sin `organization_id` propio o queries que se saltan el filtro de tenant; fix: `apply_security_filter` por `join` + validación de FK en el `create` correspondiente, sin migración de esquema):
+
+- `LeadComment` — cualquier usuario podía leer/escribir comentarios de leads de otra organización. Ver `comentarios_de_leads.md` §4.
+- `FieldAutomation` — cualquier usuario podía inyectar reglas de automatización que mutan datos de leads de otra organización. Ver `automatizacion_de_campos.md` §3.
+- `LeadStateTransition` — `create_bulk`/`update_bulk`/`delete` permitían alterar el flujo de ventas de otra organización. Ver `flujo_de_leads.md` §6.
+- `LeadActivityHistory`/`LeadStateHistory` — cualquier usuario podía leer el timeline y el historial de estados de leads de otra organización. Ver `auditoria.md` §5.
+
+Test de regresión de los 4: `tests/functional/test_tenant_isolation.py` (clases `TestLeadCommentIsolation`, `TestFieldAutomationIsolation`, `TestLeadStateTransitionIsolation`, `TestLeadHistoryIsolation`). Escritos pero no ejecutados en este entorno (sin PostgreSQL) — confirmar corriendo la suite.
+
+**Otros hallazgos de seguridad/autorización:**
+
+- Sin rate limiting en `/auth/login` (fuerza bruta). Ver `autenticacion.md` §11.
+- `LeadRoutingPolicy`: borrar/activar/desactivar no exige ser `MANAGER` del equipo (crear/editar sí). Ver `equipos_y_enrutamiento.md` §7.
+- `WebFormField.is_required` nunca se aplica en el submit público. Ver `formularios_web.md` §8.
+- `PUT /organizations/{id}` mezcla el permiso (org del header) con el acceso al objeto (cualquier org del usuario). Ver `organizaciones.md` §5.
+- `DELETE /campaigns/{id}` no tiene la misma restricción de creador/owner que `PUT`. Ver `campanas_y_workspaces.md` §6.
+- `POST /lead_flows/graph` sin chequeo de permiso (cualquier rol puede rediseñar el flujo de ventas de su propia org). Ver `flujo_de_leads.md` §4.
+- Email no se normaliza (case-sensitivity) al registrar/loguear; `PUT /auth/me` permite cambiar el email sin validar formato ni unicidad. Ver `autenticacion.md` §11.
+
+**Robustez / menor impacto:**
+
+- Patrón transversal de queries crudas sin filtro de tenant en varios `update`/`delete` custom (`LeadContactState`, `NomenclatorItem`, `Nomenclator`, `LeadFlow`, `Tag`) — causan `500` en vez de `404` con un `id` ajeno, no permiten escribir datos de otra organización. Ver `hallazgos_agente/patron_queries_sin_tenant_filter.md`.
+- CAPTCHA de WebForm sin manejo de errores/timeout. Ver `formularios_web.md` §8.
+- Carrera (TOCTOU) en el chequeo de leads duplicados. Ver `lead.md` §5.
+- `request.client.host` como fuente de IP para rate limit/CAPTCHA, posible problema si hay proxy delante (sin confirmar). Ver `formularios_web.md` §8.
+
+Módulos revisados sin hallazgos nuevos: Usuarios y permisos, Campos personalizados, Vistas de leads, Importación y exportación, Reglas de validación, Dashboard, Búsqueda, Almacenamiento, Plantillas, Metadata.

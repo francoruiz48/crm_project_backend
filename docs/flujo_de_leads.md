@@ -80,6 +80,8 @@ Organization ──< LeadFlow >── LeadState >── LeadStateTransition (fro
 
 Toda la operación queda auditada como un único evento `UPDATED` sobre el `LeadFlow` (no se audita cada estado/transición individualmente en este flujo).
 
+**[PENDIENTE, hallazgo #23]** `POST /lead_flows/graph` no tiene ningún chequeo de permiso (`PermissionChecker`) — solo exige estar autenticado. Internamente sí es tenant-safe (todo se resuelve contra `organization_id` del propio usuario), pero cualquier usuario de la organización, sin importar su rol, puede rediseñar el flujo de ventas completo — el CRUD genérico de `/lead_flows` sí exige `lead_flow:create`/`update`. Detalle en `hallazgos_agente/flujo_de_leads.md`.
+
 ---
 
 ## 5. Reglas de validación del grafo
@@ -99,6 +101,8 @@ Fuera del editor de grafo completo, también se puede operar estado por estado:
 - Al borrar un estado individual, si tiene leads activos, se rechaza (mismo criterio que en `save_graph`); al borrarlo con éxito, los demás estados `OPEN` se reordenan para no dejar huecos.
 - `LeadStateTransitionController` no permite `PUT` individual a propósito — para cambiar una transición hay que borrarla y crear la nueva (o usar `PUT /bulk`, que reemplaza el set completo).
 - Las transiciones bulk validan lo mismo que el grafo: no duplicados dentro del mismo request, estados existentes, y que el update masivo no genere un callejón sin salida.
+- **[PENDIENTE, hallazgo #25]** `LeadFlowService.update` también resuelve el objeto con query cruda sin filtro de tenant (mismo patrón sistémico de bajo impacto que en `LeadContactState`/`Nomenclator`/`Tag` — ver `hallazgos_agente/patron_queries_sin_tenant_filter.md`). No es un write cross-tenant real, pero un `obj_id` ajeno probablemente da `500` en vez de `404`.
+- **[RESUELTO, hallazgo #21, 2026-07-10]** `LeadStateTransitionService.create_bulk`, `update_bulk` y `delete` (individual) resolvían estados/transiciones con queries SQLAlchemy crudas que no filtraban por organización (`LeadStateTransition` no tiene `organization_id` propia) — a diferencia de `create` (individual), que ya era tenant-safe. Un usuario de cualquier organización podía crear/reescribir/borrar transiciones del flujo de ventas de otra organización. Fix: los tres métodos ahora validan primero que el `lead_flow_id` (o el de la transición a borrar) pertenezca a la organización activa, vía `LeadFlowRepository.get_by_id`. Detalle en `hallazgos_agente/flujo_de_leads.md`.
 
 ---
 

@@ -83,7 +83,7 @@ Toda la lógica particular de estos módulos vive en `create`/`update` de los se
 
 ## 6. Actualización de una Campaign: permisos y bloqueo de `lead_flow_id`
 
-- **Permiso adicional además del RBAC estándar**: solo puede editar una campaña su creador (`created_by`), el `owner` de la organización, o un superadmin — aunque el usuario tenga el permiso genérico `campaign:update` vía rol. Es una capa de autorización extra, específica de este servicio, no cubierta por `PermissionChecker`.
+- **Permiso adicional además del RBAC estándar**: solo puede editar una campaña su creador (`created_by`), el `owner` de la organización, o un superadmin — aunque el usuario tenga el permiso genérico `campaign:update` vía rol. Es una capa de autorización extra, específica de este servicio, no cubierta por `PermissionChecker`. **[PENDIENTE, hallazgo #19]** Esta misma restricción **no** se aplica a `DELETE`/desactivar — un admin no-creador con permiso `campaign:delete` puede borrar (incluso con hard delete en cascada) una campaña que no podría renombrar. Ver `hallazgos_agente/campanas_y_workspaces.md`.
 - **`lead_flow_id` es inmutable una vez que la campaña tiene leads**: si se intenta cambiar y `Lead.count(campaign_id=...) > 0`, se rechaza con el mensaje "cree una nueva campaña" — no hay soporte para migrar leads existentes a un flujo distinto.
 - Si la campaña todavía no tiene leads, sí se puede cambiar el flujo, validando que el nuevo pertenezca a la misma organización.
 

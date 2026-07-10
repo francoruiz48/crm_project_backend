@@ -28,7 +28,7 @@ Archivos principales:
 |---|---|
 | `app/models/field_automation.py` | Modelo `FieldAutomation` |
 | `app/controllers/field_automation_controller.py` | Endpoints `/field_automations/*` (genérico) |
-| `app/services/field_automation_service.py` | Vacío, hereda todo de `BaseService` — no hay validación propia del árbol de condiciones al crear/editar una regla más allá de lo que valida Pydantic |
+| `app/services/field_automation_service.py` | No valida el árbol de condiciones al crear/editar una regla más allá de lo que valida Pydantic. **[RESUELTO, hallazgo #20, 2026-07-10]** Sobreescribe `create` para validar que `campaign_id` pertenezca a la organización activa (antes no lo hacía — `FieldAutomation` no tiene columna `organization_id` propia, así que el aislamiento de tenant automático no aplicaba por sí solo; cualquier usuario autenticado podía crear/editar/borrar reglas en campañas de otra organización). Detalle en `hallazgos_agente/automatizacion_de_campos.md`. |
 | `app/services/automation_engine.py` | El motor: evaluación de condiciones + aplicación de acciones |
 | `app/schemas/field_automation_schema.py` | `RuleGroup`, `RuleCondition`, `AutomationAction`, enums de operadores/acciones |
 
