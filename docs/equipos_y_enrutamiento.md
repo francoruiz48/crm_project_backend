@@ -1,6 +1,6 @@
 # Equipos y Enrutamiento de Leads
 
-Documentación técnica de dos módulos relacionados del CRM: gestión de equipos (`Team`) y el motor de enrutamiento automático de leads a equipos (`LeadRoutingPolicy` v3). Se documentan juntos porque el segundo depende directamente del primero (`target_team_id`, permisos de `MANAGER`). Última revisión: 2026-07-09.
+Documentación técnica de dos módulos relacionados del CRM: gestión de equipos (`Team`) y el motor de enrutamiento automático de leads a equipos (`LeadRoutingPolicy` v3). Se documentan juntos porque el segundo depende directamente del primero (`target_team_id`, permisos de `MANAGER`). Última revisión: 2026-07-10.
 
 ## Índice
 
@@ -118,6 +118,8 @@ Reglas de negocio (en los repositorios, no en el servicio — caso atípico fren
 - Al crear, se valida que tanto el `team_id` como el `workspace_id`/`campaign_id` pertenezcan a la organización activa (`TENANT_ORG_ID`). **Ojo:** esta validación está detrás de un `if org_id:` — si `TENANT_ORG_ID` viniera vacío, la validación de organización se saltea silenciosamente (no rechaza la petición, solo no valida cross-org).
 - No se puede dar acceso duplicado: si el equipo ya tiene acceso a ese workspace/campaña, `400`.
 
+**Importante — `Campaign.is_public` pisa todo lo anterior.** Tanto `CampaignRepository.apply_security_filter` como `LeadRepository.apply_security_filter` (`app/db/repository/`) tratan `is_public == True` como un bypass incondicional: si la campaña es pública, **cualquier usuario ve todas sus campañas/leads**, sin importar `TeamCampaignAccess`, `TeamWorkspaceAccess` ni `is_visibility_shared`. `Campaign.is_public` tiene `default=True` a nivel de modelo — si no se especifica explícitamente al crear la campaña, queda pública y todo el armado de equipos/accesos de esta sección no tiene ningún efecto observable. Para que el acceso por equipo (y el enrutamiento) importen de verdad, la campaña tiene que crearse con `is_public=False`.
+
 ---
 
 ## 6. Políticas de enrutamiento (v3): modelo
@@ -232,6 +234,8 @@ Igual que el resto del sistema (ver `docs/autenticacion.md` §8), ambos módulos
 - El endpoint `PUT /lead_routing_policies/active/{id}` no existía — solo estaba el `DELETE /active/{id}` (deshabilitar), no había forma de reactivar una política sin recrearla. Se agregó (ver [§13](#13-changelog)).
 - `LeadRoutingPolicyService.create`/`update` podían fallar con `400 Falta el header X-Organization-Id` aun con el header presente, por leer `TENANT_ORG_ID.get()` (contextvar) en vez de `user_context.organization_id` (atributo ya resuelto, no depende de en qué thread corrió la dependencia). Se agregó fallback a `user_context.organization_id` en ambos métodos (ver [§13](#13-changelog)).
 - `routing_condition_types` (diccionario en `app/core/dictionaries.py`, expuesto por `/metadata`) todavía reflejaba el modelo v2 (`NOMENCLATOR`/`CUSTOM_FIELD`). Se actualizó a `NATIVE`/`DYNAMIC`, acorde al modelo real (campo nativo vs. campo dinámico). No se encontró ningún consumidor real de este diccionario en el frontend actual — quedó actualizado por prolijidad y para uso futuro.
+- `scripts/seed_data_v1.py` creaba las 3 políticas de ejemplo de la organización Salud **después** de generar los 67 leads de sus 2 campañas — como el motor solo enruta en el momento de crear el lead, ningún lead quedaba con `team_id` asignado. Se movió la creación de cada política a **antes** del loop de leads de la campaña que le corresponde (ver [§13](#13-changelog)).
+- Las campañas de la organización Salud (`camp_pacientes`, `camp_estetica`) se creaban sin especificar `is_public`, quedando públicas por default — lo que anulaba el sentido del enrutamiento y los accesos por equipo (ver nota en [§5](#5-accesos-de-equipo-a-workspaces-y-campañas)). Se marcaron ambas como `is_public=False` en el seed.
 
 **Pendiente / a tener en cuenta:**
 
@@ -267,3 +271,9 @@ Solo existía `DELETE /active/{id}` para deshabilitar una política; no había f
 
 **2026-07-09 — Frontend: gestión de equipos y políticas de enrutamiento**
 Se construyó la UI completa de ambos módulos (antes solo existía el backend): ítem "Equipos" en el sidebar con dos tabs (Equipos / Políticas de Enrutamiento), CRUD de equipos con gestión de miembros y accesos a workspaces/campañas, y CRUD de políticas de enrutamiento con armador de condiciones (soporta los tres modos: simple, lista y rango, y campos nativos o dinámicos) accesible tanto desde el detalle de un equipo como desde un listado global filtrable por campaña.
+
+**2026-07-10 — Bug de secuencia en `seed_data_v1.py`: políticas creadas después de los leads**
+Tras una corrida completa del seed, ningún lead de la organización Salud tenía `team_id` ni `assigned_to_user_id` en la DB. Causa: el bloque que crea las 3 políticas de enrutamiento de ejemplo estaba al final de `build_org_salud()`, ejecutándose recién después de generar los 67 leads de ambas campañas — el motor de enrutamiento solo actúa en el momento de `POST /leads/`, así que con cero políticas activas en ese momento, ningún lead podía quedar enrutado. No tiene relación con el bug de `TENANT_ORG_ID` corregido el día anterior. Se movió la creación de cada política a justo antes del loop de leads de la campaña correspondiente: las 2 políticas de "Cobertura Médica" después de crear los campos de `camp_pacientes`, y la política global de Estética después de crear `camp_estetica`.
+
+**2026-07-10 — Seed: campañas privadas (`is_public=False`) y leads con agentes puntuales**
+Se detectó que `camp_pacientes` y `camp_estetica` quedaban públicas por default (`is_public` nunca se pasaba al crearlas), lo que hacía irrelevante todo el armado de `TeamCampaignAccess`/`TeamWorkspaceAccess` y la visibilidad por equipo (ver nota en [§5](#5-accesos-de-equipo-a-workspaces-y-campañas)). Se agregó el parámetro `is_public` al helper `create_campaign()` del seed y se marcaron ambas campañas como privadas. Además, `create_lead()` ahora acepta `assigned_to_user_id`: en cada campaña, ~40% de los leads generados quedan asignados a un agente puntual del equipo correspondiente (Admisión: Rodrigo/Julieta/Nicolás; Equipo Médico: Agustina/Franco) y el resto queda sin asignar, para poder probar ambos casos de visibilidad (lead tomado vs. lead libre del equipo).
