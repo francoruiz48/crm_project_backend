@@ -6,7 +6,7 @@ from app.db.unit_of_work import UnitOfWork
 from app.models.nomenclator import Nomenclator
 from app.models.nomenclator_item import NomenclatorItem
 from app.services.base_service import BaseService
-from app.core.constans import SystemAuditLogAction
+from app.core.constans import SystemAuditLogAction, ADMIN_ORG_ID
 
 class NomenclatorItemService(BaseService):
     repository = NomenclatorItemRepository
@@ -23,7 +23,7 @@ class NomenclatorItemService(BaseService):
                 )
 
             # REGLA 1: Inyección en Globales
-            if parent_nom.organization_id is None:
+            if parent_nom.organization_id == ADMIN_ORG_ID:
                 if not (user_context and getattr(user_context, 'is_superuser', False)):
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
@@ -47,10 +47,10 @@ class NomenclatorItemService(BaseService):
             new_item_response = cls.repository.create(uow.session, obj_in, user_context=user_context)
             
             # REGLA A (HERENCIA): Forzar globalidad si el padre es global
-            if parent_nom.organization_id is None:
+            if parent_nom.organization_id == ADMIN_ORG_ID:
                 # Buscamos la instancia real de SQLAlchemy usando el ID
                 db_item = uow.session.query(NomenclatorItem).filter_by(id=new_item_response.id).first()
-                db_item.organization_id = None
+                db_item.organization_id = ADMIN_ORG_ID
                 uow.session.flush()
                 uow.session.refresh(db_item)
                 
@@ -75,7 +75,7 @@ class NomenclatorItemService(BaseService):
                 cls._not_found(obj_id)
 
             # REGLA 1: Protección Anti-Escritura de Globales
-            if current_item.organization_id is None:
+            if current_item.organization_id == ADMIN_ORG_ID:
                 if not (user_context and getattr(user_context, 'is_superuser', False)):
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
@@ -116,7 +116,7 @@ class NomenclatorItemService(BaseService):
                 cls._not_found(obj_id)
 
             # REGLA 1: Protección Anti-Borrado de Globales
-            if current_item.organization_id is None:
+            if current_item.organization_id == ADMIN_ORG_ID:
                 if not (user_context and getattr(user_context, 'is_superuser', False)):
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,

@@ -57,28 +57,30 @@ No existe un catálogo verdaderamente "sin organización" (`organization_id` es 
 
 Gracias al comportamiento de lectura multi-tenant descripto en `convenciones_generales.md` §6, cualquier organización **ve** estos catálogos sembrados en `ADMIN_ORG_ID` en sus lecturas (`GET /nomenclators/`, `GET /nomenclator_items/`) sin que se dupliquen por organización — es el mecanismo que permite compartir catálogos como "Países" entre todos los clientes del sistema.
 
+**Importante para escribir sobre un catálogo global:** la lectura es compartida, pero la *escritura* no — `_apply_tenant_filter(is_read_operation=False)` (ver `convenciones_generales.md` §6) solo deja tocar filas de la organización activa en el request, **nunca** las de `ADMIN_ORG_ID`, ni siquiera para un superadmin. En la práctica, para editar o borrar un `NomenclatorItem` de un catálogo global (una vez que pasó la protección de superadmin del §6) hay que mandar el request con `X-Organization-Id: <ADMIN_ORG_ID>` — operar "parado en" la organización Panel Global — y no con el header de ninguna otra organización, o el backend no encuentra la fila (`404`/error, no una edición exitosa). Esto se detectó al escribir el test de regresión de este fix (ver §7).
+
 ---
 
 ## 5. Unicidad y jerarquía
 
 - **`Nomenclator`**: nombre único (case-insensitive) considerando tanto la organización activa **como** `ADMIN_ORG_ID` juntas — no se puede crear un nomenclador de organización que choque de nombre con uno global, ni viceversa.
 - **`NomenclatorItem`**: valor único (case-insensitive) **dentro del mismo `nomenclator_id`** — dos catálogos distintos pueden tener ítems con el mismo texto sin problema.
-- Al crear un `NomenclatorItem` bajo un nomenclador "global" (`organization_id is None`, ver §6 — condición que en la práctica nunca se cumple), el service intenta forzar `organization_id = None` en el ítem nuevo también, para que herede la globalidad de su padre.
+- Al crear un `NomenclatorItem` bajo un nomenclador global (`organization_id == ADMIN_ORG_ID`, ver §6), el service fuerza `organization_id = ADMIN_ORG_ID` en el ítem nuevo también, para que herede la globalidad de su padre — independientemente de bajo qué organización estuviera operando quien lo creó.
 
 ---
 
-## 6. Punto pendiente: la protección de nomencladores globales no se dispara nunca
+## 6. [RESUELTO] La protección de nomencladores globales no se disparaba nunca
 
-`NomenclatorItemService` (`create`, `update`, `delete`) tiene una regla explícita: "si el nomenclador padre es global, solo un superadmin puede tocar sus ítems" — implementada como `if parent_nom.organization_id is None: ... requiere is_superuser`.
+`NomenclatorItemService` (`create`, `update`, `delete`) tiene una regla explícita: "si el nomenclador padre es global, solo un superadmin puede tocar sus ítems".
 
-El problema: como se documenta en §4, **no existe ningún `Nomenclator` con `organization_id = None`** — la columna es `nullable=False` y los catálogos "globales" reales viven en `organization_id = ADMIN_ORG_ID` (un entero válido, no `None`). Es decir, la condición `parent_nom.organization_id is None` nunca es verdadera, y por lo tanto **la protección nunca se activa**: cualquier usuario con permiso `nomenclator_item:create`/`update`/`delete` en su propia organización puede, si conoce el `nomenclator_id` de un catálogo global (por ejemplo "Países", visible desde cualquier organización según §4), agregar, editar o borrar ítems ahí — afectando a **todas** las organizaciones que comparten ese catálogo.
+**Bug (hasta 2026-07-10):** la regla estaba implementada como `if parent_nom.organization_id is None: ... requiere is_superuser`. Como se documenta en §4, **no existe ningún `Nomenclator` con `organization_id = None`** — la columna es `nullable=False` y los catálogos "globales" reales viven en `organization_id = ADMIN_ORG_ID` (un entero válido, no `None`). La condición nunca era verdadera, así que la protección nunca se activaba: cualquier usuario con permiso `nomenclator_item:create`/`update`/`delete` en su propia organización podía, si conocía el `nomenclator_id` de un catálogo global (ej. "Países"), agregar, editar o borrar ítems ahí — afectando a **todas** las organizaciones que comparten ese catálogo. Además, la lógica de "REGLA A" (herencia de globalidad al crear un item nuevo) forzaba `organization_id = None` en el item, lo cual habría violado la constraint `NOT NULL` de la columna si esa rama alguna vez hubiese llegado a ejecutarse.
 
-No se encontró (ni se buscó exhaustivamente) si además hay un filtro de tenant a nivel de repositorio que bloquee esto en la práctica (`_apply_tenant_filter` en escritura filtra solo por el tenant actual, ver `convenciones_generales.md` §6 — como el `nomenclator_id` no se valida contra "pertenece a mi organización o soy superadmin" en ningún punto de `NomenclatorItemService.create`, el riesgo parece real).
-
-**Recomendación:** cambiar la condición en las tres funciones de `nomenclator_item_service.py` de `parent_nom.organization_id is None` a `parent_nom.organization_id == ADMIN_ORG_ID` (importando la constante desde `app.core.constans`, ya se usa así en `nomenclator_service.py`). No se aplicó el cambio porque este documento es solo de análisis; avisá si querés que lo corrija — es la corrección con mayor impacto de seguridad encontrada en esta ronda de documentación.
+**Fix aplicado:** en `app/services/nomenclator_item_service.py`, las tres comparaciones `organization_id is None` pasaron a `organization_id == ADMIN_ORG_ID` (constante importada desde `app.core.constans`), y la asignación de herencia pasó de `db_item.organization_id = None` a `db_item.organization_id = ADMIN_ORG_ID`.
 
 ---
 
 ## 7. Cómo se testea
 
-No se encontró un archivo de test dedicado a `Nomenclator`/`NomenclatorItem` (su uso se cubre indirectamente a través de campos `SELECTOR` en `test_leads.py`, `test_lead_fields.py`, `test_automation_engine.py`). **No hay ningún test que ejercite la protección de catálogos globales** (ni para confirmar que funciona, ni que hubiera detectado el problema de §6) — es la brecha de cobertura más importante encontrada en este módulo.
+No hay un archivo de test dedicado al CRUD general de `Nomenclator`/`NomenclatorItem` (su uso básico se cubre indirectamente a través de campos `SELECTOR` en `test_leads.py`, `test_lead_fields.py`, `test_automation_engine.py`). La protección de catálogos globales (§6) sí tiene cobertura propia desde 2026-07-10: `tests/functional/test_nomenclators.py` — un admin de organización recibe `403` al intentar crear/editar/borrar ítems de un nomenclador global (`organization_id=ADMIN_ORG_ID`), un superadmin sí puede hacerlo (y el ítem nuevo hereda `organization_id=ADMIN_ORG_ID` correctamente), y un admin de organización sí puede operar sin restricción sobre un nomenclador de su propia organización (control negativo, para confirmar que el fix no sobre-restringe).
+
+**Nota de la primera corrida:** la primera versión de `test_superadmin_can_update_and_delete_item_in_global_nomenclator` fallaba porque mandaba el header `X-Organization-Id` de una organización de prueba cualquiera en vez de `ADMIN_ORG_ID` — no era un bug del fix, sino la restricción de escritura documentada en §4 (la escritura nunca toca filas de `ADMIN_ORG_ID` salvo operando explícitamente "dentro" de esa organización). Se corrigió el test, no el código de producción. El resto de la suite (`test_nomenclators.py`) sigue sin poder ejecutarse en este entorno por falta de PostgreSQL — correr `pytest tests/functional/test_nomenclators.py -v` localmente para confirmar el resto de los casos antes de dar el fix por definitivo.

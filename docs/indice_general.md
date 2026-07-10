@@ -59,9 +59,9 @@ Recomendación de lectura si es tu primera vez: `convenciones_generales.md` → 
 
 ## Hallazgos pendientes de esta ronda de documentación
 
-Durante esta revisión (2026-07-10) se encontraron los siguientes puntos que vale la pena resolver, ordenados por impacto. Ninguno fue corregido — este trabajo fue solo de documentación/análisis:
+Durante esta revisión (2026-07-10) se encontraron los siguientes puntos. Los que siguen listados abajo no fueron corregidos (trabajo solo de documentación/análisis), ordenados por impacto:
 
-1. **`nomencladores.md` §6** — la protección de "solo superadmin puede tocar ítems de un nomenclador global" nunca se activa (compara contra una condición que nunca ocurre). Cualquier usuario con permiso de organización puede editar catálogos compartidos entre todas las empresas. Es el hallazgo de mayor impacto.
+1. ~~**`nomencladores.md` §6** — la protección de "solo superadmin puede tocar ítems de un nomenclador global" nunca se activaba.~~ **RESUELTO (2026-07-10):** se corrigió `nomenclator_item_service.py` y se agregó `tests/functional/test_nomenclators.py`. Ver `nomencladores.md` §6 para el detalle. Los tests se escribieron pero no se pudieron correr en este entorno (sin PostgreSQL disponible) — confirmar corriendo la suite.
 2. **`formularios_web.md` §7** — el módulo de formularios públicos (único endpoint de escritura sin autenticación del sistema, con lógica de seguridad propia: honeypot, rate limit, CAPTCHA, validación de dominio) no tiene ningún test.
 3. **`almacenamiento.md` §5** e **`importacion_y_exportacion.md` §7** — dos endpoints (`POST /storage/upload`, `POST /import/detect-headers`) son alcanzables sin autenticación.
 4. **`estados_de_contacto.md` §5** — un `PUT` que marca `is_initial=True` sin cambiar el `name` en el mismo request produce un `500` (variable no definida) en vez del `400` esperado.
