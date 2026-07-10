@@ -63,9 +63,12 @@ class LeadContactStateService(BaseService):
             if not current_obj:
                 cls._not_found(obj_id)
 
+            # org_id se calcula una sola vez acá arriba porque lo usan tanto la Regla 1
+            # como la Regla 2, sin importar qué combinación de campos venga en el PUT.
+            org_id = user_context.organization_id if user_context and getattr(user_context, 'organization_id', None) is not None else TENANT_ORG_ID.get()
+
             # REGLA 1: Unicidad en Update
             if obj_in.name and obj_in.name.lower() != current_obj.name.lower():
-                org_id = user_context.organization_id if user_context and getattr(user_context, 'organization_id', None) is not None else TENANT_ORG_ID.get()
                 existing = uow.session.query(LeadContactState).filter(
                     LeadContactState.name.ilike(obj_in.name),
                     LeadContactState.id != obj_id,

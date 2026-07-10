@@ -110,6 +110,29 @@ def test_lead_contact_state_create_second_initial_fails(api_with_states):
     assert res.status_code == 400
     assert "Ya existe un estado inicial" in res.text
 
+def test_lead_contact_state_set_initial_without_changing_name_returns_400(api_with_states):
+    """
+    Regresión: un PUT que marca is_initial=True SIN cambiar el name no debe romper con 500.
+
+    Bug (hasta 2026-07-10): `org_id` solo se calculaba dentro del bloque de la Regla 1
+    (unicidad de nombre), pero la Regla 2 (estado inicial único) lo reutilizaba fuera de
+    ese bloque. Si el PUT no traía `name` (o traía el mismo), la Regla 1 nunca se
+    ejecutaba, `org_id` quedaba sin definir, y la Regla 2 explotaba con NameError → 500
+    en vez del 400 de validación esperado.
+    """
+    states = api_with_states.client.get("/lead_contact_states/", headers=api_with_states.headers).json()["items"]
+
+    # Tomamos un estado que NO sea el inicial (ya hay uno: "No Contactado", del seed).
+    non_initial_state = next(s for s in states if s.get("is_initial") is False)
+
+    res = api_with_states.client.put(f"/lead_contact_states/{non_initial_state['id']}", json={
+        "is_initial": True
+    }, headers=api_with_states.headers)
+
+    assert res.status_code == 400
+    assert "ya es el inicial" in res.text
+
+
 def test_lead_contact_state_prevent_uncheck_initial(api_with_states):
     """Impide que el único estado inicial pierda su marca, evitando que el sistema quede sin estado de entrada."""
     states = api_with_states.client.get("/lead_contact_states/", headers=api_with_states.headers).json()["items"]

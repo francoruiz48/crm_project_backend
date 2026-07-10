@@ -9,6 +9,8 @@ Cada cambio o dato que sea relevante que hagas necesito que quede registrado aqu
 
 Esta sección es un resumen de lo avanzado en la sesión donde se documentó todo el backend módulo por módulo y se empezó a corregir los bugs encontrados. Léela antes de asumir que hay que re-investigar algo — mucho de esto ya está resuelto o mapeado.
 
+Cada cambio o dato que sea relevante que hagas necesito que quede registrado aqui mismo para que lo lea el siguente agente de IA.
+
 ### 1. Documentación técnica completa en `docs/`
 
 Se generó documentación de los 21 módulos de negocio + 1 doc transversal + 1 índice, siguiendo el mismo formato que ya tenían `autenticacion.md` y `equipos_y_enrutamiento.md` (los dos únicos docs que existían antes de esta ronda). **Empezar siempre por `docs/indice_general.md`** — tiene la tabla completa de qué doc cubre qué módulo y una sección "busco información sobre X → ver Y".
@@ -32,7 +34,7 @@ Mapa completo: `lead.md`, `comentarios_de_leads.md`, `campos_personalizados.md`,
 | # | Hallazgo | Doc | Estado |
 |---|---|---|---|
 | 1 | Protección de nomencladores globales nunca se activaba (`organization_id is None` en vez de `== ADMIN_ORG_ID`) en `nomenclator_item_service.py` | `nomencladores.md` §6 | **RESUELTO.** Fix aplicado + `tests/functional/test_nomenclators.py` agregado (6 casos). No se pudo correr la suite en este sandbox (sin Postgres, ver §4) — pendiente que el usuario confirme corriendo `pytest tests/functional/test_nomenclators.py -v`. |
-| 2 | `LeadContactStateService.update` (`app/services/lead_contact_state_service.py`): `org_id` solo se define dentro del `if` de "Regla 1" (cambio de nombre), pero se reusa en "Regla 2" (chequeo de `is_initial`) fuera de ese bloque → `NameError` → `500` en vez de `400` si se manda `is_initial=True` sin cambiar `name` en el mismo `PUT`. | `estados_de_contacto.md` §5 | **PENDIENTE — es el próximo que el usuario pidió arreglar.** Fix propuesto: mover el cálculo de `org_id` al principio de `do_update`, antes de la Regla 1 (mismo patrón que ya usa `create`, línea 17 del archivo). |
+| 2 | `LeadContactStateService.update` (`app/services/lead_contact_state_service.py`): `org_id` solo se definía dentro del `if` de "Regla 1" (cambio de nombre), pero se reusaba en "Regla 2" (chequeo de `is_initial`) fuera de ese bloque → `NameError` → `500` en vez de `400` si se mandaba `is_initial=True` sin cambiar `name` en el mismo `PUT`. | `estados_de_contacto.md` §5 | **RESUELTO.** Se movió el cálculo de `org_id` al principio de `do_update`, antes de la Regla 1 (mismo patrón que ya usa `create`). Test de regresión agregado: `test_lead_contact_state_set_initial_without_changing_name_returns_400` en `tests/functional/test_lead_contact_states.py`. No se pudo correr la suite en este sandbox (sin Postgres, ver §4) — pendiente que el usuario confirme corriendo `pytest tests/functional/test_lead_contact_states.py -v`. |
 | 3 | `POST /storage/upload` y `POST /import/detect-headers` alcanzables sin autenticación; `/import/process` y `/export/{campaign_id}` no validan permiso específico (solo login). | `almacenamiento.md` §5, `importacion_y_exportacion.md` §7 | Pendiente. |
 | 4 | `WebForm`/`WebFormField`/`/public/forms/*` sin ningún test (único endpoint de escritura público del sistema). | `formularios_web.md` §7 | Pendiente (no es un bug, es un hueco de cobertura de riesgo alto). |
 | 5 | `SystemAuditLog.organization_id` nullable — si queda `NULL`, el filtro de tenant de lectura lo vuelve invisible por API para cualquiera. | `auditoria.md` §7 | Pendiente, no confirmado si ocurre en la práctica. |
@@ -53,4 +55,4 @@ Cuando se resuelva un hallazgo: aplicar el fix, actualizar/agregar el test de re
 - Respuestas concisas y directas, sin verborragia.
 - Instrucción de proyecto explícita: **avisar qué cambios se van a hacer y resolver dudas antes de tocar código** — no asumir y ejecutar. Ya se validó este patrón funcionando bien (se usó `AskUserQuestion` antes de aplicar el fix del hallazgo #1).
 - Cuando se pide "analizar" algo, siempre indicar la solución recomendada si se encuentra un problema — no solo describir el problema.
-- Va resolviendo los hallazgos de la auditoría **de a uno, en orden de impacto**, y pidió explícitamente seguir con el #2 (estados de contacto) a continuación.
+- Va resolviendo los hallazgos de la auditoría **de a uno, en orden de impacto**. Hallazgos #1 (nomencladores) y #2 (estados de contacto) ya están RESUELTOS (código + test + docs). El siguiente en la lista, si pide continuar, es el #3 (endpoints de storage/import sin autenticación).

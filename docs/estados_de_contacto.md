@@ -8,7 +8,7 @@ Documentación técnica de los estados de contacto de un lead (ej. "Sin contacta
 2. [Modelo de datos](#2-modelo-de-datos)
 3. [Endpoints](#3-endpoints)
 4. [Reglas de negocio](#4-reglas-de-negocio)
-5. [Punto pendiente: bug de `org_id` no definido en `update`](#5-punto-pendiente-bug-de-org_id-no-definido-en-update)
+5. [RESUELTO: bug de `org_id` no definido en `update`](#5-resuelto-bug-de-org_id-no-definido-en-update)
 6. [Cómo se testea](#6-cómo-se-testea)
 
 ---
@@ -56,18 +56,16 @@ Campos propios: `name` (máx. 100 caracteres), `color` (opcional), `is_initial` 
 
 ---
 
-## 5. Punto pendiente: bug de `org_id` no definido en `update`
+## 5. [RESUELTO] Bug de `org_id` no definido en `update`
 
-Al leer `LeadContactStateService.update` (`app/services/lead_contact_state_service.py`, líneas 60–108) se encontró lo siguiente: la variable `org_id` se calcula **solo dentro** del bloque `if obj_in.name and obj_in.name.lower() != current_obj.name.lower():` (Regla 1, línea 68), pero se **vuelve a usar** más abajo, fuera de ese bloque, dentro de la Regla 2 (línea 84: `LeadContactState.organization_id == org_id`).
+**Bug (hasta 2026-07-10):** en `LeadContactStateService.update` (`app/services/lead_contact_state_service.py`), la variable `org_id` se calculaba **solo dentro** del bloque `if obj_in.name and obj_in.name.lower() != current_obj.name.lower():` (Regla 1), pero se **volvía a usar** más abajo, fuera de ese bloque, dentro de la Regla 2 (`LeadContactState.organization_id == org_id`).
 
-Si un `PUT /lead_contact_states/{id}` cambia `is_initial` a `True` **sin** cambiar el `name` (el caso más común: "marcar este estado como inicial" desde la UI), la Regla 1 nunca se ejecuta, `org_id` nunca se define, y la línea 84 lanza `NameError: name 'org_id' is not defined` — un `500` en vez del `400` de validación esperado.
+Si un `PUT /lead_contact_states/{id}` cambiaba `is_initial` a `True` **sin** cambiar el `name` (el caso más común: "marcar este estado como inicial" desde la UI), la Regla 1 nunca se ejecutaba, `org_id` nunca quedaba definido, y la Regla 2 lanzaba `NameError: name 'org_id' is not defined` — un `500` en vez del `400` de validación esperado.
 
-No se encontró ningún test que cubra este caso exacto (todos los tests de `is_initial` en `update` parecen ir acompañados de cambio de nombre, o no llegan a disparar la Regla 2 en ese orden — ver §6), por eso no quedó detectado.
-
-**Solución recomendada:** mover el cálculo de `org_id` al principio de `do_update`, antes de la Regla 1, para que esté disponible sin importar qué combinación de campos venga en el `PUT` — es el mismo patrón de una línea que ya usa `create` (línea 17). No se aplicó el cambio porque este documento es solo de análisis; avisá si querés que lo corrija.
+**Fix aplicado:** se movió el cálculo de `org_id` al principio de `do_update`, antes de la Regla 1, para que esté disponible sin importar qué combinación de campos venga en el `PUT` — mismo patrón de una línea que ya usa `create`.
 
 ---
 
 ## 6. Cómo se testea
 
-`tests/functional/test_lead_contact_states.py`: inyección de estados por defecto al crear una organización, creación exitosa, nombre duplicado (create y update), segundo estado inicial rechazado, y `test_lead_contact_state_prevent_uncheck_initial` (no se puede desmarcar el único inicial). No hay un test que combine "actualizar `is_initial=True` sin tocar `name`" — el escenario exacto del bug de §5 queda sin cobertura.
+`tests/functional/test_lead_contact_states.py`: inyección de estados por defecto al crear una organización, creación exitosa, nombre duplicado (create y update), segundo estado inicial rechazado, y `test_lead_contact_state_prevent_uncheck_initial` (no se puede desmarcar el único inicial). Desde 2026-07-10 también incluye `test_lead_contact_state_set_initial_without_changing_name_returns_400`, regresión del bug de §5: hace un `PUT` con `is_initial=True` sin tocar `name` y verifica que devuelva `400` (antes rompía con `500`).
