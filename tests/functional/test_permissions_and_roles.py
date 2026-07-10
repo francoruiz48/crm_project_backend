@@ -26,6 +26,22 @@ from tests.fixtures.user_fixtures import (
     _make_user,
     _remove_user_overrides,
 )
+from app.controllers.security_controllers.auth_controller import limiter as auth_limiter
+
+
+# ---------------------------------------------------------------------------
+# Fixtures auxiliares
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _reset_auth_rate_limiter():
+    """Este archivo llama a /auth/login y /auth/register varias veces (helper
+    `_login`, flujos de invite). El Limiter de esos endpoints (hallazgo #12,
+    10/minuto) vive a nivel de módulo y persiste entre tests — sin este reset,
+    corre el riesgo de acumularse junto con otros tests del archivo y disparar
+    un 429 inesperado. Ver el mismo patrón en test_security_auth.py."""
+    auth_limiter.reset()
+    yield
 
 
 # ---------------------------------------------------------------------------

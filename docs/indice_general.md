@@ -87,7 +87,7 @@ Test de regresión de los 4: `tests/functional/test_tenant_isolation.py` (clases
 
 **Otros hallazgos de seguridad/autorización:**
 
-- Sin rate limiting en `/auth/login` (fuerza bruta). Ver `autenticacion.md` §11.
+- ~~Sin rate limiting en `/auth/login` (fuerza bruta).~~ **[RESUELTO 2026-07-10]** `/auth/login` y `/auth/register` ahora tienen `10/minuto` por IP. Ver `autenticacion.md` §11.
 - `LeadRoutingPolicy`: borrar/activar/desactivar no exige ser `MANAGER` del equipo (crear/editar sí). Ver `equipos_y_enrutamiento.md` §7.
 - `WebFormField.is_required` nunca se aplica en el submit público. Ver `formularios_web.md` §8.
 - `PUT /organizations/{id}` mezcla el permiso (org del header) con el acceso al objeto (cualquier org del usuario). Ver `organizaciones.md` §5.

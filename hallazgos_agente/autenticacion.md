@@ -3,7 +3,7 @@
 > Ver `hallazgos_agente/_README_PARA_EL_AGENTE.md` para las reglas de esta carpeta.
 
 **Doc de usuario:** `docs/autenticacion.md` §11
-**Estado:** PENDIENTE — investigados y documentados, sin aplicar fix. No tocar código sin antes preguntar (regla del proyecto).
+**Estado:** #12 [RESUELTO] 2026-07-10. #13/#14 siguen PENDIENTE — investigados y documentados, sin aplicar fix. No tocar código sin antes preguntar (regla del proyecto).
 
 Contexto: este módulo ya había pasado por una ronda de hardening de seguridad el 2026-07-01 (fix de account-takeover en accept-invite, política de contraseñas, `last_name` NOT NULL — ver `docs/autenticacion.md` §13). Esta es una revisión nueva, posterior, buscando bugs adicionales. Se releyeron enteros: `auth_controller.py`, `auth_service.py`, `auth_schema.py`, `user_schema.py`, y se grepeó `security.py` para tokens/hashing y `limiter`/`Limiter` en todo `app/`.
 
@@ -14,6 +14,16 @@ Contexto: este módulo ya había pasado por una ronda de hardening de seguridad 
 El login ya tiene mitigación de timing-attack (hash dummy) para no poder enumerar emails, pero eso no limita la **cantidad** de intentos: un atacante puede probar contraseñas sin límite contra un email conocido (fuerza bruta / credential stuffing), sin bloqueo ni backoff. `main.py` ya tiene toda la infraestructura de `slowapi` montada (se usa en WebForm), así que aplicar el mismo patrón acá es directo.
 
 **Solución recomendada:** agregar `@limiter.limit(...)` a `/auth/login` (ej. `10/minute` por IP, ajustable) y considerar lo mismo para `/auth/register` (protege contra spam de cuentas) y `/auth/refresh`. Si se quiere protección más fuerte que solo por IP, se podría combinar con un límite por email (ej. contador en DB o caché), pero el rate limit por IP ya sería una mejora significativa sobre "ninguno". Test: 11 intentos de login fallido en la misma ventana → el 11vo da `429` en vez de `401`.
+
+## Fix aplicado (2026-07-10)
+
+Alcance acordado con el usuario: `/auth/login` + `/auth/register` (no `/auth/refresh` — requiere poseer un refresh token válido, menor riesgo), `10/minuto` por IP.
+
+`app/controllers/security_controllers/auth_controller.py`: se agregó una instancia propia de `Limiter(key_func=get_remote_address)` a nivel de módulo (mismo patrón que `web_form_public_controller.py` — `slowapi` lee `app.state.limiter`/el exception handler de `RateLimitExceeded`, ya montados en `main.py`), y se decoraron `register`/`login` con `@limiter.limit("10/minute")` (requiere agregar `request: Request` a la firma de ambos endpoints, que es lo que slowapi usa para resolver la IP).
+
+**Efecto colateral de testing importante:** el `Limiter` vive a nivel de módulo (Python), así que sus contadores persisten mientras dure el proceso de `pytest` — no se resetean entre tests. Dos archivos llaman a `/auth/login`/`/auth/register` repetidamente (`test_security_auth.py` y `test_permissions_and_roles.py`); ambos ahora tienen un fixture `autouse=True` que hace `auth_limiter.reset()` antes de cada test, para que la cuota de un test no se filtre a otro y rompa tests sin relación con rate limiting. Mismo patrón ya usado para el rate limit de `WebForm` (ver `hallazgos_agente/formularios_web.md`).
+
+**Test de regresión:** `tests/functional/test_security_auth.py::TestAuthRateLimiting` — 11 intentos de login (credenciales inexistentes) y 11 de register (emails distintos) en la misma ventana → al menos un `429` entre los 11, y el resto de los códigos son los esperados (`401`/`200`) y no otra cosa.
 
 ## Hallazgo #13 — Email no se normaliza (case-sensitivity) al registrar/loguear
 

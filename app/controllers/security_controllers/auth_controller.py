@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 
 from app.core.security import PermissionChecker, _get_current_user
@@ -19,6 +21,12 @@ from app.schemas.security_schemas.user_schema import UserResponse, UserUpdate
 from app.services.security_services.auth_service import AuthService
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
+
+# Hallazgo #12 (ronda de bug-hunting 2026-07-10): ningún endpoint de /auth tenía
+# rate limiting, permitiendo fuerza bruta de contraseñas sin freno. Se usa una
+# instancia de Limiter propia del router, mismo patrón que web_form_public_controller.py
+# (slowapi lee `app.state.limiter`/el exception handler ya están montados en main.py).
+limiter = Limiter(key_func=get_remote_address)
 
 
 @router.get("/me", response_model=UserResponse)
@@ -44,13 +52,15 @@ def update_me(
 
 
 @router.post("/register", response_model=TokenResponse)
-def register(data: RegisterRequest):
+@limiter.limit("10/minute")
+def register(request: Request, data: RegisterRequest):
     """Registro público: crea cuenta + organización propia."""
     return AuthService.register(data)
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(data: LoginRequest):
+@limiter.limit("10/minute")
+def login(request: Request, data: LoginRequest):
     """Login con email y contraseña. Devuelve access + refresh token."""
     return AuthService.login(data)
 

@@ -13,11 +13,23 @@ from app.core.security import hash_password, _get_current_user, get_current_user
 from app.models.security_models import User, UserOrganization
 from app.models.organization import Organization
 from tests.fixtures.user_fixtures import _make_user, _link_user_to_org
+from app.controllers.security_controllers.auth_controller import limiter as auth_limiter
 
 
 # ---------------------------------------------------------------------------
 # Fixtures auxiliares
 # ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _reset_auth_rate_limiter():
+    """El Limiter de /auth/login y /auth/register (hallazgo #12) vive a nivel de
+    módulo y sus contadores persisten mientras dure el proceso de test. Casi todos
+    los tests de este archivo llaman a /auth/login y/o /auth/register (directo o
+    vía `registered_user`) — sin este reset se irían pisando la cuota de '10/minute'
+    entre sí y tests sin relación con rate limiting empezarían a fallar con 429."""
+    auth_limiter.reset()
+    yield
+
 
 @pytest.fixture
 def plain_client(db_session):
@@ -188,6 +200,46 @@ class TestLogin:
             "password": "cualquiera",
         })
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# RATE LIMITING (hallazgo #12) — /auth/login y /auth/register, 10/minuto por IP
+# ---------------------------------------------------------------------------
+
+class TestAuthRateLimiting:
+    def test_login_rate_limited_after_ten_per_minute(self, plain_client):
+        """Al 11vo intento de login en la misma ventana, debe cortar con 429
+        en vez de seguir evaluando credenciales (fuerza bruta sin freno,
+        hallazgo #12)."""
+        statuses = []
+        for _ in range(11):
+            resp = plain_client.post("/auth/login", json={
+                "email": "no-existe-rate-limit@test.com",
+                "password": "cualquiera",
+            })
+            statuses.append(resp.status_code)
+
+        assert 429 in statuses, f"Se esperaba al menos un 429 entre los 11 intentos, se obtuvo: {statuses}"
+        # Antes de agotar la cuota, el intento debe fallar por credenciales (401),
+        # no por otro motivo distinto al rate limit.
+        assert all(s in (401, 429) for s in statuses)
+
+    def test_register_rate_limited_after_ten_per_minute(self, plain_client):
+        """Al 11vo intento de registro en la misma ventana, debe cortar con 429
+        (protección contra spam de creación de cuentas, hallazgo #12)."""
+        statuses = []
+        for i in range(11):
+            resp = plain_client.post("/auth/register", json={
+                "name": "Rate",
+                "last_name": "Limit",
+                "email": f"rate_limit_{i}@test.com",
+                "password": "Password123",
+            })
+            statuses.append(resp.status_code)
+
+        assert 429 in statuses, f"Se esperaba al menos un 429 entre los 11 intentos, se obtuvo: {statuses}"
+        # Antes de agotar la cuota, cada registro con email distinto debe dar 200.
+        assert all(s in (200, 429) for s in statuses)
 
 
 # ---------------------------------------------------------------------------

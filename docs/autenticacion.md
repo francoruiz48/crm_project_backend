@@ -256,6 +256,7 @@ Importante: **el registro (`/auth/register`) no crea una organización.** Son do
 - Contraseña ya no viaja por querystring en `accept-invite` (ahora es JSON body).
 - Política de fortaleza de contraseña (mín. 10, mayúscula + minúscula + número, tope 72 por bcrypt), unificada en `validate_password_strength` y aplicada tanto en `/auth/register` como en `/auth/change-password` (ver [§3](#3-contraseñas)).
 - `last_name` es `NOT NULL` tanto en `RegisterRequest` como en la columna `User.last_name` — ya no es solo una validación de API que se puede esquivar creando el `User` directo por otro camino (ver [§13](#13-changelog)).
+- **[RESUELTO, hallazgo #12, 2026-07-10]** `/auth/login` y `/auth/register` tienen rate limiting (`10/minuto` por IP, vía `slowapi` — misma infraestructura que ya usaba `WebForm`). Antes no había ningún freno a la cantidad de intentos (fuerza bruta / credential stuffing en login, spam de cuentas en register).
 
 **Pendiente / a tener en cuenta:**
 
@@ -263,7 +264,6 @@ Importante: **el registro (`/auth/register`) no crea una organización.** Son do
 
 **PENDIENTE — hallazgos de la ronda de bug-hunting (2026-07-10, detalle en `hallazgos_agente/autenticacion.md`):**
 
-- **#12 — Sin rate limiting en `/auth/login`** (ni en el resto de `/auth/*`). El módulo ya tiene mitigación de timing-attack, pero nada limita la *cantidad* de intentos de login — fuerza bruta / credential stuffing sin freno. La infraestructura de `slowapi` ya está montada (se usa en WebForm), falta aplicarla acá. Mayor impacto de los tres.
 - **#13 — El email no se normaliza (case-sensitivity)** en `register`/`login` — comparación exacta, sin `.lower()`, a diferencia de la comparación de invitaciones que sí lo hace.
 - **#14 — `PUT /auth/me` permite cambiar el email sin validar formato ni unicidad** — `UserUpdate.email` es `str` plano (no `EmailStr`), y no se chequea colisión antes del `commit()`, lo que puede terminar en un `500` sin manejar si dos usuarios coinciden en el email nuevo.
 
@@ -277,6 +277,7 @@ Importante: **el registro (`/auth/register`) no crea una organización.** Son do
   - `MultiUserApiClient`: cliente de test que permite cambiar de usuario simulado a mitad de un test (`switch_user`, `as_user`).
 - Para probar los endpoints reales de `/auth/*` (register, login, refresh, invite, accept-invite) hay un fixture separado, `plain_client`, que **no** overridea `_get_current_user` — ahí sí se usa JWT real de punta a punta (login real, header `Authorization` real). Está en `tests/functional/test_security_auth.py` y se reutiliza en otros archivos.
 - ⚠️ **Cuidado**: como el superadmin de test está hardcodeado por email en varios lugares (`tests/fixtures/client.py`, y varios tests que hacen `db_session.query(User).filter_by(email="...")`), si el día de mañana cambia el email/seed del superadmin en `init_data.py` sin actualizar esos lugares, se rompen en cadena un montón de tests con `AttributeError: 'NoneType' object has no attribute ...` (ya pasó, ver Changelog).
+- `tests/functional/test_security_auth.py::TestAuthRateLimiting` cubre el rate limit del hallazgo #12 (11 intentos en la misma ventana → al menos un `429` entre login y entre register). El `Limiter` de `/auth/*` vive a nivel de módulo y sus contadores persisten mientras dure el proceso de test — como casi todo este archivo (y `test_permissions_and_roles.py`) llama a `/auth/login`/`/auth/register` repetidamente, ambos archivos tienen un fixture `autouse` que resetea el limiter antes de cada test, para que la cuota de un test no se filtre a otro.
 
 ---
 
