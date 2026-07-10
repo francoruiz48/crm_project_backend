@@ -10,7 +10,7 @@ Documentación técnica de los formularios embebibles (landing pages, iframes) q
 4. [Endpoints públicos (`/public/forms`)](#4-endpoints-públicos-publicforms)
 5. [Las 4 barreras de seguridad del submit público](#5-las-4-barreras-de-seguridad-del-submit-público)
 6. [Campos ocultos (`hidden_value`)](#6-campos-ocultos-hidden_value)
-7. [Punto pendiente: cobertura de tests](#7-punto-pendiente-cobertura-de-tests)
+7. [RESUELTO: cobertura de tests](#7-resuelto-cobertura-de-tests)
 
 ---
 
@@ -86,6 +86,18 @@ Un `WebFormField` con `hidden_value` no se muestra al visitante (el frontend pú
 
 ---
 
-## 7. Punto pendiente: cobertura de tests
+## 7. [RESUELTO] Cobertura de tests
 
-No se encontró **ningún** test (funcional o de otro tipo) que ejercite `WebForm`, `WebFormField`, ni el router público `/public/forms/*` — ni siquiera el caso feliz de crear un formulario y enviarlo. Es el único de los 21 módulos de esta ronda de documentación sin cobertura alguna, y es además el que tiene mayor superficie de ataque (endpoint de escritura sin autenticación, con 4 capas de seguridad propias que hoy dependen únicamente de revisión manual del código para confirmar que funcionan). **Recomendación:** priorizar tests para el flujo público completo — honeypot, rate limit, CAPTCHA, validación de dominio, e inyección de `hidden_value` — antes que para cualquier otro módulo pendiente de esta lista.
+**Antes (hasta 2026-07-10):** no existía **ningún** test (funcional o de otro tipo) que ejercitara `WebForm`, `WebFormField`, ni el router público `/public/forms/*` — ni siquiera el caso feliz de crear un formulario y enviarlo. Era el único de los 21 módulos de esta ronda de documentación sin cobertura alguna, y además el de mayor superficie de ataque (endpoint de escritura sin autenticación, con 4 capas de seguridad propias que hasta entonces dependían únicamente de revisión manual del código).
+
+**Cobertura agregada:** `tests/functional/test_web_forms.py`:
+
+- **CRUD privado** (`TestWebFormPrivateCRUD`): creación exitosa, rechazo de `lead_field_id` duplicado en el mismo payload, rechazo anti-IDOR de un campo que pertenece a otra campaña, rechazo de campo inactivo, reemplazo total de campos en `update`.
+- **`GET /public/forms/{uuid}`** (`TestPublicFormGet`): devuelve la config pública sin exponer `organization_id`/`campaign_id`, `404` con UUID inexistente, `404` con formulario inactivo.
+- **`POST /public/forms/{uuid}/submit`** (`TestPublicFormSubmit`): caso feliz (crea el lead, `created_by=None`), honeypot relleno (responde éxito simulado sin crear lead), inyección forzada de `hidden_value` (no se puede sobreescribir), CAPTCHA requerido sin token (`400`), CAPTCHA rechazado por el verificador externo mockeado (`400`), CAPTCHA aprobado por el verificador mockeado (crea el lead), origen no permitido (`403`), origen permitido (`200`), y rate limit de `5/minuto` (el 6to intento en la misma ventana da `429`).
+
+**Decisiones de testing a tener en cuenta:**
+
+- El CAPTCHA se testea mockeando `httpx.AsyncClient.post` (no se llama a ningún servicio externo real, ni depende de `CAPTCHA_SECRET_KEY`/`CAPTCHA_VERIFY_URL`).
+- El test de rate limit resetea el `Limiter` del router (`web_form_public_controller.limiter`) antes de cada test de la clase `TestPublicFormSubmit` (vía fixture `autouse`) — ese `Limiter` es una instancia separada de la de `app.main` y sus contadores viven a nivel de módulo/proceso, así que sin el reset los tests de la clase se pisarían la cuota entre sí. No se pudo confirmar en este entorno (sin poder correr pytest) que el comportamiento sea idéntico al de producción — es el test más probable de fallar si algo no es como se documentó acá; revisarlo primero si falla.
+- Sigue habiendo margen para más casos (ej. múltiples formularios por campaña, campos con `custom_label`/`custom_placeholder`, mapeo de campos por combinación multi-criterio como en `importacion_y_exportacion.md`), pero se priorizaron los escenarios de seguridad por ser los de mayor riesgo.
