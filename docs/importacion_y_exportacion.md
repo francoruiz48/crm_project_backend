@@ -10,7 +10,7 @@ Documentación técnica de la carga masiva de leads desde Excel y su exportació
 4. [Resolución de nomencladores y leads relacionados](#4-resolución-de-nomencladores-y-leads-relacionados)
 5. [Manejo de errores fila por fila](#5-manejo-de-errores-fila-por-fila)
 6. [Exportación](#6-exportación)
-7. [Punto pendiente: permisos de este módulo](#7-punto-pendiente-permisos-de-este-módulo)
+7. [RESUELTO: permisos de este módulo](#7-resuelto-permisos-de-este-módulo)
 8. [Cómo se testea](#8-cómo-se-testea)
 
 ---
@@ -73,17 +73,21 @@ Nota: como cada fila llama a `LeadService.create` de forma independiente (cada u
 
 ---
 
-## 7. Punto pendiente: permisos de este módulo
+## 7. [RESUELTO] Permisos de este módulo
 
-Al revisar `import_export_controller.py` se encontró que, a diferencia de casi todo el resto del sistema (donde `BaseController._get_deps` arma automáticamente un permiso `entidad:acción` por endpoint, ver `convenciones_generales.md` §7), este controller es un `APIRouter` manual **sin ningún `PermissionChecker`**:
+Al revisar `import_export_controller.py` se encontró que, a diferencia de casi todo el resto del sistema (donde `BaseController._get_deps` arma automáticamente un permiso `entidad:acción` por endpoint, ver `convenciones_generales.md` §7), este controller es un `APIRouter` manual que **no tenía ningún `PermissionChecker`**:
 
-- `POST /import/detect-headers` no tiene **ninguna** dependencia de autenticación (`Depends(get_current_user_roles)` no está presente en la firma) — es alcanzable sin estar logueado. El riesgo práctico es acotado (solo lee encabezados de un Excel subido por el propio caller, no toca la base ni devuelve datos de la organización), pero rompe la convención de "todo endpoint protegido" del resto de la API.
-- `POST /import/process` y `GET /export/{campaign_id}` sí exigen estar autenticado (`get_current_user_roles`), pero no validan ningún permiso específico (`lead:create`/`lead:view_all`, etc.) — cualquier usuario autenticado de la organización puede importar o exportar leads de cualquier campaña a la que tenga acceso de lectura por tenant, sin importar su rol. En el resto del sistema, crear un lead requiere el permiso `lead:create` (ver `autenticacion.md` §7); acá ese chequeo no está.
+- `POST /import/detect-headers` no tenía **ninguna** dependencia de autenticación (`Depends(get_current_user_roles)` ausente en la firma) — era alcanzable sin estar logueado.
+- `POST /import/process` y `GET /export/{campaign_id}` sí exigían estar autenticado (`get_current_user_roles`), pero no validaban ningún permiso específico — cualquier usuario autenticado de la organización podía importar o exportar leads de cualquier campaña a la que tuviera acceso de lectura por tenant, sin importar su rol.
 
-**Recomendación:** agregar `dependencies=[Depends(PermissionChecker("lead:create"))]` a `/import/process` y `dependencies=[Depends(PermissionChecker("lead:view_all"))]` (o el que corresponda) a `/export/{campaign_id}`, y como mínimo exigir `Depends(get_current_user_roles)` en `/import/detect-headers` para que quede detrás de login, ya que sube y procesa un archivo del usuario. No se aplicó el cambio porque este documento es solo de análisis; avisá si querés que lo corrija.
+**Fix aplicado** (`app/controllers/import_export_controller.py`):
+
+- `POST /import/detect-headers`: se agregó `Depends(get_current_user_roles)` — ahora exige login.
+- `POST /import/process`: se agregó `dependencies=[Depends(PermissionChecker("lead:create"))]` — mismo permiso que exige crear un lead por la vía normal (ver `autenticacion.md` §7).
+- `GET /export/{campaign_id}`: se agregó `dependencies=[Depends(PermissionChecker("lead:view"))]` — **no** `lead:view_all` (la recomendación original de este documento decía `lead:view_all`, se corrigió al implementar). Motivo: `init_data.py` muestra que el rol `agent` (uso diario) solo tiene `lead:view`, no `lead:view_all` (ese es de `viewer`/`admin`); exigir `lead:view_all` le hubiera impedido a un agente exportar incluso sus propios leads asignados. `lead:view` + el filtro de visibilidad que ya aplica `LeadRepository.get_all` internamente (scope propio vs. todos, según si el usuario tiene `lead:view_all`) es el mismo patrón que usa `GET /leads/`, y sigue evitando que alguien sin ningún permiso sobre leads pueda exportar.
 
 ---
 
 ## 8. Cómo se testea
 
-`tests/functional/test_excel_features.py`: exportación de datos de campaña, detección de encabezados, e importación de un archivo completo (caso feliz). **No se encontraron tests** para: filas con errores individuales (nomenclador inexistente, lead relacionado no encontrado, cantidad desigual de valores), el límite de 20 errores reportados, ni el comportamiento de `detect-headers` sin autenticación — son los escenarios más relevantes del módulo y hoy no tienen cobertura automatizada.
+`tests/functional/test_excel_features.py`: exportación de datos de campaña, detección de encabezados, e importación de un archivo completo (caso feliz). Desde 2026-07-10, `tests/functional/test_storage_and_import_permissions.py` cubre el fix de §7: `detect-headers` sin token → `401`; usuario `viewer` (sin `lead:create`) intentando `/import/process` → `403`; usuario sin roles (sin `lead:view`) intentando `/export/{campaign_id}` → `403`; y un control de que el superadmin sigue pudiendo usar ambos endpoints con normalidad. **Sigue sin haber tests** para: filas con errores individuales (nomenclador inexistente, lead relacionado no encontrado, cantidad desigual de valores) ni el límite de 20 errores reportados — quedan fuera del alcance de este fix.

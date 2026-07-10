@@ -8,7 +8,7 @@ Documentación técnica del servicio de subida de archivos (avatares de lead, ca
 2. [Validación de archivos](#2-validación-de-archivos)
 3. [Subida y URL pública](#3-subida-y-url-pública)
 4. [Endpoint directo `POST /storage/upload`](#4-endpoint-directo-post-storageupload)
-5. [Punto pendiente: endpoint sin autenticación](#5-punto-pendiente-endpoint-sin-autenticación)
+5. [RESUELTO: endpoint sin autenticación](#5-resuelto-endpoint-sin-autenticación)
 6. [Cómo se testea](#6-cómo-se-testea)
 
 ---
@@ -46,14 +46,16 @@ Además de usarse internamente desde `Lead`, existe un endpoint standalone: sube
 
 ---
 
-## 5. Punto pendiente: endpoint sin autenticación
+## 5. [RESUELTO] Endpoint sin autenticación
 
-`POST /storage/upload` no tiene **ninguna** dependencia de autenticación en su firma (`def upload_file(file: UploadFile = File(...))`, sin `Depends(get_current_user_roles)`) — es alcanzable sin estar logueado, y al no llamar a `validate_file`, tampoco restringe tipos de archivo permitidos (solo bloquea si el nombre tiene una extensión inconsistente con un MIME **conocido**; un archivo con un MIME fuera del mapa `_MIME_TO_EXTENSIONS` pasa sin ninguna validación de tipo). En conjunto: cualquiera en internet puede subir archivos arbitrarios al bucket de Supabase de la organización, sin límite de tipo, consumiendo espacio y cuota. Es el mismo patrón de riesgo que `POST /import/detect-headers` (ver `importacion_y_exportacion.md` §7).
+**Bug (hasta 2026-07-10):** `POST /storage/upload` no tenía **ninguna** dependencia de autenticación en su firma (`def upload_file(file: UploadFile = File(...))`, sin `Depends(get_current_user_roles)`) — era alcanzable sin estar logueado. Además, al no llamar a `validate_file`, tampoco restringe tipos de archivo permitidos (solo bloquea si el nombre tiene una extensión inconsistente con un MIME **conocido**; esto último sigue así, ver nota abajo). En conjunto, antes del fix: cualquiera en internet podía subir archivos arbitrarios al bucket de Supabase de la organización, sin límite de tipo, consumiendo espacio y cuota. Es el mismo patrón de riesgo que tenía `POST /import/detect-headers` (ver `importacion_y_exportacion.md` §7).
 
-**Recomendación:** agregar `Depends(get_current_user_roles)` (como mínimo) al endpoint, y considerar pasar una lista de tipos permitidos explícita (llamando a `validate_file` antes de `upload_file`, como ya hace el pipeline de `Lead`) en vez de subir cualquier archivo sin restricción de tipo. No se aplicó el cambio porque este documento es solo de análisis; avisá si querés que lo corrija.
+**Fix aplicado:** se agregó `Depends(get_current_user_roles)` al endpoint — ahora exige estar logueado (login, sin requerir un permiso puntual, ya que no está atado a ninguna entidad del sistema).
+
+**Decisión explícita, no aplicada:** no se agregó restricción de tipos de archivo (`validate_file`) — se evaluó y se decidió no hacerlo, porque es un endpoint genérico sin dueño claro (no se encontró desde dónde lo consume el frontend en este repo) y restringir mal el tipo podría romper un uso legítimo que no se ve en este código. Sigue pendiente si en el futuro se identifica su consumidor real.
 
 ---
 
 ## 6. Cómo se testea
 
-`tests/functional/test_lead_fixes.py` (Grupo 12) cubre la validación de coherencia extensión/MIME de `StorageService.upload_file` directamente (extensión no coincide con el MIME declarado → `400`; coincide → pasa; MIME desconocido → se saltea el chequeo sin bloquear) — son tests unitarios sobre el service con mocks, no contra Supabase real. No se encontró ningún test para el endpoint `POST /storage/upload` en sí (ni su falta de autenticación, ni `validate_file`/tamaño máximo a través de la API).
+`tests/functional/test_lead_fixes.py` (Grupo 12) cubre la validación de coherencia extensión/MIME de `StorageService.upload_file` directamente (extensión no coincide con el MIME declarado → `400`; coincide → pasa; MIME desconocido → se saltea el chequeo sin bloquear) — son tests unitarios sobre el service con mocks, no contra Supabase real. Desde 2026-07-10, `tests/functional/test_storage_and_import_permissions.py::TestUnauthenticatedAccessBlocked::test_storage_upload_requires_authentication` cubre el endpoint en sí: una request sin token a `POST /storage/upload` debe devolver `401` (antes del fix de §5, pasaba). No hay cobertura end-to-end de `validate_file`/tamaño máximo a través de la API (serían tests contra Supabase real o con mock del cliente).
