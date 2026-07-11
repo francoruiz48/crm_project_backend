@@ -6,6 +6,9 @@ Tests de autenticación y autorización:
   - Invite + Accept-invite
   - Límite de 1 organización por usuario
   - Restricciones de acceso en endpoints de usuarios
+  - Hallazgo #12: rate limiting en /auth/login y /auth/register
+  - Hallazgo #13: normalización de email (.strip().lower()) en Login/Register/UpdateMe
+  - Hallazgo #14: PUT /auth/me valida formato (EmailStr) y unicidad de email
 """
 import pytest
 from app.core.constans import ADMIN_ORG_ID
@@ -136,6 +139,33 @@ class TestRegister:
         })
         assert resp.status_code == 200
 
+    def test_register_normalizes_email_to_lowercase(self, plain_client, db_session):
+        """Hallazgo #13: el email se guarda normalizado (.strip().lower()),
+        sin importar cómo lo mande el cliente."""
+        resp = plain_client.post("/auth/register", json={
+            "name": "Mayus",
+            "last_name": "Culas",
+            "email": "  Mayusculas@Test.COM  ",
+            "password": "Password123",
+        })
+        assert resp.status_code == 200, resp.text
+
+        user = db_session.query(User).filter_by(email="mayusculas@test.com").first()
+        assert user is not None, "El email debería haberse guardado normalizado a minúsculas."
+
+    def test_register_rejects_duplicate_email_different_case(self, plain_client):
+        """Hallazgo #13: dos registros con el mismo email en distinta
+        capitalización deben tratarse como el mismo email (400 duplicado)."""
+        plain_client.post("/auth/register", json={
+            "name": "Original", "last_name": "Test",
+            "email": "CaseTest@Empresa.com", "password": "Password123",
+        })
+        resp = plain_client.post("/auth/register", json={
+            "name": "Duplicado", "last_name": "Test",
+            "email": "casetest@empresa.com", "password": "Password123",
+        })
+        assert resp.status_code == 400
+
 
 # ---------------------------------------------------------------------------
 # LOGIN
@@ -200,6 +230,21 @@ class TestLogin:
             "password": "cualquiera",
         })
         assert resp.status_code == 401
+
+    def test_login_with_different_case_succeeds_after_register(self, plain_client):
+        """Hallazgo #13: registrarse con una capitalización y loguearse con otra
+        debe funcionar, porque ambos extremos normalizan antes de comparar."""
+        resp_register = plain_client.post("/auth/register", json={
+            "name": "Case", "last_name": "Login",
+            "email": "CaseLogin@Test.com", "password": "Password123",
+        })
+        assert resp_register.status_code == 200, resp_register.text
+
+        resp_login = plain_client.post("/auth/login", json={
+            "email": "caselogin@test.com",
+            "password": "Password123",
+        })
+        assert resp_login.status_code == 200, resp_login.text
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +336,63 @@ class TestLogout:
         plain_client.post("/auth/logout", json={"refresh_token": rt})
         resp = plain_client.post("/auth/refresh", json={"refresh_token": rt})
         assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# PUT /auth/me — hallazgos #13 (normalización) y #14 (formato + unicidad de email)
+# ---------------------------------------------------------------------------
+
+class TestUpdateMe:
+    def test_update_me_rejects_email_taken_by_another_user(self, plain_client, registered_user):
+        """Hallazgo #14: antes esto terminaba en un 500 (IntegrityError sin
+        capturar, User.email es unique) en vez de un 400 prolijo. registered_user
+        es el PRIMER usuario; acá probamos que un SEGUNDO usuario no pueda
+        apropiarse de su email vía PUT /auth/me."""
+        plain_client.post("/auth/register", json={
+            "name": "Segundo", "last_name": "Usuario",
+            "email": "segundo@security.com", "password": "Password123",
+        })
+        resp_login_segundo = plain_client.post("/auth/login", json={
+            "email": "segundo@security.com", "password": "Password123",
+        })
+        segundo_token = resp_login_segundo.json()["access_token"]
+
+        resp = plain_client.put(
+            "/auth/me",
+            json={"email": registered_user["email"]},
+            headers={"Authorization": f"Bearer {segundo_token}"},
+        )
+        assert resp.status_code == 400, resp.text
+
+    def test_update_me_rejects_invalid_email_format(self, plain_client, registered_user):
+        """Hallazgo #14: UserUpdate.email pasó de str suelto a EmailStr."""
+        resp = plain_client.put(
+            "/auth/me",
+            json={"email": "no-es-un-email"},
+            headers={"Authorization": f"Bearer {registered_user['access_token']}"},
+        )
+        assert resp.status_code == 422
+
+    def test_update_me_normalizes_new_email(self, plain_client, registered_user, db_session):
+        """Hallazgo #13 aplicado también acá: el nuevo email se guarda en minúsculas."""
+        resp = plain_client.put(
+            "/auth/me",
+            json={"email": "NuevoEmail@Test.COM"},
+            headers={"Authorization": f"Bearer {registered_user['access_token']}"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["email"] == "nuevoemail@test.com"
+
+    def test_update_me_allows_resubmitting_own_email_different_case(self, plain_client, registered_user):
+        """No debe dispararse el chequeo de unicidad contra uno mismo cuando el
+        'nuevo' email es, normalizado, el mismo que ya tenía."""
+        own_email_shouting = registered_user["email"].upper()
+        resp = plain_client.put(
+            "/auth/me",
+            json={"email": own_email_shouting},
+            headers={"Authorization": f"Bearer {registered_user['access_token']}"},
+        )
+        assert resp.status_code == 200, resp.text
 
 
 # ---------------------------------------------------------------------------

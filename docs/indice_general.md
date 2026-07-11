@@ -93,7 +93,7 @@ Test de regresión de los 4: `tests/functional/test_tenant_isolation.py` (clases
 - ~~`PUT /organizations/{id}` mezcla el permiso (org del header) con el acceso al objeto (cualquier org del usuario).~~ **[RESUELTO 2026-07-11]** Además se corrigió un bug relacionado: `bulk_delete` genérico bypaseaba `delete_strategy == PROTECTED` (afectaba `POST /organizations/bulk-delete`). Ver `organizaciones.md` §5.
 - `DELETE /campaigns/{id}` no tiene la misma restricción de creador/owner que `PUT`. Ver `campanas_y_workspaces.md` §6.
 - `POST /lead_flows/graph` sin chequeo de permiso (cualquier rol puede rediseñar el flujo de ventas de su propia org). Ver `flujo_de_leads.md` §4.
-- Email no se normaliza (case-sensitivity) al registrar/loguear; `PUT /auth/me` permite cambiar el email sin validar formato ni unicidad. Ver `autenticacion.md` §11.
+- ~~Email no se normaliza (case-sensitivity) al registrar/loguear; `PUT /auth/me` permite cambiar el email sin validar formato ni unicidad.~~ **[RESUELTO 2026-07-11]** Ver `autenticacion.md` §11.
 
 **Robustez / menor impacto:**
 

@@ -1,6 +1,7 @@
 from datetime import date
 from typing import List, Optional, Any
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
+from app.core.security import normalize_email
 from app.schemas.base_schema import BaseCreate, BaseDetailedResponse
 from app.schemas.security_schemas.permission_schema import PermissionResponse
 from app.schemas.security_schemas.role_schema import RoleResponse
@@ -50,8 +51,18 @@ class UserCreate(UserBase, BaseCreate):
 class UserUpdate(BaseModel):
     name: Optional[str] = None
     last_name: Optional[str] = None
-    email: Optional[str] = None
+    # Hallazgo #14: antes era `Optional[str]` (sin validar formato). EmailStr
+    # rechaza formatos inválidos con 422; la unicidad se chequea aparte en
+    # auth_controller.py::update_me (acá no hay acceso a la DB para hacerlo).
+    email: Optional[EmailStr] = None
     phone: Optional[str] = None
     date_of_birth: Optional[date] = None
+
+    # Hallazgo #13: misma normalización que Login/RegisterRequest, para que
+    # el cambio de email desde el perfil sea consistente con el resto.
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, v: Optional[str]) -> Optional[str]:
+        return normalize_email(v) if v is not None else v
 
 

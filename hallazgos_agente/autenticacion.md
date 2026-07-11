@@ -3,7 +3,7 @@
 > Ver `hallazgos_agente/_README_PARA_EL_AGENTE.md` para las reglas de esta carpeta.
 
 **Doc de usuario:** `docs/autenticacion.md` §11
-**Estado:** #12 [RESUELTO] 2026-07-10. #13/#14 siguen PENDIENTE — investigados y documentados, sin aplicar fix. No tocar código sin antes preguntar (regla del proyecto).
+**Estado:** #12 [RESUELTO] 2026-07-10. #13/#14 [RESUELTOS] 2026-07-11.
 
 Contexto: este módulo ya había pasado por una ronda de hardening de seguridad el 2026-07-01 (fix de account-takeover en accept-invite, política de contraseñas, `last_name` NOT NULL — ver `docs/autenticacion.md` §13). Esta es una revisión nueva, posterior, buscando bugs adicionales. Se releyeron enteros: `auth_controller.py`, `auth_service.py`, `auth_schema.py`, `user_schema.py`, y se grepeó `security.py` para tokens/hashing y `limiter`/`Limiter` en todo `app/`.
 
@@ -33,8 +33,22 @@ Consecuencia: alguien podría registrarse con `Test@empresa.com` y luego, si int
 
 **Solución recomendada:** normalizar el email a minúsculas (`.strip().lower()`) en un solo lugar antes de guardarlo o compararlo — idealmente en un `field_validator` de `RegisterRequest`/`LoginRequest` (Pydantic), o al menos en `AuthService.register`/`login` antes de las queries. Test: registrar con `Test@x.com`, loguear con `test@x.com` → debe funcionar; intentar registrar `test@x.com` después de `Test@x.com` → debe rechazarse como duplicado.
 
+### Fix aplicado (2026-07-11)
+
+Se agregó `normalize_email(email: str) -> str: return email.strip().lower()` en `app/core/security.py` (misma zona que `validate_password_strength`, comentario cruzado como "única fuente de verdad"). Se aplicó vía `field_validator("email")` en `LoginRequest` y `RegisterRequest` (`auth_schema.py`) y en `UserUpdate` (`user_schema.py`, ver hallazgo #14). No se tocó `InviteRequest.email` — fuera del alcance investigado, el flujo de invitación ya normaliza en el punto de comparación (`_try_join_org_from_invite`/`accept_invite`, ambos con `.strip().lower()` manual).
+
+**Decisión explícita del usuario (2026-07-11) sobre datos ya existentes:** el proyecto todavía está en fase de desarrollo, sin datos reales — solo los generados por los scripts de seed. Por eso el fix es **solo hacia adelante** (normaliza lo que se registra/loguea/actualiza de acá en más); las queries de login/duplicado siguen siendo exact-match (`filter_by(email=...)`), no se agregó `func.lower(User.email)` para cubrir filas que ya pudieran existir con capitalización mixta. Ver la regla general que se dejó anotada en `AGENTS.md` §6 para no volver a preguntar esto en cada hallazgo futuro — si el proyecto pasa a tener datos reales, hay que revisar este criterio.
+
+**Test de regresión:** `tests/functional/test_security_auth.py` — `TestRegister::test_register_normalizes_email_to_lowercase`, `TestRegister::test_register_rejects_duplicate_email_different_case`, `TestLogin::test_login_with_different_case_succeeds_after_register`.
+
 ## Hallazgo #14 — `PUT /auth/me`: cambio de email sin validar formato ni unicidad
 
 `UserUpdate.email` (`user_schema.py`) es `Optional[str] = None` — no `EmailStr`, así que no hay validación de formato alguna (acepta cualquier string). Y en `update_me` (`auth_controller.py`), el nuevo valor se asigna directo a `current_user.email` y se hace `db.commit()` sin chequear antes si ese email ya está en uso por otro usuario — la columna `User.email` tiene `unique=True` (`security_models.py:75`), así que una colisión termina en una `IntegrityError` de Postgres sin capturar, que se propaga como `500` genérico en vez de un `400` prolijo.
 
 **Solución recomendada:** (a) cambiar `UserUpdate.email` a `Optional[EmailStr]` para validar formato; (b) en `update_me`, si `data.email` viene y es distinto del actual, chequear explícitamente que no exista otro usuario con ese email (`db.query(User).filter(User.email == data.email, User.id != current_user.id).first()`) y devolver `400` si ya está tomado, antes de hacer el `commit()`. De paso, aplicar la misma normalización de minúsculas del hallazgo #13. Test: dos usuarios existentes, el segundo intenta poner su email igual al del primero vía `PUT /auth/me` → debe dar `400` claro, no `500`.
+
+### Fix aplicado (2026-07-11)
+
+`UserUpdate.email` pasó de `Optional[str]` a `Optional[EmailStr]` (`user_schema.py`), con el mismo `field_validator` de normalización del hallazgo #13 (maneja `None` explícitamente, ya que el campo es opcional). En `update_me` (`auth_controller.py`), antes del loop que asigna los campos: si `data.email is not None` y es distinto del email actual del usuario, se chequea `db.query(User).filter(User.email == data.email, User.id != current_user.id).first()` — si existe, `400` con `"Ese email ya está en uso por otra cuenta."`, antes de tocar `current_user`/hacer `commit()`. La comparación "es distinto del actual" ya usa el email normalizado de ambos lados, así que reenviar el propio email en otra capitalización no dispara el chequeo de unicidad en falso.
+
+**Test de regresión:** `tests/functional/test_security_auth.py::TestUpdateMe` — `test_update_me_rejects_email_taken_by_another_user`, `test_update_me_rejects_invalid_email_format`, `test_update_me_normalizes_new_email`, `test_update_me_allows_resubmitting_own_email_different_case`.

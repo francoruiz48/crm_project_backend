@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
@@ -42,6 +42,21 @@ def update_me(
     db: Session = Depends(get_db),
 ):
     """Actualiza los datos del perfil del usuario autenticado."""
+    # Hallazgo #14: antes se asignaba data.email directo y se hacía commit()
+    # sin chequear unicidad — un email ya usado por otro usuario terminaba en
+    # una IntegrityError sin capturar (500 crudo), ya que User.email es unique.
+    if data.email is not None and data.email != current_user.email:
+        taken = (
+            db.query(User)
+            .filter(User.email == data.email, User.id != current_user.id)
+            .first()
+        )
+        if taken:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ese email ya está en uso por otra cuenta.",
+            )
+
     for field in ("name", "last_name", "email", "phone", "date_of_birth"):
         value = getattr(data, field, None)
         if value is not None:

@@ -29,6 +29,19 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Normalización de email
+# ---------------------------------------------------------------------------
+# Hallazgo #13 (ronda de bug-hunting 2026-07-10): el email no se normalizaba
+# antes de guardarlo/compararlo (registro y login usaban el string tal cual
+# vino en el request) — dos registros con el mismo email en distinta
+# capitalización (Test@x.com / test@x.com) se trataban como cuentas distintas,
+# y loguearse con otra capitalización que la usada al registrarse fallaba.
+# Única fuente de verdad: la usan LoginRequest/RegisterRequest/UserUpdate.
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+# ---------------------------------------------------------------------------
 # Política de contraseñas
 # ---------------------------------------------------------------------------
 # Única fuente de verdad para "contraseña segura": la usan tanto el registro

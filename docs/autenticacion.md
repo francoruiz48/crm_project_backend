@@ -257,15 +257,12 @@ Importante: **el registro (`/auth/register`) no crea una organización.** Son do
 - Política de fortaleza de contraseña (mín. 10, mayúscula + minúscula + número, tope 72 por bcrypt), unificada en `validate_password_strength` y aplicada tanto en `/auth/register` como en `/auth/change-password` (ver [§3](#3-contraseñas)).
 - `last_name` es `NOT NULL` tanto en `RegisterRequest` como en la columna `User.last_name` — ya no es solo una validación de API que se puede esquivar creando el `User` directo por otro camino (ver [§13](#13-changelog)).
 - **[RESUELTO, hallazgo #12, 2026-07-10]** `/auth/login` y `/auth/register` tienen rate limiting (`10/minuto` por IP, vía `slowapi` — misma infraestructura que ya usaba `WebForm`). Antes no había ningún freno a la cantidad de intentos (fuerza bruta / credential stuffing en login, spam de cuentas en register).
+- **[RESUELTO, hallazgo #13, 2026-07-11]** El email se normaliza (`.strip().lower()`) antes de guardarlo o compararlo, en `LoginRequest`/`RegisterRequest`/`UserUpdate` (`app/core/security.py::normalize_email`, única fuente de verdad). Registrarse con una capitalización y loguearse con otra ahora funciona; dos registros del mismo email en distinta capitalización se tratan como duplicado. El fix es solo hacia adelante (no hay migración de datos existentes — el proyecto todavía no tiene datos reales, ver `AGENTS.md` §6).
+- **[RESUELTO, hallazgo #14, 2026-07-11]** `PUT /auth/me` ahora valida formato de email (`EmailStr`) y unicidad (`400` si ya está en uso por otra cuenta, chequeado antes del `commit()` — antes terminaba en `500` sin manejar por la constraint `unique` de `User.email`).
 
 **Pendiente / a tener en cuenta:**
 
 - `POST /auth/invite` devuelve el `invite_token` directo en la respuesta HTTP — asume que el front/quien invita lo va a compartir por un canal seguro (email, etc.) fuera del sistema. No hay envío de mail automático todavía.
-
-**PENDIENTE — hallazgos de la ronda de bug-hunting (2026-07-10, detalle en `hallazgos_agente/autenticacion.md`):**
-
-- **#13 — El email no se normaliza (case-sensitivity)** en `register`/`login` — comparación exacta, sin `.lower()`, a diferencia de la comparación de invitaciones que sí lo hace.
-- **#14 — `PUT /auth/me` permite cambiar el email sin validar formato ni unicidad** — `UserUpdate.email` es `str` plano (no `EmailStr`), y no se chequea colisión antes del `commit()`, lo que puede terminar en un `500` sin manejar si dos usuarios coinciden en el email nuevo.
 
 ---
 
