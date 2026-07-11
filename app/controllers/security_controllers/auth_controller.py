@@ -1,9 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 
-from app.core.security import PermissionChecker, _get_current_user
+from app.core.security import PermissionChecker, _get_current_user, get_client_ip
 from app.db.session import get_db
 from app.models.security_models import User
 from app.schemas.security_schemas.auth_schema import (
@@ -26,7 +25,9 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 # rate limiting, permitiendo fuerza bruta de contraseñas sin freno. Se usa una
 # instancia de Limiter propia del router, mismo patrón que web_form_public_controller.py
 # (slowapi lee `app.state.limiter`/el exception handler ya están montados en main.py).
-limiter = Limiter(key_func=get_remote_address)
+# Hallazgo #11 (2026-07-11): key_func usa get_client_ip en vez de
+# get_remote_address — mismo motivo que en web_form_public_controller.py.
+limiter = Limiter(key_func=get_client_ip)
 
 
 @router.get("/me", response_model=UserResponse)

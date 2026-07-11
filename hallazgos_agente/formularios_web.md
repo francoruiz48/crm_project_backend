@@ -35,7 +35,7 @@ Confirmado por el usuario: 17/17 tests pasan, suite completa (471 tests) tambié
 # Hallazgos #9, #10, #11 — Formularios web (ronda de bug-hunting, 2026-07-10)
 
 **Doc de usuario:** `docs/formularios_web.md` §8
-**Estado:** #9 [RESUELTO] 2026-07-11. #10 [RESUELTO] 2026-07-11. #11 PENDIENTE — investigado y documentado, sin aplicar fix. No tocar código sin antes preguntar (regla del proyecto).
+**Estado:** #9 [RESUELTO] 2026-07-11. #10 [RESUELTO] 2026-07-11. #11 [RESUELTO] 2026-07-11.
 
 Contexto: el usuario pidió arrancar una segunda ronda de auditoría, ahora buscando bugs funcionales/de seguridad módulo por módulo (no solo huecos de tests como la ronda anterior). Se re-leyeron enteros: `web_form_service.py`, `web_form_public_controller.py`, `web_form_controller.py`, `web_form_repository.py`, `web_form_schema.py`, `web_form_field_schema.py`, `web_form.py` (modelo), `web_form_field.py` (modelo), `app/core/config.py`.
 
@@ -74,3 +74,18 @@ El rate limit (`@limiter.limit("5/minute")`, vía `get_remote_address` de `slowa
 **No se pudo confirmar** si el despliegue real efectivamente pasa por un proxy inverso — depende de infraestructura que no es visible desde el código. Antes de tocar esto habría que preguntarle al usuario cómo está desplegado el backend en producción.
 
 **Solución recomendada (si se confirma que hay proxy delante):** usar el header `X-Forwarded-For` (primer IP de la lista) o `X-Real-IP` si el proxy los setea, con `get_remote_address` reemplazado por una función custom que los lea con fallback a `request.client.host`. Si no hay proxy, no hace falta cambiar nada.
+
+### Fix aplicado (2026-07-11)
+
+Se le explicó al usuario en detalle qué es un proxy/load balancer y por qué rompe `request.client.host`. La infraestructura de producción todavía no está definida (probablemente se contrate un servidor/servicio más adelante), pero el usuario decidió **asumir que va a haber un proxy delante** (es lo más probable) y pidió centralizar la lógica en un solo lugar, fácil de encontrar y ajustar si la infraestructura real termina siendo distinta.
+
+`app/core/security.py`: se agregó `get_client_ip(request: Request) -> str` — única fuente de verdad, prioriza `X-Forwarded-For` (primer IP de la lista, por si hay varios proxies encadenados), después `X-Real-IP`, y por último cae a `request.client.host`. Incluye una nota de seguridad: `X-Forwarded-For` puede ser falsificado por un cliente si no hay un proxy de confianza que lo sobreescriba — mientras no se confirme la infraestructura real, esto es una mejora sobre el estado anterior (todos compartían la misma IP), no una garantía anti-spoofing total.
+
+**Alcance ampliado en el momento del fix:** al implementar, se encontró que el mismo `get_remote_address` de slowapi (con el mismo bug raíz) también se usaba en `app/main.py` (limiter global) y en `app/controllers/security_controllers/auth_controller.py` (rate limit de `/auth/login`+`/auth/register`, hallazgo #12). Se le consultó al usuario si extender el fix a los tres lugares en vez de dejar el mismo bug sin resolver en otro lado — confirmó que sí. Los tres `Limiter(key_func=...)` (`web_form_public_controller.py`, `main.py`, `auth_controller.py`) ahora usan `get_client_ip` en vez de `get_remote_address`.
+
+También se actualizó el `remoteip` que se le manda al proveedor de CAPTCHA (`web_form_public_controller.py`) para usar `get_client_ip(request)` en vez de `request.client.host` directo.
+
+**Test de regresión:**
+- `tests/functional/test_security_auth.py::TestGetClientIp` — 3 tests directos sobre la función (prioridad `X-Forwarded-For` > `X-Real-IP` > `request.client.host`).
+- `tests/functional/test_security_auth.py::TestAuthRateLimiting::test_rate_limit_uses_x_forwarded_for_not_shared_across_visitors` — dos "visitantes" con `X-Forwarded-For` distinto tienen cuotas de rate limit independientes.
+- `tests/functional/test_web_forms.py::TestPublicFormSubmit::test_submit_captcha_remoteip_uses_x_forwarded_for` — el `remoteip` mandado al proveedor de CAPTCHA usa el primer IP de `X-Forwarded-For`, no la IP del `TestClient`.

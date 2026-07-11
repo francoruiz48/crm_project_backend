@@ -100,7 +100,7 @@ Test de regresión de los 4: `tests/functional/test_tenant_isolation.py` (clases
 - ~~Patrón transversal de queries crudas sin filtro de tenant en varios `update`/`delete` custom (`LeadContactState`, `NomenclatorItem`, `Nomenclator`, `LeadFlow`, `Tag`) — causan `500` en vez de `404` con un `id` ajeno.~~ **[RESUELTO 2026-07-11]** Ver `hallazgos_agente/patron_queries_sin_tenant_filter.md`.
 - ~~CAPTCHA de WebForm sin manejo de errores/timeout.~~ **[RESUELTO 2026-07-11]** Ver `formularios_web.md` §8.
 - ~~Carrera (TOCTOU) en el chequeo de leads duplicados.~~ **[DOCUMENTADO, sin implementar — decisión explícita del usuario, 2026-07-11]** Ventana chica, bajo impacto, y la solución (advisory lock) no se podría testear de verdad en esta suite. Ver `lead.md` §5.
-- `request.client.host` como fuente de IP para rate limit/CAPTCHA, posible problema si hay proxy delante (sin confirmar). Ver `formularios_web.md` §8.
+- ~~`request.client.host` como fuente de IP para rate limit/CAPTCHA, posible problema si hay proxy delante (sin confirmar).~~ **[RESUELTO 2026-07-11]** Se asumió que va a haber proxy en producción (infraestructura aún no definida) y se centralizó en `get_client_ip` (`X-Forwarded-For`/`X-Real-IP`), aplicado también al rate limit de `/auth/*` (mismo bug raíz). Ver `formularios_web.md` §8 y `autenticacion.md` §11.
 
 Módulos revisados sin hallazgos nuevos: Usuarios y permisos, Campos personalizados, Vistas de leads, Importación y exportación, Reglas de validación, Dashboard, Búsqueda, Almacenamiento, Plantillas, Metadata.
 

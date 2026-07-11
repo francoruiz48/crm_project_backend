@@ -2,9 +2,9 @@ from fastapi import APIRouter, Request, HTTPException, status
 from typing import Dict, Any
 import httpx
 from slowapi import Limiter
-from slowapi.util import get_remote_address
 from app.core.config import settings
 from app.core.context import TENANT_ORG_ID
+from app.core.security import get_client_ip
 from app.services.web_form_service import WebFormService
 from app.services.lead_service import LeadService
 from app.schemas.web_form_schema import WebFormPublicResponse
@@ -14,7 +14,11 @@ from app.schemas.lead_field_value_schema import LeadFieldValueCreate
 router = APIRouter(prefix="/public/forms", tags=["Public Web Forms"])
 
 # Instanciamos el mismo limitador para usarlo en el decorador
-limiter = Limiter(key_func=get_remote_address)
+# Hallazgo #11: key_func usa get_client_ip (X-Forwarded-For/X-Real-IP con
+# fallback a request.client.host) en vez de get_remote_address de slowapi
+# (que solo lee request.client.host) — necesario si hay un proxy delante,
+# ver app/core/security.py para el detalle.
+limiter = Limiter(key_func=get_client_ip)
 
 # Nombre del campo falso (Honeypot). El frontend debe incluirlo en el HTML pero oculto con CSS.
 HONEYPOT_FIELD_NAME = "website_url_ext" 
@@ -60,7 +64,7 @@ async def submit_public_form(uuid: str, request: Request, payload: Dict[str, Any
                     data={
                         "secret": settings.CAPTCHA_SECRET_KEY,
                         "response": captcha_token,
-                        "remoteip": request.client.host
+                        "remoteip": get_client_ip(request)  # Hallazgo #11
                     }
                 )
                 verification = res.json()

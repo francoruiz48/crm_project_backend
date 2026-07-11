@@ -9,6 +9,8 @@ Tests de autenticación y autorización:
   - Hallazgo #12: rate limiting en /auth/login y /auth/register
   - Hallazgo #13: normalización de email (.strip().lower()) en Login/Register/UpdateMe
   - Hallazgo #14: PUT /auth/me valida formato (EmailStr) y unicidad de email
+  - Hallazgo #11: get_client_ip (X-Forwarded-For/X-Real-IP) como fuente de IP
+    real detrás de un proxy, usada por el rate limiter de /auth/*
 """
 import pytest
 from app.core.constans import ADMIN_ORG_ID
@@ -75,6 +77,38 @@ def registered_user(plain_client):
         "access_token": tokens["access_token"],
         "refresh_token": tokens["refresh_token"],
     }
+
+
+# ---------------------------------------------------------------------------
+# GET_CLIENT_IP (hallazgo #11)
+# ---------------------------------------------------------------------------
+
+class TestGetClientIp:
+    """get_client_ip (app/core/security.py) es la única fuente de verdad para
+    resolver la IP real de un visitante detrás de un proxy — la usan el rate
+    limiter de /auth/* y de /public/forms/*/submit, y el `remoteip` de CAPTCHA."""
+
+    @staticmethod
+    def _make_request(headers: dict, client_host: str = "127.0.0.1"):
+        from starlette.requests import Request
+        raw_headers = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
+        scope = {"type": "http", "headers": raw_headers, "client": (client_host, 12345)}
+        return Request(scope)
+
+    def test_prefers_x_forwarded_for_first_ip(self):
+        from app.core.security import get_client_ip
+        req = self._make_request({"x-forwarded-for": "203.0.113.1, 10.0.0.1"}, client_host="10.0.0.1")
+        assert get_client_ip(req) == "203.0.113.1"
+
+    def test_falls_back_to_x_real_ip_without_forwarded_for(self):
+        from app.core.security import get_client_ip
+        req = self._make_request({"x-real-ip": "203.0.113.2"}, client_host="10.0.0.1")
+        assert get_client_ip(req) == "203.0.113.2"
+
+    def test_falls_back_to_request_client_host_without_proxy_headers(self):
+        from app.core.security import get_client_ip
+        req = self._make_request({}, client_host="198.51.100.9")
+        assert get_client_ip(req) == "198.51.100.9"
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +319,35 @@ class TestAuthRateLimiting:
         assert 429 in statuses, f"Se esperaba al menos un 429 entre los 11 intentos, se obtuvo: {statuses}"
         # Antes de agotar la cuota, cada registro con email distinto debe dar 200.
         assert all(s in (200, 429) for s in statuses)
+
+    def test_rate_limit_uses_x_forwarded_for_not_shared_across_visitors(self, plain_client):
+        """Hallazgo #11: el rate limit debe basarse en X-Forwarded-For (IP real del
+        visitante detrás de un proxy), no en request.client.host — que sería la
+        misma para todos los visitantes si hay un proxy delante (como el
+        TestClient, que siempre pega desde la misma conexión)."""
+        headers_visitor_a = {"X-Forwarded-For": "203.0.113.10"}
+        headers_visitor_b = {"X-Forwarded-For": "203.0.113.20"}
+
+        # Agotar la cuota del visitante A.
+        statuses_a = []
+        for _ in range(11):
+            resp = plain_client.post(
+                "/auth/login",
+                json={"email": "no-existe-rate-limit-a@test.com", "password": "cualquiera"},
+                headers=headers_visitor_a,
+            )
+            statuses_a.append(resp.status_code)
+        assert 429 in statuses_a, f"Se esperaba al menos un 429 para el visitante A, se obtuvo: {statuses_a}"
+
+        # El visitante B, con IP distinta, no debería estar bloqueado todavía.
+        resp_b = plain_client.post(
+            "/auth/login",
+            json={"email": "no-existe-rate-limit-b@test.com", "password": "cualquiera"},
+            headers=headers_visitor_b,
+        )
+        assert resp_b.status_code == 401, (
+            f"Esperaba 401 (IP distinta, cuota propia) pero recibió {resp_b.status_code}: {resp_b.text}"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -16,6 +16,9 @@ tests ejercitan:
     en el submit público — antes no se aplicaba nunca.
   - Hallazgo #10 (formularios_web.md §8): manejo de errores del proveedor de
     CAPTCHA (caído / responde no-JSON) — antes terminaba en 500 crudo.
+  - Hallazgo #11 (formularios_web.md §8): el `remoteip` mandado al proveedor
+    de CAPTCHA usa `get_client_ip` (X-Forwarded-For), no `request.client.host`
+    directo — necesario si hay un proxy delante.
 
 Notas sobre decisiones de testing:
   - El CAPTCHA se mockea (`httpx.AsyncClient.post`) para no depender de un
@@ -434,6 +437,32 @@ class TestPublicFormSubmit:
 
         leads = db_session.query(Lead).filter_by(campaign_id=initial_structure["campaign_id"]).all()
         assert len(leads) == 1
+
+    def test_submit_captcha_remoteip_uses_x_forwarded_for(
+        self, api, db_session, initial_structure, initial_fields
+    ):
+        """Hallazgo #11: el `remoteip` que se le manda al proveedor de CAPTCHA debe
+        ser la IP real del visitante (X-Forwarded-For), no la del proxy/TestClient
+        — si hay un proxy delante, request.client.host es siempre la misma."""
+        form = _create_web_form_db(
+            db_session, initial_structure["org_id"], initial_structure["campaign_id"], require_captcha=True
+        )
+        wf_field = _add_web_form_field(db_session, form.id, initial_fields["nombre_id"])
+
+        fake_response = AsyncMock()
+        fake_response.json = lambda: {"success": True}
+        mock_post = AsyncMock(return_value=fake_response)
+        with patch("httpx.AsyncClient.post", mock_post):
+            resp = api.client.post(
+                f"/public/forms/{form.public_uuid}/submit",
+                json={str(wf_field.id): "Juan", "captcha_token": "token-valido", "website_url_ext": ""},
+                headers={"X-Forwarded-For": "203.0.113.55, 10.0.0.1"},
+            )
+        assert resp.status_code == 200, resp.text
+
+        sent_data = mock_post.call_args.kwargs["data"]
+        # Debe tomar el primer IP de la lista (el visitante original), no el del proxy interno.
+        assert sent_data["remoteip"] == "203.0.113.55"
 
     def test_submit_captcha_provider_connection_error_returns_503(
         self, api, db_session, initial_structure, initial_fields
