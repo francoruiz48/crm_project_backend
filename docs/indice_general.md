@@ -98,7 +98,7 @@ Test de regresión de los 4: `tests/functional/test_tenant_isolation.py` (clases
 **Robustez / menor impacto:**
 
 - Patrón transversal de queries crudas sin filtro de tenant en varios `update`/`delete` custom (`LeadContactState`, `NomenclatorItem`, `Nomenclator`, `LeadFlow`, `Tag`) — causan `500` en vez de `404` con un `id` ajeno, no permiten escribir datos de otra organización. Ver `hallazgos_agente/patron_queries_sin_tenant_filter.md`.
-- CAPTCHA de WebForm sin manejo de errores/timeout. Ver `formularios_web.md` §8.
+- ~~CAPTCHA de WebForm sin manejo de errores/timeout.~~ **[RESUELTO 2026-07-11]** Ver `formularios_web.md` §8.
 - Carrera (TOCTOU) en el chequeo de leads duplicados. Ver `lead.md` §5.
 - `request.client.host` como fuente de IP para rate limit/CAPTCHA, posible problema si hay proxy delante (sin confirmar). Ver `formularios_web.md` §8.
 

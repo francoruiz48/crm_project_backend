@@ -49,22 +49,32 @@ async def submit_public_form(uuid: str, request: Request, payload: Dict[str, Any
             )
         
         # Validación asíncrona (Ejemplo usando Cloudflare Turnstile, funciona igual para reCAPTCHA v3)
-        async with httpx.AsyncClient() as client:
-            # NOTA: En un entorno real, el 'secret' debe venir de tus variables de entorno (settings.CAPTCHA_SECRET_KEY)
-            res = await client.post(
-                str(settings.CAPTCHA_VERIFY_URL),
-                data={
-                    "secret": settings.CAPTCHA_SECRET_KEY,
-                    "response": captcha_token,
-                    "remoteip": request.client.host
-                }
-            )
-            verification = res.json()
-            if not verification.get("success"):
-                raise HTTPException(
-                    status.HTTP_400_BAD_REQUEST, 
-                    detail="No se pudo verificar que seas humano. Intenta de nuevo."
+        # Hallazgo #10: la llamada al proveedor externo puede fallar por su cuenta
+        # (caído, lento, responde algo no-JSON) — sin timeout explícito y sin
+        # try/except esto colgaba el request y terminaba en un 500 crudo.
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                # NOTA: En un entorno real, el 'secret' debe venir de tus variables de entorno (settings.CAPTCHA_SECRET_KEY)
+                res = await client.post(
+                    str(settings.CAPTCHA_VERIFY_URL),
+                    data={
+                        "secret": settings.CAPTCHA_SECRET_KEY,
+                        "response": captcha_token,
+                        "remoteip": request.client.host
+                    }
                 )
+                verification = res.json()
+        except (httpx.HTTPError, ValueError):
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No se pudo verificar el CAPTCHA, intenta de nuevo en unos segundos."
+            )
+
+        if not verification.get("success"):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail="No se pudo verificar que seas humano. Intenta de nuevo."
+            )
 
     # 2. CORS Manual (Validación de Origen)
     origin = request.headers.get("origin") or request.headers.get("referer")

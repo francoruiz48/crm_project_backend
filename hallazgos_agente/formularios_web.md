@@ -35,11 +35,11 @@ Confirmado por el usuario: 17/17 tests pasan, suite completa (471 tests) tambié
 # Hallazgos #9, #10, #11 — Formularios web (ronda de bug-hunting, 2026-07-10)
 
 **Doc de usuario:** `docs/formularios_web.md` §8
-**Estado:** #9 [RESUELTO] 2026-07-10. #10 y #11 PENDIENTES — investigados y documentados, sin aplicar fix. No tocar código sin antes preguntar (regla del proyecto).
+**Estado:** #9 [RESUELTO] 2026-07-11. #10 [RESUELTO] 2026-07-11. #11 PENDIENTE — investigado y documentado, sin aplicar fix. No tocar código sin antes preguntar (regla del proyecto).
 
 Contexto: el usuario pidió arrancar una segunda ronda de auditoría, ahora buscando bugs funcionales/de seguridad módulo por módulo (no solo huecos de tests como la ronda anterior). Se re-leyeron enteros: `web_form_service.py`, `web_form_public_controller.py`, `web_form_controller.py`, `web_form_repository.py`, `web_form_schema.py`, `web_form_field_schema.py`, `web_form.py` (modelo), `web_form_field.py` (modelo), `app/core/config.py`.
 
-## Hallazgo #9 — `WebFormField.is_required` nunca se aplica (confirmado, mayor impacto) — [RESUELTO] 2026-07-10
+## Hallazgo #9 — `WebFormField.is_required` nunca se aplica (confirmado, mayor impacto) — [RESUELTO] 2026-07-11
 
 `is_required` existe en el modelo (`web_form_field.py:20`) y en el schema (`web_form_field_schema.py:11`), se manda al frontend público vía `GET /public/forms/{uuid}` (`WebFormFieldResponse` lo incluye), pero **nada en `submit_public_form` lo lee** — confirmado con `grep -rn is_required app/`, el único uso real es la declaración en modelo/schema. La única validación de "obligatorio" que sobrevive del lado del backend es el `LeadField.required` original (un flag distinto, a nivel de campo del CRM, no del formulario puntual).
 
@@ -55,11 +55,17 @@ Un campo con `hidden_value` seteado nunca se exige en el payload, sin importar `
 
 **Test de regresión:** `tests/functional/test_web_forms.py::TestPublicFormSubmit` — `test_submit_missing_required_field_returns_400` (ausencia de la clave y string vacío/blanco, ambos → 400, no se crea lead), `test_submit_required_field_present_succeeds` (valor presente → 200), `test_submit_required_field_with_hidden_value_not_demanded_from_payload` (is_required + hidden_value juntos → 200 sin mandarlo, se autocompleta).
 
-## Hallazgo #10 — Llamada al proveedor de CAPTCHA sin manejo de errores ni timeout explícito (confirmado)
+## Hallazgo #10 — Llamada al proveedor de CAPTCHA sin manejo de errores ni timeout explícito (confirmado) — [RESUELTO] 2026-07-11
 
 En `web_form_public_controller.py` líneas ~52-67, el `httpx.AsyncClient().post(...)` a `settings.CAPTCHA_VERIFY_URL` y el `res.json()` posterior no están dentro de ningún `try/except`, y no se pasa `timeout=` (queda en el default de `httpx`). El único `try/except` del endpoint (líneas 107-115) envuelve solamente `LeadService.create`, más abajo. Si el proveedor de CAPTCHA está caído, responde lento, o devuelve algo que no es JSON válido, la excepción se propaga sin capturar y el endpoint responde `500` crudo (sin el mensaje prolijo que sí se usa para el resto de los errores del submit) — y mientras tanto el request queda colgado hasta el timeout default de `httpx`.
 
 **Solución recomendada:** envolver ese bloque en `try/except (httpx.HTTPError, ValueError)` (`ValueError` cubre `res.json()` fallando por respuesta no-JSON) y devolver `400`/`503` con un mensaje del estilo "No se pudo verificar el CAPTCHA, intenta de nuevo" en vez de dejar que reviente como `500`. Agregar `timeout=10.0` (o el valor que el usuario prefiera) explícito en el `client.post`. Test: mockear `httpx.AsyncClient.post` para que tire `httpx.ConnectError` o devuelva texto no-JSON, verificar que el endpoint responde con un error controlado (400/503) y no un 500 sin manejar.
+
+### Fix aplicado (2026-07-11)
+
+`app/controllers/web_form_public_controller.py::submit_public_form`: el bloque que llama al proveedor de CAPTCHA (`client.post` + `res.json()`) ahora está envuelto en `try/except (httpx.HTTPError, ValueError)`, y `httpx.AsyncClient()` se instancia con `timeout=10.0` explícito. Si la excepción se dispara (proveedor caído, timeout, respuesta no-JSON), `503` con `detail="No se pudo verificar el CAPTCHA, intenta de nuevo en unos segundos."` (decisión del usuario: `503`, para distinguir "el proveedor falló" de los `400` que ya se usan para "token ausente"/"captcha rechazado", que sí son responsabilidad del visitante). El chequeo `if not verification.get("success")` (captcha rechazado → `400`) quedó igual, solo se movió fuera del `try` para no confundirlo con un fallo del proveedor.
+
+**Test de regresión:** `tests/functional/test_web_forms.py::TestPublicFormSubmit` — `test_submit_captcha_provider_connection_error_returns_503` (mockea `httpx.AsyncClient.post` con `side_effect=httpx.ConnectError`), `test_submit_captcha_provider_invalid_json_returns_503` (mockea una respuesta cuyo `.json()` tira `ValueError`).
 
 ## Hallazgo #11 — `request.client.host` como fuente de IP para rate limit y CAPTCHA `remoteip` (menor confianza, no confirmado)
 

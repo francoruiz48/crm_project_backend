@@ -14,6 +14,8 @@ tests ejercitan:
   - La inyección forzada de `hidden_value` (formularios_web.md §6).
   - Hallazgo #9 (formularios_web.md §8): validación de `WebFormField.is_required`
     en el submit público — antes no se aplicaba nunca.
+  - Hallazgo #10 (formularios_web.md §8): manejo de errores del proveedor de
+    CAPTCHA (caído / responde no-JSON) — antes terminaba en 500 crudo.
 
 Notas sobre decisiones de testing:
   - El CAPTCHA se mockea (`httpx.AsyncClient.post`) para no depender de un
@@ -28,6 +30,7 @@ Notas sobre decisiones de testing:
 """
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from app.models.lead import Lead
@@ -431,6 +434,48 @@ class TestPublicFormSubmit:
 
         leads = db_session.query(Lead).filter_by(campaign_id=initial_structure["campaign_id"]).all()
         assert len(leads) == 1
+
+    def test_submit_captcha_provider_connection_error_returns_503(
+        self, api, db_session, initial_structure, initial_fields
+    ):
+        """Hallazgo #10: si el proveedor de CAPTCHA está inalcanzable, el endpoint
+        debe responder 503 controlado, no un 500 crudo sin manejar."""
+        form = _create_web_form_db(
+            db_session, initial_structure["org_id"], initial_structure["campaign_id"], require_captcha=True
+        )
+        wf_field = _add_web_form_field(db_session, form.id, initial_fields["nombre_id"])
+
+        with patch("httpx.AsyncClient.post", AsyncMock(side_effect=httpx.ConnectError("boom"))):
+            resp = api.client.post(
+                f"/public/forms/{form.public_uuid}/submit",
+                json={str(wf_field.id): "Juan", "captcha_token": "token-cualquiera", "website_url_ext": ""},
+            )
+        assert resp.status_code == 503, resp.text
+
+        leads = db_session.query(Lead).filter_by(campaign_id=initial_structure["campaign_id"]).all()
+        assert len(leads) == 0
+
+    def test_submit_captcha_provider_invalid_json_returns_503(
+        self, api, db_session, initial_structure, initial_fields
+    ):
+        """Hallazgo #10: si el proveedor responde algo que no es JSON válido,
+        también debe ser 503 controlado (antes reventaba con 500)."""
+        form = _create_web_form_db(
+            db_session, initial_structure["org_id"], initial_structure["campaign_id"], require_captcha=True
+        )
+        wf_field = _add_web_form_field(db_session, form.id, initial_fields["nombre_id"])
+
+        def _raise_not_json():
+            raise ValueError("Respuesta no es JSON válido")
+
+        fake_response = AsyncMock()
+        fake_response.json = _raise_not_json
+        with patch("httpx.AsyncClient.post", AsyncMock(return_value=fake_response)):
+            resp = api.client.post(
+                f"/public/forms/{form.public_uuid}/submit",
+                json={str(wf_field.id): "Juan", "captcha_token": "token-cualquiera", "website_url_ext": ""},
+            )
+        assert resp.status_code == 503, resp.text
 
     def test_submit_blocks_disallowed_origin(self, api, db_session, initial_structure, initial_fields):
         """Barrera 4: si el formulario tiene allowed_domains configurado, un Origin
