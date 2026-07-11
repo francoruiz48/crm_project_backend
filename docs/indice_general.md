@@ -91,7 +91,7 @@ Test de regresión de los 4: `tests/functional/test_tenant_isolation.py` (clases
 - ~~`LeadRoutingPolicy`: borrar/activar/desactivar no exige ser `MANAGER` del equipo (crear/editar sí).~~ **[RESUELTO 2026-07-10]** Ver `equipos_y_enrutamiento.md` §7.
 - ~~`WebFormField.is_required` nunca se aplica en el submit público.~~ **[RESUELTO 2026-07-11]** Ver `formularios_web.md` §8.
 - ~~`PUT /organizations/{id}` mezcla el permiso (org del header) con el acceso al objeto (cualquier org del usuario).~~ **[RESUELTO 2026-07-11]** Además se corrigió un bug relacionado: `bulk_delete` genérico bypaseaba `delete_strategy == PROTECTED` (afectaba `POST /organizations/bulk-delete`). Ver `organizaciones.md` §5.
-- `DELETE /campaigns/{id}` no tiene la misma restricción de creador/owner que `PUT`. Ver `campanas_y_workspaces.md` §6.
+- ~~`DELETE /campaigns/{id}` no tiene la misma restricción de creador/owner que `PUT`.~~ **[RESUELTO 2026-07-11]** Ver `campanas_y_workspaces.md` §6.
 - `POST /lead_flows/graph` sin chequeo de permiso (cualquier rol puede rediseñar el flujo de ventas de su propia org). Ver `flujo_de_leads.md` §4.
 - ~~Email no se normaliza (case-sensitivity) al registrar/loguear; `PUT /auth/me` permite cambiar el email sin validar formato ni unicidad.~~ **[RESUELTO 2026-07-11]** Ver `autenticacion.md` §11.
 
@@ -99,7 +99,7 @@ Test de regresión de los 4: `tests/functional/test_tenant_isolation.py` (clases
 
 - ~~Patrón transversal de queries crudas sin filtro de tenant en varios `update`/`delete` custom (`LeadContactState`, `NomenclatorItem`, `Nomenclator`, `LeadFlow`, `Tag`) — causan `500` en vez de `404` con un `id` ajeno.~~ **[RESUELTO 2026-07-11]** Ver `hallazgos_agente/patron_queries_sin_tenant_filter.md`.
 - ~~CAPTCHA de WebForm sin manejo de errores/timeout.~~ **[RESUELTO 2026-07-11]** Ver `formularios_web.md` §8.
-- Carrera (TOCTOU) en el chequeo de leads duplicados. Ver `lead.md` §5.
+- ~~Carrera (TOCTOU) en el chequeo de leads duplicados.~~ **[DOCUMENTADO, sin implementar — decisión explícita del usuario, 2026-07-11]** Ventana chica, bajo impacto, y la solución (advisory lock) no se podría testear de verdad en esta suite. Ver `lead.md` §5.
 - `request.client.host` como fuente de IP para rate limit/CAPTCHA, posible problema si hay proxy delante (sin confirmar). Ver `formularios_web.md` §8.
 
 Módulos revisados sin hallazgos nuevos: Usuarios y permisos, Campos personalizados, Vistas de leads, Importación y exportación, Reglas de validación, Dashboard, Búsqueda, Almacenamiento, Plantillas, Metadata.

@@ -83,7 +83,7 @@ Toda la lógica particular de estos módulos vive en `create`/`update` de los se
 
 ## 6. Actualización de una Campaign: permisos y bloqueo de `lead_flow_id`
 
-- **Permiso adicional además del RBAC estándar**: solo puede editar una campaña su creador (`created_by`), el `owner` de la organización, o un superadmin — aunque el usuario tenga el permiso genérico `campaign:update` vía rol. Es una capa de autorización extra, específica de este servicio, no cubierta por `PermissionChecker`. **[PENDIENTE, hallazgo #19]** Esta misma restricción **no** se aplica a `DELETE`/desactivar — un admin no-creador con permiso `campaign:delete` puede borrar (incluso con hard delete en cascada) una campaña que no podría renombrar. Ver `hallazgos_agente/campanas_y_workspaces.md`.
+- **Permiso adicional además del RBAC estándar**: solo puede editar una campaña su creador (`created_by`), el `owner` de la organización, o un superadmin — aunque el usuario tenga el permiso genérico `campaign:update` vía rol. Es una capa de autorización extra, específica de este servicio, no cubierta por `PermissionChecker`. **[RESUELTO 2026-07-11, hallazgo #19]** Esta misma restricción ahora también se aplica a `DELETE /campaigns/{id}` y a desactivar (`DELETE /campaigns/active/{id}`) — antes un admin no-creador con permiso `campaign:delete` podía borrar (incluso con hard delete en cascada) una campaña que no podría renombrar. El chequeo está centralizado en `CampaignService._assert_can_modify_campaign`, reusado por `update`/`delete`/`deactivate`. `set_active` (reactivación) no está cubierto — fuera de alcance. Ver `hallazgos_agente/campanas_y_workspaces.md`.
 - **`lead_flow_id` es inmutable una vez que la campaña tiene leads**: si se intenta cambiar y `Lead.count(campaign_id=...) > 0`, se rechaza con el mensaje "cree una nueva campaña" — no hay soporte para migrar leads existentes a un flujo distinto.
 - Si la campaña todavía no tiene leads, sí se puede cambiar el flujo, validando que el nuevo pertenezca a la misma organización.
 
@@ -97,13 +97,13 @@ Documentado en detalle desde el lado de `Team` en `equipos_y_enrutamiento.md` §
 
 ## 8. Borrado
 
-- `Campaign`: `SOFT_DELETE_HARD_OPT` — `DELETE /campaigns/{id}` desactiva por default; `?force=true` intenta hard delete con cascada de sus relaciones (leads, campos, etc. — operación destructiva de todo lo cargado en la campaña).
+- `Campaign`: `SOFT_DELETE_HARD_OPT` — `DELETE /campaigns/{id}` desactiva por default; `?force=true` intenta hard delete con cascada de sus relaciones (leads, campos, etc. — operación destructiva de todo lo cargado en la campaña). Requiere ser creador, owner o superadmin (mismo chequeo que `update`, ver §6).
 - `Workspace`: `SMART_DELETE` — hard delete automático solo si no tiene ninguna `Campaign` asociada (activa o no, según cómo esté declarado `delete_blockers` en el repositorio); si tiene, cae a soft delete aunque se pida `force=true`.
 
 ---
 
 ## 9. Cómo se testea
 
-- `tests/functional/test_campaign.py`: creación (éxito, inyección de campos B2B/5 campos y B2C/4 campos, `target_audience` desconocido no inyecta nada, workspace inválido, resolución de flujo por default, flujo de otra organización rechazado, nombre duplicado en mismo/distinto workspace), actualización (por creador, por no-creador → `403`, por superuser sin importar creador, nombre duplicado, cambio de flujo con/sin leads existentes, flujo de otra organización, campaña inexistente → `404`), y filtros (`workspace_id`, `is_public`, filtro no permitido se ignora sin error).
+- `tests/functional/test_campaign.py`: creación (éxito, inyección de campos B2B/5 campos y B2C/4 campos, `target_audience` desconocido no inyecta nada, workspace inválido, resolución de flujo por default, flujo de otra organización rechazado, nombre duplicado en mismo/distinto workspace), actualización (por creador, por no-creador → `403`, por superuser sin importar creador, nombre duplicado, cambio de flujo con/sin leads existentes, flujo de otra organización, campaña inexistente → `404`), borrado y desactivación (por creador, por no-creador → `403`, por superuser sin importar creador — hallazgo #19), y filtros (`workspace_id`, `is_public`, filtro no permitido se ignora sin error).
 - `tests/functional/test_workspace_and_campaign.py`: CRUD básico de workspace, y el caso `SMART_DELETE` (`test_workspace_delete_when_exists_campaign` — confirma que no se puede hard-delete un workspace con campañas asociadas).
 - `tests/functional/test_campaign_access.py`: accesos de equipo a campañas (complementa `equipos_y_enrutamiento.md`).

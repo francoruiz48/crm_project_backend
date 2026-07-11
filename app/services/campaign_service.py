@@ -1,6 +1,7 @@
 from typing import Optional
 from fastapi import status, HTTPException
 from app.db.repository.lead_flow_repository import LeadFlowRepository
+from app.db.unit_of_work import UnitOfWork
 from app.models.lead_flow import LeadFlow
 from app.services.base_service import BaseService
 from app.db.repository.campaign_repository import CampaignRepository
@@ -127,22 +128,38 @@ class CampaignService(BaseService):
         return cls._execute(action="Crear Campaña", func=do_create)
     
     @classmethod
+    def _assert_can_modify_campaign(cls, campaign, user_context: Optional[UserContext] = None, action_label: str = "editar"):
+        """SEGURIDAD: Solo el creador, el owner de la organización o un superadmin
+        pueden modificar una campaña — aunque el usuario tenga el permiso RBAC
+        genérico (campaign:update/delete) vía su rol. Es una capa extra encima
+        del RBAC estándar, específica de este servicio.
+
+        Hallazgo #19 (2026-07-11): esta regla ya era intencional en update() (con
+        test dedicado), pero delete()/deactivate() no la tenían — un admin
+        no-creador no podía renombrar una campaña ajena, pero sí borrarla del
+        todo (incluso hard-delete con cascada vía ?force=true). Se extrajo acá
+        para reusarla en los tres métodos. Confirmado con el usuario: "admin"
+        significa superadmin global (is_superuser), no el rol admin de la
+        organización — no se agregó ninguna condición nueva, solo se replicó
+        la regla existente."""
+        if user_context and user_context.user:
+            is_superuser = getattr(user_context, 'is_superuser', False)
+            is_owner = getattr(user_context, 'is_owner', False)
+            is_creator = campaign.created_by == user_context.user.id
+            if not (is_superuser or is_owner or is_creator):
+                raise HTTPException(
+                    status.HTTP_403_FORBIDDEN,
+                    detail=f"No tenés permiso para {action_label} esta campaña."
+                )
+
+    @classmethod
     def update(cls, obj_id: int, obj_in, user_context: Optional[UserContext] = None):
         def do_update(uow):
             campaign = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
             if not campaign:
                 cls._not_found(obj_id)
 
-            # SEGURIDAD: Solo el creador, owner o superadmin pueden editar
-            if user_context and user_context.user:
-                is_superuser = getattr(user_context, 'is_superuser', False)
-                is_owner = getattr(user_context, 'is_owner', False)
-                is_creator = campaign.created_by == user_context.user.id
-                if not (is_superuser or is_owner or is_creator):
-                    raise HTTPException(
-                        status.HTTP_403_FORBIDDEN,
-                        detail="No tenés permiso para editar esta campaña."
-                    )
+            cls._assert_can_modify_campaign(campaign, user_context, action_label="editar")
 
             errors = []
 
@@ -196,3 +213,25 @@ class CampaignService(BaseService):
             return updated_campaign
 
         return cls._execute(action="Actualizar Campaña", obj_id=obj_id, func=do_update)
+
+    @classmethod
+    def delete(cls, obj_id: int, user_context: Optional[UserContext] = None, force: bool = False):
+        # Hallazgo #19: mismo chequeo que update() — antes el genérico de
+        # BaseService solo exigía el permiso RBAC (campaign:delete), sin mirar
+        # creador/owner.
+        with UnitOfWork() as uow:
+            campaign = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
+            if not campaign:
+                cls._not_found(obj_id)
+            cls._assert_can_modify_campaign(campaign, user_context, action_label="eliminar")
+        return super().delete(obj_id, user_context=user_context, force=force)
+
+    @classmethod
+    def deactivate(cls, obj_id: int, user_context: Optional[UserContext] = None):
+        # Hallazgo #19: mismo chequeo que update()/delete().
+        with UnitOfWork() as uow:
+            campaign = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
+            if not campaign:
+                cls._not_found(obj_id)
+            cls._assert_can_modify_campaign(campaign, user_context, action_label="desactivar")
+        return super().deactivate(obj_id, user_context=user_context)

@@ -3,7 +3,7 @@
 > Ver `hallazgos_agente/_README_PARA_EL_AGENTE.md` para las reglas de esta carpeta.
 
 **Doc de usuario:** `docs/campanas_y_workspaces.md` §6, §8
-**Estado:** PENDIENTE — investigado, prioridad media (inconsistencia de autorización, no fuga de datos).
+**Estado:** [RESUELTO 2026-07-11]
 
 Se releyeron `campaign_controller.py`, `campaign_service.py`, `workspace_controller.py`, `workspace_service.py`.
 
@@ -22,3 +22,15 @@ La regla de `update` está documentada como intencional y tiene test dedicado �
 ## Solución recomendada
 
 Extraer el chequeo de `CampaignService.update` a un helper (`_assert_can_modify_campaign` o similar) y aplicarlo también en `delete`/`deactivate` (sobreescribiendo esos métodos en `CampaignService`, mismo patrón que ya usa `UserService._assert_can_modify`). Antes de aplicar el fix, confirmar con el usuario si la intención real es "solo creador/owner/superadmin puede modificar O borrar" (lo más consistente) — no asumirlo sin preguntar, según la instrucción del proyecto. Test: un admin no-creador con permiso `campaign:delete` intenta `DELETE /campaigns/{id}` de una campaña ajena → debería dar `403`, igual que ya pasa hoy con `PUT`.
+
+## Fix aplicado (2026-07-11)
+
+Se confirmó con el usuario: "El delete/disable debe ir acorde al update, creador, owner, y admin puede ejecutar la acción" — y que "admin" se refiere al superadmin global (`is_superuser`), no al rol admin de organización. No se agregó ninguna condición nueva, solo se replicó la regla existente de `update`.
+
+En `app/services/campaign_service.py`:
+- Se extrajo el chequeo de `update()` a `CampaignService._assert_can_modify_campaign(campaign, user_context, action_label)` (creador `campaign.created_by == user_context.user.id`, o `is_owner`, o `is_superuser`; si no, `403`).
+- `update()` ahora llama a este helper en vez de tener el chequeo inline.
+- Se agregaron overrides de `delete()` y `deactivate()` en `CampaignService`: abren un `with UnitOfWork() as uow:` solo para buscar la campaña (`cls.repository.get_by_id`, que aplica `apply_security_filter`) y correr el guard; si pasa, delegan en `super().delete(...)`/`super().deactivate(...)` para no duplicar la lógica de auditoría/estrategia de borrado (mismo patrón usado en el hallazgo #16 sobre `LeadRoutingPolicyService` y el #15 sobre `OrganizationService`).
+- `set_active` (reactivación) quedó fuera de alcance a propósito — no estaba pedido.
+
+**Tests** (`tests/functional/test_campaign.py`, sección "BORRAR / DESACTIVAR CAMPAÑA — CONTROL DE ACCESO"): 6 tests nuevos, mirroring los 3 existentes de `update` — creador puede borrar/desactivar, no-creador recibe `403` en ambos, superuser puede borrar/desactivar cualquier campaña.
