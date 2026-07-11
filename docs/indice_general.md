@@ -97,9 +97,11 @@ Test de regresión de los 4: `tests/functional/test_tenant_isolation.py` (clases
 
 **Robustez / menor impacto:**
 
-- Patrón transversal de queries crudas sin filtro de tenant en varios `update`/`delete` custom (`LeadContactState`, `NomenclatorItem`, `Nomenclator`, `LeadFlow`, `Tag`) — causan `500` en vez de `404` con un `id` ajeno, no permiten escribir datos de otra organización. Ver `hallazgos_agente/patron_queries_sin_tenant_filter.md`.
+- ~~Patrón transversal de queries crudas sin filtro de tenant en varios `update`/`delete` custom (`LeadContactState`, `NomenclatorItem`, `Nomenclator`, `LeadFlow`, `Tag`) — causan `500` en vez de `404` con un `id` ajeno.~~ **[RESUELTO 2026-07-11]** Ver `hallazgos_agente/patron_queries_sin_tenant_filter.md`.
 - ~~CAPTCHA de WebForm sin manejo de errores/timeout.~~ **[RESUELTO 2026-07-11]** Ver `formularios_web.md` §8.
 - Carrera (TOCTOU) en el chequeo de leads duplicados. Ver `lead.md` §5.
 - `request.client.host` como fuente de IP para rate limit/CAPTCHA, posible problema si hay proxy delante (sin confirmar). Ver `formularios_web.md` §8.
 
 Módulos revisados sin hallazgos nuevos: Usuarios y permisos, Campos personalizados, Vistas de leads, Importación y exportación, Reglas de validación, Dashboard, Búsqueda, Almacenamiento, Plantillas, Metadata.
+
+**Hallazgo #27 (encontrado 2026-07-11, al escribir el test de regresión del #22):** `lead_contact_state` nunca se agregó a `SYSTEM_ENTITIES_REGISTRY` (`app/core/dictionaries.py`) — no existe ningún permiso `lead_contact_state:*` en la base, así que **ningún usuario no-superadmin puede usar `/lead_contact_states/*`** (todos los endpoints, no solo alguno puntual). No se había detectado antes porque todos los tests de ese módulo corrían como superadmin. Solución recomendada (agregar la entidad al registro + resincronizar permisos + migración de datos para las organizaciones ya existentes, cuyos roles clonados no heredan el cambio automáticamente) en `hallazgos_agente/estados_de_contacto.md` y `docs/estados_de_contacto.md` §7 — no es un fix mecánico, requiere decisión del usuario sobre la migración.

@@ -27,10 +27,14 @@ Confirmado por el usuario: suite completa OK.
 
 # Hallazgo #24 — `NomenclatorItemService.update`/`delete` leen el objeto sin filtro de tenant (ronda de bug-hunting, 2026-07-10)
 
-**Estado:** PENDIENTE — prioridad baja/media, mismo patrón que el hallazgo #22 (`LeadContactState`), no un write cross-tenant completo.
+**Estado:** [RESUELTO] 2026-07-11 (`update`/`delete`). La validación de `parent_nom` en `create` queda como nota menor sin resolver, ver abajo.
 
 `update` y `delete` resuelven `current_item` con `uow.session.query(NomenclatorItem).filter_by(id=obj_id).first()` — consulta cruda, sin pasar por el repositorio (tenant-aware). Si `obj_id` pertenece a un ítem de otra organización (no global), la REGLA 1 ("¿es global? exigir superadmin") no se activa (porque `current_item.organization_id` no es `ADMIN_ORG_ID`, es la otra organización), y el código sigue de largo hasta `cls.repository.update`/`delete`, que sí filtran por tenant y devolverían `None`/fallarían al no encontrar la fila bajo el organization_id correcto — probablemente terminando en un error no manejado (`500`) en vez de un `404` limpio, en vez de un write real cross-tenant.
 
 **Solución recomendada:** igual que el hallazgo #22 — resolver `current_item` con `cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)` en vez de la query cruda, y devolver `404` inmediato si no se encuentra. Aplica también a `create`'s validación del `parent_nom` (`uow.session.query(Nomenclator).filter_by(id=obj_in.nomenclator_id).first()`, línea 18) — mismo patrón, aunque ahí el impacto es menor porque solo se usa para decidir si exigir superadmin, no determina qué fila se escribe.
 
 Este es el mismo patrón detectado en `hallazgos_agente/estados_de_contacto.md` (#22) y `hallazgos_agente/flujo_de_leads.md` (#21, ahí sí con impacto de write real) — vale la pena, cuando se prioricen los fixes, revisar sistemáticamente todos los `update`/`delete` custom del código en busca de `session.query(Modelo).filter_by(id=obj_id)` sin pasar por el repositorio.
+
+**Fix aplicado (2026-07-11):** `update` (línea 73) y `delete` (línea ~114) de `app/services/nomenclator_item_service.py` — exactamente la solución recomendada. Resuelto junto con #22/#25 en `hallazgos_agente/patron_queries_sin_tenant_filter.md` (detalle completo de los 5 puntos). Test de regresión: `tests/functional/test_tenant_isolation.py::TestNomenclatorItemIsolation`.
+
+**Nota menor sin resolver (fuera del alcance de este fix):** el `uow.session.query(Nomenclator).filter_by(id=obj_in.nomenclator_id).first()` de `create` (línea 18) sigue sin filtro de tenant — no estaba en la lista de 5 instancias confirmadas del hallazgo (impacto menor, solo decide si exigir superadmin, no determina qué fila se escribe). Queda documentado acá por si se retoma más adelante.

@@ -9,8 +9,9 @@ Documentación técnica de los estados de contacto de un lead (ej. "Sin contacta
 3. [Endpoints](#3-endpoints)
 4. [Reglas de negocio](#4-reglas-de-negocio)
 5. [RESUELTO: bug de `org_id` no definido en `update`](#5-resuelto-bug-de-org_id-no-definido-en-update)
-6. [PENDIENTE: `update` lee el objeto sin filtro de tenant](#6-pendiente-update-lee-el-objeto-sin-filtro-de-tenant)
-7. [Cómo se testea](#7-cómo-se-testea)
+6. [RESUELTO: `update` lee el objeto sin filtro de tenant](#6-resuelto-2026-07-11-update-lee-el-objeto-sin-filtro-de-tenant)
+7. [PENDIENTE: `lead_contact_state` no tiene permisos dados de alta](#7-pendiente-lead_contact_state-no-tiene-permisos-dados-de-alta--solo-el-superadmin-puede-usarlo)
+8. [Cómo se testea](#8-cómo-se-testea)
 
 ---
 
@@ -67,16 +68,26 @@ Si un `PUT /lead_contact_states/{id}` cambiaba `is_initial` a `True` **sin** cam
 
 ---
 
-## 6. [PENDIENTE] `update` lee el objeto sin filtro de tenant
+## 6. [RESUELTO 2026-07-11] `update` lee el objeto sin filtro de tenant
 
-`LeadContactStateService.update` resuelve el objeto a editar con `uow.session.query(LeadContactState).filter_by(id=obj_id).first()` — una consulta cruda, sin `_apply_tenant_filter` ni `apply_security_filter`, a diferencia del resto del sistema que resuelve el objeto vía el repositorio (tenant-aware). Si `obj_id` pertenece a otra organización, `current_obj` igual se encuentra, y las reglas de negocio (unicidad de nombre, único estado inicial) corren usando datos de ese objeto ajeno para decidir si aceptar o rechazar el cambio.
+`LeadContactStateService.update` resolvía el objeto a editar con `uow.session.query(LeadContactState).filter_by(id=obj_id).first()` — una consulta cruda, sin `_apply_tenant_filter` ni `apply_security_filter`, a diferencia del resto del sistema que resuelve el objeto vía el repositorio (tenant-aware). Si `obj_id` pertenecía a otra organización, `current_obj` igual se encontraba, y las reglas de negocio (unicidad de nombre, único estado inicial) corrían usando datos de ese objeto ajeno para decidir si aceptar o rechazar el cambio.
 
-La persistencia real sí está protegida (`cls.repository.update(...)` aplica `_apply_tenant_filter` porque `LeadContactState` sí tiene `organization_id`), así que **no es un cross-tenant write completo** como los hallazgos #18/#20/#21 — el `UPDATE` en sí no llega a pisar la fila ajena. Pero como `repository.update` devuelve `None` cuando no encuentra la fila bajo el filtro de tenant, el código que sigue (`cls._log_audit(uow.session, updated_obj, ...)`) probablemente rompe con un error no manejado en vez de devolver un `404` prolijo — no se pudo confirmar el traceback exacto sin correr el código, pero es el patrón esperado dado cómo está escrito. Detalle en `hallazgos_agente/flujo_de_leads.md` (mismo criterio de revisión aplicado a `LeadStateTransition`, encontrado en simultáneo).
+La persistencia real ya estaba protegida (`cls.repository.update(...)` aplica `_apply_tenant_filter` porque `LeadContactState` sí tiene `organization_id`), así que **no era un cross-tenant write completo** como los hallazgos #18/#20/#21 — el `UPDATE` en sí no llegaba a pisar la fila ajena. Pero como `repository.update` devuelve `None` cuando no encuentra la fila bajo el filtro de tenant, el código que seguía (`cls._log_audit(uow.session, updated_obj, ...)`) terminaba en un error no manejado en vez de devolver un `404` prolijo. Detalle en `hallazgos_agente/flujo_de_leads.md` (mismo criterio de revisión aplicado a `LeadStateTransition`, encontrado en simultáneo).
 
-**Solución recomendada:** cambiar la resolución inicial de `current_obj` para usar `cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)` (tenant-aware) en vez de la query cruda — si no se encuentra, devolver `404` inmediatamente con `cls._not_found(obj_id)`, antes de correr cualquier regla de negocio. Test: usuario de la Org A intenta `PUT /lead_contact_states/{id}` con el `id` de un estado de la Org B → debe dar `404`, no `500` ni ejecutar lógica de negocio con datos ajenos.
+**Fix:** `current_obj` ahora se resuelve con `cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)` (tenant-aware) en vez de la query cruda — si no se encuentra, `404` inmediato con `cls._not_found(obj_id)`, antes de correr cualquier regla de negocio. Resuelto junto con los hallazgos #24 y #25 (mismo patrón mecánico en otros 4 puntos) — detalle completo en `hallazgos_agente/patron_queries_sin_tenant_filter.md`. Test de regresión: `tests/functional/test_tenant_isolation.py::TestLeadContactStateIsolation`.
 
 ---
 
-## 7. Cómo se testea
+## 7. [PENDIENTE] `lead_contact_state` no tiene permisos dados de alta — solo el superadmin puede usarlo
+
+`SYSTEM_ENTITIES_REGISTRY` (`app/core/dictionaries.py`) es la única fuente desde la que se generan los permisos `<entidad>:<acción>` en la base. `"lead_contact_state"` **no está registrado ahí** — no existe ninguna fila `Permission` con codename `lead_contact_state:*`, en ninguna organización, ni siquiera en el rol `admin`. Consecuencia: **todos** los endpoints de `/lead_contact_states/*` (`GET`, `POST`, `PUT`, `DELETE`, activar/desactivar) son, en la práctica, accesibles únicamente por el superadmin — ningún dueño ni admin de una organización puede gestionar sus propios estados de contacto vía API, a pesar de ser una entidad pensada como CRUD completo scoped a la organización.
+
+Encontrado el 2026-07-11 al escribir un test de regresión para el hallazgo #22 con un usuario real de organización (no superadmin) — todos los tests anteriores de este módulo usaban el fixture superadmin, por eso no se había detectado. Solución recomendada (requiere decisión sobre cómo migrar organizaciones ya existentes, no es un fix mecánico) en `hallazgos_agente/estados_de_contacto.md` (hallazgo #27).
+
+---
+
+## 8. Cómo se testea
 
 `tests/functional/test_lead_contact_states.py`: inyección de estados por defecto al crear una organización, creación exitosa, nombre duplicado (create y update), segundo estado inicial rechazado, y `test_lead_contact_state_prevent_uncheck_initial` (no se puede desmarcar el único inicial). Desde 2026-07-10 también incluye `test_lead_contact_state_set_initial_without_changing_name_returns_400`, regresión del bug de §5: hace un `PUT` con `is_initial=True` sin tocar `name` y verifica que devuelva `400` (antes rompía con `500`).
+
+`tests/functional/test_tenant_isolation.py::TestLeadContactStateIsolation`: regresión del hallazgo #22 (tenant-filter en `update`), usando el cliente superadmin en vez de un usuario real de organización — ver la nota en el propio test sobre por qué (hallazgo #27, arriba).

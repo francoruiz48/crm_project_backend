@@ -2,7 +2,7 @@
 
 > Ver `hallazgos_agente/_README_PARA_EL_AGENTE.md` para las reglas de esta carpeta.
 
-**Estado:** PENDIENTE — prioridad baja/media en general (salvo que se confirme un caso con impacto de write real, ver abajo). Es un hallazgo **transversal**, no de un módulo puntual — se centraliza acá para no duplicar el mismo texto en cada doc de módulo.
+**Estado:** [RESUELTO] 2026-07-11. Es un hallazgo **transversal**, no de un módulo puntual — se centraliza acá para no duplicar el mismo texto en cada doc de módulo.
 
 ## El patrón
 
@@ -39,6 +39,22 @@ Todos estos modelos (`Nomenclator`, `LeadFlow`, `Tag`) **sí tienen** columna `o
 Para cada instancia de la tabla de arriba: reemplazar la query cruda por `cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)`, y si devuelve `None`, cortar inmediatamente con `cls._not_found(obj_id)` (patrón ya usado correctamente en la mayoría de los `create`/`update` del resto del sistema, ej. `LeadFieldService.update`, `CampaignService.update`). Es un fix mecánico, igual en los 5 casos — se puede hacer en una sola tanda una vez que el usuario confirme que quiere priorizarlo.
 
 Test genérico (repetir por cada modelo de la tabla): usuario de la Org A intenta `PUT`/`DELETE` sobre un `id` de un objeto de la Org B → debe devolver `404`, no `500`.
+
+## Fix aplicado (2026-07-11)
+
+Se aplicó exactamente la solución recomendada, sin variaciones, en los 5 puntos:
+
+- `app/services/lead_contact_state_service.py:62` (`update`) — hallazgo #22.
+- `app/services/nomenclator_item_service.py:73` (`update`) y `:114`ish (`delete`) — hallazgo #24.
+- `app/services/nomenclator_service.py:48` (`update`) y `:83`ish (`delete`) — hallazgo #25.
+- `app/services/lead_flow_service.py:44` (`update`) — hallazgo #25.
+- `app/services/tag_service.py:43` (`update`) — hallazgo #25.
+
+En todos los casos: `current_obj/current_item = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)`, con `cls._not_found(obj_id)` si devuelve `None`. Para `NomenclatorItem`/`Nomenclator` (que tienen items/registros "globales" en `ADMIN_ORG_ID`), esto preserva el comportamiento correcto: `get_by_id` en lectura (`is_read_operation=True`, el default) sigue dejando pasar los globales — necesario porque las reglas de negocio de esos services (`REGLA 1: Protección Anti-Escritura de Globales`, etc.) necesitan poder leer un item global para decidir si el usuario tiene permiso de tocarlo, no solo los de su propia organización. Solo bloquea el acceso a objetos de **otra organización no-global**, que es el caso que estaba roto.
+
+**Verificado que `get_by_id` devuelve algo con atributos accesibles** (no la instancia ORM cruda, sino un objeto Pydantic vía `schema_out_detail.model_validate(obj)`) — se confirmó contra el precedente ya existente en `CampaignService.update` (`campaign = cls.repository.get_by_id(...)`, después usado como `campaign.organization_id`), que usa el mismo patrón para el mismo propósito (comparaciones de solo lectura antes de mutar). Los 5 usos nuevos son igual de solo-lectura (comparar nombres/valores existentes, chequear flags), así que no hace falta la instancia ORM mutable — eso lo sigue manejando `cls.repository.update`/`delete` internamente con su propia query.
+
+**Test de regresión:** `tests/functional/test_tenant_isolation.py` — se extendieron `TestLeadFlowIsolation` (`test_update_blocked_for_foreign_lead_flow`), `TestTagIsolation` (`test_update_blocked_for_foreign_tag`) y `TestNomenclatorIsolation` (`test_update_blocked_for_foreign_nomenclator`, `test_delete_blocked_for_foreign_nomenclator`); se agregaron las clases nuevas `TestNomenclatorItemIsolation` (`test_update_blocked_for_foreign_nomenclator_item`, `test_delete_blocked_for_foreign_nomenclator_item`) y `TestLeadContactStateIsolation` (`test_update_blocked_for_foreign_lead_contact_state`). Todos siguen el patrón "Beta intenta `PUT`/`DELETE` con un `obj_id` de Alpha → `404`" y **no encadenan ninguna verificación posterior** al 404 (ver `AGENTS.md` §5.1 — evita la limitación conocida de `db_session`).
 
 ## Comando usado para el barrido
 

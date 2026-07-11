@@ -70,7 +70,10 @@ class NomenclatorItemService(BaseService):
     @classmethod
     def update(cls, obj_id: int, obj_in, user_context: Optional[UserContext] = None):
         def do_update(uow):
-            current_item = uow.session.query(NomenclatorItem).filter_by(id=obj_id).first()
+            # Hallazgo #24: query cruda sin filtro de tenant. get_by_id sí lo aplica
+            # (y en lectura deja pasar items globales de ADMIN_ORG_ID, que es lo que
+            # necesita la REGLA 1 de abajo para detectar si el item es global).
+            current_item = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
             if not current_item:
                 cls._not_found(obj_id)
 
@@ -111,7 +114,8 @@ class NomenclatorItemService(BaseService):
     @classmethod
     def delete(cls, obj_id: int, user_context: Optional[UserContext] = None, force: bool = False):
         def do_delete(uow):
-            current_item = uow.session.query(NomenclatorItem).filter_by(id=obj_id).first()
+            # Hallazgo #24: mismo fix que en update() — ver comentario ahí.
+            current_item = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
             if not current_item:
                 cls._not_found(obj_id)
 

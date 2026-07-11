@@ -5,6 +5,14 @@ Verifica que los datos de una organización NO son visibles desde otra.
 
 Patrón general: Alpha crea → Beta no lo ve → Alpha sí lo ve.
 
+También cubre el patrón "Beta intenta PUT/DELETE con un obj_id de Alpha → 404,
+no 500" para los hallazgos #22/#24/#25 (queries crudas sin filtro de tenant en
+update/delete de LeadContactState, NomenclatorItem, Nomenclator, LeadFlow, Tag
+— ver hallazgos_agente/patron_queries_sin_tenant_filter.md). Estos tests NO
+encadenan ninguna verificación posterior al 404 (ver AGENTS.md §5.1: una
+excepción dentro de un UnitOfWork hace rollback sobre la sesión compartida
+del test, lo que puede dejar otros datos del test inaccesibles después).
+
 Usa:
   - ctx_alpha / ctx_beta: TenantContext con org + owner + member + estructura base
   - as_user(api, user): context manager que simula un usuario específico
@@ -140,6 +148,23 @@ class TestLeadFlowIsolation:
 
         assert flow_id in _ids(resp)
 
+    def test_update_blocked_for_foreign_lead_flow(self, client, ctx_alpha, ctx_beta):
+        """Hallazgo #25: LeadFlowService.update resolvía el objeto con una query
+        cruda sin filtro de tenant — un obj_id de otra organización debe dar 404,
+        no un 500 no controlado. No se encadena ninguna verificación posterior
+        (ver AGENTS.md §5.1: una excepción dentro de UnitOfWork hace rollback
+        sobre la sesión compartida del test)."""
+        api_a = ApiClient(client, ctx_alpha.org_id)
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.put(
+                f"/lead_flows/{ctx_alpha.lead_flow_id}",
+                json={"name": "Intento Ajeno"},
+                headers=api_b.headers,
+            )
+        assert resp.status_code == 404
+
 
 # ---------------------------------------------------------------------------
 # Lead Field Section
@@ -220,6 +245,25 @@ class TestTagIsolation:
 
         assert tag_id in _ids(resp)
 
+    def test_update_blocked_for_foreign_tag(self, client, ctx_alpha, ctx_beta):
+        """Hallazgo #25: TagService.update resolvía el objeto con una query cruda
+        sin filtro de tenant — un obj_id de otra organización debe dar 404."""
+        api_a = ApiClient(client, ctx_alpha.org_id)
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        with as_user(api_a, ctx_alpha.owner):
+            resp_create = client.post(
+                "/tags/", json={"name": "Tag Ajeno Alpha"}, headers=api_a.headers,
+            )
+            assert resp_create.status_code == 200
+            tag_id = resp_create.json()["id"]
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.put(
+                f"/tags/{tag_id}", json={"name": "Intento Ajeno"}, headers=api_b.headers,
+            )
+        assert resp.status_code == 404
+
 
 # ---------------------------------------------------------------------------
 # Team
@@ -295,6 +339,125 @@ class TestNomenclatorIsolation:
             resp = client.get("/nomenclators/", headers=api_b.headers)
 
         assert nom_id not in _ids(resp)
+
+    def test_update_blocked_for_foreign_nomenclator(self, client, ctx_alpha, ctx_beta):
+        """Hallazgo #25: NomenclatorService.update resolvía el objeto con una query
+        cruda sin filtro de tenant — un obj_id de otra organización debe dar 404."""
+        api_a = ApiClient(client, ctx_alpha.org_id)
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        with as_user(api_a, ctx_alpha.owner):
+            resp_create = client.post(
+                "/nomenclators/", json={"name": "Nomenclador Ajeno Alpha"}, headers=api_a.headers,
+            )
+            assert resp_create.status_code == 200
+            nom_id = resp_create.json()["id"]
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.put(
+                f"/nomenclators/{nom_id}", json={"name": "Intento Ajeno"}, headers=api_b.headers,
+            )
+        assert resp.status_code == 404
+
+    def test_delete_blocked_for_foreign_nomenclator(self, client, ctx_alpha, ctx_beta):
+        """Hallazgo #25: mismo caso que update(), para NomenclatorService.delete."""
+        api_a = ApiClient(client, ctx_alpha.org_id)
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        with as_user(api_a, ctx_alpha.owner):
+            resp_create = client.post(
+                "/nomenclators/", json={"name": "Nomenclador a Borrar Alpha"}, headers=api_a.headers,
+            )
+            assert resp_create.status_code == 200
+            nom_id = resp_create.json()["id"]
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.delete(f"/nomenclators/{nom_id}", headers=api_b.headers)
+        assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Nomenclator Item
+# ---------------------------------------------------------------------------
+
+class TestNomenclatorItemIsolation:
+
+    def test_update_blocked_for_foreign_nomenclator_item(self, client, ctx_alpha, ctx_beta):
+        """Hallazgo #24: NomenclatorItemService.update resolvía el objeto con una
+        query cruda sin filtro de tenant — un obj_id de otra organización debe
+        dar 404, no un 500 no controlado."""
+        api_a = ApiClient(client, ctx_alpha.org_id)
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        with as_user(api_a, ctx_alpha.owner):
+            nom = client.post(
+                "/nomenclators/", json={"name": "Nomenclador con Items Alpha"}, headers=api_a.headers,
+            ).json()
+            item = client.post(
+                "/nomenclator_items/",
+                json={"value": "Item Ajeno Alpha", "nomenclator_id": nom["id"]},
+                headers=api_a.headers,
+            ).json()
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.put(
+                f"/nomenclator_items/{item['id']}", json={"value": "Intento Ajeno"}, headers=api_b.headers,
+            )
+        assert resp.status_code == 404
+
+    def test_delete_blocked_for_foreign_nomenclator_item(self, client, ctx_alpha, ctx_beta):
+        """Hallazgo #24: mismo caso que update(), para NomenclatorItemService.delete."""
+        api_a = ApiClient(client, ctx_alpha.org_id)
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        with as_user(api_a, ctx_alpha.owner):
+            nom = client.post(
+                "/nomenclators/", json={"name": "Nomenclador con Items a Borrar Alpha"}, headers=api_a.headers,
+            ).json()
+            item = client.post(
+                "/nomenclator_items/",
+                json={"value": "Item a Borrar Alpha", "nomenclator_id": nom["id"]},
+                headers=api_a.headers,
+            ).json()
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.delete(f"/nomenclator_items/{item['id']}", headers=api_b.headers)
+        assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Lead Contact State
+# ---------------------------------------------------------------------------
+
+class TestLeadContactStateIsolation:
+
+    def test_update_blocked_for_foreign_lead_contact_state(self, client, ctx_alpha, ctx_beta):
+        """Hallazgo #22: LeadContactStateService.update resolvía el objeto con una
+        query cruda sin filtro de tenant — un obj_id de otra organización debe
+        dar 404, no un 500 no controlado.
+
+        Nota: se usa el cliente superadmin (sin as_user) en vez de ctx_alpha.owner/
+        ctx_beta.owner, porque "lead_contact_state" no está dado de alta en
+        SYSTEM_ENTITIES_REGISTRY (app/core/dictionaries.py) — no existe NINGÚN
+        permiso lead_contact_state:* en la base, así que ningún usuario no-superadmin
+        puede pasar el PermissionChecker acá (hallazgo nuevo, documentado aparte en
+        hallazgos_agente/estados_de_contacto.md, no forma parte de este fix). El
+        superadmin sirve igual para probar el fix de tenant-filter: bypasea el
+        PermissionChecker pero NO el filtro de tenant a nivel de repositorio, que es
+        justamente lo que este test verifica."""
+        api_a = ApiClient(client, ctx_alpha.org_id)
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        resp_create = client.post(
+            "/lead_contact_states/", json={"name": "Estado Ajeno Alpha"}, headers=api_a.headers,
+        )
+        assert resp_create.status_code == 200
+        state_id = resp_create.json()["id"]
+
+        resp = client.put(
+            f"/lead_contact_states/{state_id}", json={"name": "Intento Ajeno"}, headers=api_b.headers,
+        )
+        assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
