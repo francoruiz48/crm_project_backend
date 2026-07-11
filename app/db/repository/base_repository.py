@@ -639,6 +639,14 @@ class BaseRepository:
         Elimina masivamente un listado de IDs.
         Aplica la misma lógica de Soft Delete que la eliminación individual en caso de fallo.
         """
+        # Hallazgo (2026-07-11): a diferencia de delete() (single), este método no
+        # chequeaba delete_strategy == PROTECTED antes de hacer session.delete(obj)
+        # más abajo — permitía bypasear por completo la protección vía el endpoint
+        # masivo. Ver AGENTS.md / hallazgos_agente/organizaciones.md (hallazgo #15,
+        # el caso concreto detectado fue POST /organizations/bulk-delete).
+        if cls.delete_strategy == DeleteStrategy.PROTECTED:
+            return {"deleted": [], "disabled": [], "failed": list(obj_ids)}
+
         updated_by = None
         if user_context is not None and user_context.user is not None:
             updated_by = user_context.user.id

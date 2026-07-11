@@ -8,7 +8,7 @@ Documentación técnica del endpoint de gestión de organizaciones (el "tenant" 
 2. [Modelo de datos](#2-modelo-de-datos)
 3. [Endpoints](#3-endpoints)
 4. [Todo lo que se crea automáticamente al crear una organización](#4-todo-lo-que-se-crea-automáticamente-al-crear-una-organización)
-5. [PENDIENTE: hallazgo de la ronda de bug-hunting](#5-pendiente-hallazgo-de-la-ronda-de-bug-hunting)
+5. [RESUELTO: hallazgo de la ronda de bug-hunting](#5-resuelto-2026-07-11-hallazgo-de-la-ronda-de-bug-hunting)
 6. [Cómo se testea](#6-cómo-se-testea)
 
 ---
@@ -37,7 +37,7 @@ Campos propios: `name`, `description`, `require_lead_state_notes` (booleano). El
 
 **Decisión (2026-07-10):** por ahora queda documentado como pendiente, sin implementar ni eliminar — el usuario no está seguro todavía de si van a construir esta feature tal como está pensada. Si se retoma, las dos opciones son: (a) exponer el flag en los schemas y hacer que `change_state` exija `notes` cuando esté activo, o (b) eliminar la columna del modelo (y de la DB, con un script de migración como los de `scripts/`) si se decide no implementarla nunca. Ver `hallazgos_agente/organizaciones.md`.
 
-`delete_strategy = PROTECTED` (ver `convenciones_generales.md` §9) — una organización nunca se borra vía API, ni soft ni hard.
+`delete_strategy = PROTECTED` (ver `convenciones_generales.md` §9) — una organización nunca se borra vía API, ni soft ni hard. **Nota (corregida 2026-07-11):** esto era cierto para `DELETE /organizations/{id}` pero no para `POST /organizations/bulk-delete`, que hasta esa fecha bypaseaba la protección por un bug en el método genérico `bulk_delete` — ver §5.
 
 ---
 
@@ -65,12 +65,20 @@ Todo esto corre dentro de la misma transacción que la creación de la organizac
 
 ---
 
-## 5. [PENDIENTE] Hallazgo de la ronda de bug-hunting
+## 5. [RESUELTO 2026-07-11] Hallazgo de la ronda de bug-hunting
 
-**#15 — `PUT /organizations/{id}` mezcla dos criterios de seguridad distintos.** El chequeo de permiso (`organization:update`) se valida contra la organización del header `X-Organization-Id`; el acceso al objeto (`apply_security_filter`, propio de `OrganizationRepository`) se valida contra "cualquier organización de la que el usuario sea miembro", sin mirar el header. Un usuario que pertenece a 2+ organizaciones podría editar `name`/`description` de una organización donde no tiene el permiso, apoyándose en el permiso que sí tiene en otra. Impacto acotado hoy (solo esos dos campos son editables), pero es una inconsistencia real del modelo de permisos. Detalle y solución recomendada en `hallazgos_agente/organizaciones.md` (hallazgo #15).
+**#15 — `PUT /organizations/{id}` mezclaba dos criterios de seguridad distintos.** El chequeo de permiso (`organization:update`) se valida contra la organización del header `X-Organization-Id`; el acceso al objeto (`apply_security_filter`, propio de `OrganizationRepository`) se valida contra "cualquier organización de la que el usuario sea miembro", sin mirar el header. Un usuario que pertenece a 2+ organizaciones podía editar `name`/`description` de una organización donde no tiene el permiso, apoyándose en el permiso que sí tiene en otra.
+
+**Fix:** `OrganizationService` ahora exige explícitamente que la organización a mutar sea la organización activa del request (`user_context.organization_id`, la del header) en `update`/`delete`/`deactivate`/`set_active`/`bulk_delete`/`bulk_set_active` — `403` si no coincide, superadmin exento.
+
+**Hallazgo relacionado, encontrado al implementar este fix:** el método genérico `BaseRepository.bulk_delete` no chequeaba `delete_strategy == PROTECTED` antes de hacer hard-delete (a diferencia de `delete()` individual, que sí lo bloquea) — `POST /organizations/bulk-delete` podía borrar físicamente una organización completa, algo que el `DELETE /organizations/{id}` individual rechaza. Se corrigió agregando ese chequeo también en `bulk_delete` (protege cualquier entidad `PROTECTED` a futuro, no solo `Organization`).
+
+Detalle técnico completo en `hallazgos_agente/organizaciones.md` (hallazgo #15).
 
 ---
 
 ## 6. Cómo se testea
 
 `test_organization_creation_injects_states_and_initial` (`test_lead_contact_states.py`) confirma la inyección de estados de contacto. `test_org_creation_via_api_clones_roles` y `test_org_creator_gets_admin_role` (`test_permissions_and_roles.py`) confirman el clonado de roles y la asignación de `admin` al creador. No se encontró un test que verifique específicamente la creación del `LeadFlow`/sección por defecto de forma aislada (se ejercitan indirectamente porque casi todos los demás tests dependen de que existan, vía el fixture `initial_structure`), ni el límite de "una organización propia por usuario" (§4, paso 1) para el caso no-superadmin.
+
+`tests/functional/test_organizations.py` (agregado 2026-07-11, hallazgo #15): `TestOrganizationHeaderVsAccessMismatch` (mismatch header/acceso → `403`, contraparte con header correcto → `200`, bypass de superadmin, `bulk-active` descarta ids fuera de la org activa) y `TestOrganizationBulkDeleteRespectsProtected` (`bulk-delete` nunca borra una organización).
