@@ -54,10 +54,18 @@ Se optó por la variante más simple sugerida arriba: un solo chequeo de pertene
 
 # Hallazgo #23 — `POST /lead_flows/graph` sin chequeo de permiso (escalación dentro de la propia organización)
 
-**Estado:** PENDIENTE — confirmado por lectura de código. Prioridad media (no es cross-tenant, es un bypass del RBAC dentro de la propia organización).
+**Estado:** [RESUELTO 2026-07-11]
 
 `lead_flow_graph_controller.py` es un `APIRouter` manual (no usa `BaseController`), con una única ruta `POST /lead_flows/graph` cuyo único parámetro de autorización es `user_context: UserContext = Depends(get_current_user_roles)` — eso solo exige estar autenticado y mandar `X-Organization-Id`, **no** valida ningún permiso puntual (a diferencia de `LeadFlowController`, el CRUD genérico de `/lead_flows`, que sí exige `lead_flow:create`/`lead_flow:update` vía `_get_deps`).
 
 `LeadFlowOrchestratorService.save_graph` (el service que atiende esta ruta) sí es tenant-safe internamente — todo lo que toca (`LeadFlow`, `LeadState`, `LeadStateTransition`) se resuelve y crea siempre con `organization_id == org_id` del propio usuario, así que **no permite tocar datos de otra organización**. El problema es distinto: cualquier usuario autenticado de la organización (aunque su rol no tenga `lead_flow:update`/`create`, ej. un `agent` de solo operación diaria) puede rediseñar el flujo de ventas completo de **su propia organización** — algo que el resto del sistema reserva a roles con permisos de configuración.
 
 **Solución recomendada:** agregar `dependencies=[Depends(PermissionChecker("lead_flow:update"))]` (o el codename que corresponda) a la ruta `POST /lead_flows/graph`, igual que ya hacen los controllers genéricos. Antes de aplicar, confirmar con el usuario cuál es el permiso correcto a exigir (¿alcanza con `lead_flow:update`, o debería requerir ambos `create` y `update` según si `payload.id` viene o no?). Test: usuario con rol sin `lead_flow:update` (ej. `agent` estándar) intenta `POST /lead_flows/graph` → debe dar `403`.
+
+## Fix aplicado (2026-07-11)
+
+Se confirmó con el usuario: exigir siempre `lead_flow:update` (un único permiso fijo, sin distinguir create/update según venga o no `payload.id` en el body) — más simple, y ningún rol del proyecto separa `lead_flow:create` de `lead_flow:update` con permisos distintos.
+
+`app/controllers/lead_flow_graph_controller.py`: se agregó `dependencies=[Depends(PermissionChecker("lead_flow:update"))]` a la ruta `POST /lead_flows/graph`, mismo patrón usado en `import_export_controller.py`. `AGENT_PERMS`/`VIEWER_PERMS` (`app/db/init_data.py`) solo tienen `lead_flow:view`/`view_all` — ni "agent" ni "viewer" tienen `lead_flow:update`, así que quedan bloqueados; "admin" (que tiene todos los permisos) sigue funcionando igual.
+
+**Test de regresión:** `tests/functional/test_lead_flows_and_states.py` — `test_graph_blocked_for_role_without_lead_flow_update` (rol `agent` → `403`) y `test_graph_allowed_for_role_with_lead_flow_update` (rol `admin` → `200`).

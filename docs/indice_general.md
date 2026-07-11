@@ -92,7 +92,7 @@ Test de regresión de los 4: `tests/functional/test_tenant_isolation.py` (clases
 - ~~`WebFormField.is_required` nunca se aplica en el submit público.~~ **[RESUELTO 2026-07-11]** Ver `formularios_web.md` §8.
 - ~~`PUT /organizations/{id}` mezcla el permiso (org del header) con el acceso al objeto (cualquier org del usuario).~~ **[RESUELTO 2026-07-11]** Además se corrigió un bug relacionado: `bulk_delete` genérico bypaseaba `delete_strategy == PROTECTED` (afectaba `POST /organizations/bulk-delete`). Ver `organizaciones.md` §5.
 - ~~`DELETE /campaigns/{id}` no tiene la misma restricción de creador/owner que `PUT`.~~ **[RESUELTO 2026-07-11]** Ver `campanas_y_workspaces.md` §6.
-- `POST /lead_flows/graph` sin chequeo de permiso (cualquier rol puede rediseñar el flujo de ventas de su propia org). Ver `flujo_de_leads.md` §4.
+- ~~`POST /lead_flows/graph` sin chequeo de permiso (cualquier rol puede rediseñar el flujo de ventas de su propia org).~~ **[RESUELTO 2026-07-11]** Ver `flujo_de_leads.md` §4.
 - ~~Email no se normaliza (case-sensitivity) al registrar/loguear; `PUT /auth/me` permite cambiar el email sin validar formato ni unicidad.~~ **[RESUELTO 2026-07-11]** Ver `autenticacion.md` §11.
 
 **Robustez / menor impacto:**
@@ -103,5 +103,7 @@ Test de regresión de los 4: `tests/functional/test_tenant_isolation.py` (clases
 - `request.client.host` como fuente de IP para rate limit/CAPTCHA, posible problema si hay proxy delante (sin confirmar). Ver `formularios_web.md` §8.
 
 Módulos revisados sin hallazgos nuevos: Usuarios y permisos, Campos personalizados, Vistas de leads, Importación y exportación, Reglas de validación, Dashboard, Búsqueda, Almacenamiento, Plantillas, Metadata.
+
+**Hallazgo #23 — RESUELTO (2026-07-11):** `POST /lead_flows/graph` ahora exige `lead_flow:update` (`PermissionChecker`) — antes cualquier rol autenticado, incluido `agent` (sin ese permiso), podía rediseñar el flujo de ventas completo de su organización. Ver `hallazgos_agente/flujo_de_leads.md` y `docs/flujo_de_leads.md` §4.
 
 **Hallazgo #27 (encontrado 2026-07-11, al escribir el test de regresión del #22):** `lead_contact_state` nunca se agregó a `SYSTEM_ENTITIES_REGISTRY` (`app/core/dictionaries.py`) — no existe ningún permiso `lead_contact_state:*` en la base, así que **ningún usuario no-superadmin puede usar `/lead_contact_states/*`** (todos los endpoints, no solo alguno puntual). No se había detectado antes porque todos los tests de ese módulo corrían como superadmin. Solución recomendada (agregar la entidad al registro + resincronizar permisos + migración de datos para las organizaciones ya existentes, cuyos roles clonados no heredan el cambio automáticamente) en `hallazgos_agente/estados_de_contacto.md` y `docs/estados_de_contacto.md` §7 — no es un fix mecánico, requiere decisión del usuario sobre la migración.
