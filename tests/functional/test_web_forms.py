@@ -12,6 +12,8 @@ tests ejercitan:
   - Las 4 barreras de seguridad del submit público (honeypot, CAPTCHA,
     validación de origen, rate limit) descriptas en formularios_web.md §5.
   - La inyección forzada de `hidden_value` (formularios_web.md §6).
+  - Hallazgo #9 (formularios_web.md §8): validación de `WebFormField.is_required`
+    en el submit público — antes no se aplicaba nunca.
 
 Notas sobre decisiones de testing:
   - El CAPTCHA se mockea (`httpx.AsyncClient.post`) para no depender de un
@@ -298,6 +300,72 @@ class TestPublicFormSubmit:
                 str(hidden_field.id): "Valor Intentando Sobreescribir",
                 "website_url_ext": "",
             },
+        )
+        assert resp.status_code == 200, resp.text
+
+        lead = db_session.query(Lead).filter_by(campaign_id=initial_structure["campaign_id"]).first()
+        values = {fv.field_id: fv.value for fv in lead.field_values}
+        assert values.get(initial_fields["edad_id"]) == "99"
+
+    def test_submit_missing_required_field_returns_400(
+        self, api, db_session, initial_structure, initial_fields
+    ):
+        """Hallazgo #9: un campo marcado is_required=True en el FORMULARIO (no el
+        LeadField.required del CRM) debe bloquear el submit si viene vacío/ausente."""
+        form = _create_web_form_db(db_session, initial_structure["org_id"], initial_structure["campaign_id"])
+        wf_field = _add_web_form_field(
+            db_session, form.id, initial_fields["nombre_id"], is_required=True
+        )
+
+        resp = api.client.post(
+            f"/public/forms/{form.public_uuid}/submit",
+            json={"website_url_ext": ""},
+        )
+        assert resp.status_code == 400
+        assert "requeridos" in resp.text.lower()
+
+        leads = db_session.query(Lead).filter_by(campaign_id=initial_structure["campaign_id"]).all()
+        assert len(leads) == 0
+
+        # También debe rechazar el string vacío, no solo la ausencia de la clave.
+        resp_empty = api.client.post(
+            f"/public/forms/{form.public_uuid}/submit",
+            json={str(wf_field.id): "   ", "website_url_ext": ""},
+        )
+        assert resp_empty.status_code == 400
+
+    def test_submit_required_field_present_succeeds(
+        self, api, db_session, initial_structure, initial_fields
+    ):
+        form = _create_web_form_db(db_session, initial_structure["org_id"], initial_structure["campaign_id"])
+        wf_field = _add_web_form_field(
+            db_session, form.id, initial_fields["nombre_id"], is_required=True
+        )
+
+        resp = api.client.post(
+            f"/public/forms/{form.public_uuid}/submit",
+            json={str(wf_field.id): "Juan Pérez", "website_url_ext": ""},
+        )
+        assert resp.status_code == 200, resp.text
+
+        leads = db_session.query(Lead).filter_by(campaign_id=initial_structure["campaign_id"]).all()
+        assert len(leads) == 1
+
+    def test_submit_required_field_with_hidden_value_not_demanded_from_payload(
+        self, api, db_session, initial_structure, initial_fields
+    ):
+        """Un campo is_required=True que ADEMÁS tiene hidden_value se autocompleta
+        server-side — no debe exigirse que el visitante lo mande en el payload."""
+        form = _create_web_form_db(db_session, initial_structure["org_id"], initial_structure["campaign_id"])
+        hidden_required_field = _add_web_form_field(
+            db_session, form.id, initial_fields["edad_id"],
+            is_required=True, hidden_value="99", order=2,
+        )
+        visible_field = _add_web_form_field(db_session, form.id, initial_fields["nombre_id"], order=1)
+
+        resp = api.client.post(
+            f"/public/forms/{form.public_uuid}/submit",
+            json={str(visible_field.id): "Ana", "website_url_ext": ""},
         )
         assert resp.status_code == 200, resp.text
 

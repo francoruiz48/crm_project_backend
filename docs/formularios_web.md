@@ -11,7 +11,7 @@ Documentación técnica de los formularios embebibles (landing pages, iframes) q
 5. [Las 4 barreras de seguridad del submit público](#5-las-4-barreras-de-seguridad-del-submit-público)
 6. [Campos ocultos (`hidden_value`)](#6-campos-ocultos-hidden_value)
 7. [RESUELTO: cobertura de tests](#7-resuelto-cobertura-de-tests)
-8. [PENDIENTE: hallazgos de la ronda de bug-hunting](#8-pendiente-hallazgos-de-la-ronda-de-bug-hunting)
+8. [Hallazgos de la ronda de bug-hunting](#8-hallazgos-de-la-ronda-de-bug-hunting)
 
 ---
 
@@ -77,7 +77,7 @@ Al no requerir login, `submit_public_form` es la superficie de ataque más expue
 
 **Nota de precisión:** la validación de dominio usa `domain in origin` (substring), no comparación exacta de host — un `allowed_domains = ["miweb.com"]` también dejaría pasar un origen como `https://noesmiweb.com.atacante.com` si ese string completo apareciera en el header. No se confirmó si esto es explotable en la práctica (depende de qué tan predecible sea el dominio configurado), pero es una implementación más laxa de lo que "dominio permitido" sugiere.
 
-Después de estas barreras: el endpoint pisa `TENANT_ORG_ID` manualmente (`TENANT_ORG_ID.set(form.organization_id)`) porque no hay JWT que lo haga automáticamente, arma el `LeadCreate` mapeando `{lead_field_id: valor}` desde el payload, e invoca `LeadService.create(user_context=None)` — el lead resultante queda con `created_by=None` (nadie logueado lo creó), pasando igualmente por todo el pipeline de validación/automatización de `lead.md` §4.
+Después de estas 4 barreras de seguridad, y antes de tocar la base de datos, corre una validación de negocio (agregada 2026-07-11, hallazgo #9, ver §8): todo `WebFormField` con `is_required=True` (y sin `hidden_value`, que se autocompleta) debe venir en el payload con un valor no vacío — si falta alguno, `400` listando los campos faltantes por su `custom_label`/nombre. Recién entonces el endpoint pisa `TENANT_ORG_ID` manualmente (`TENANT_ORG_ID.set(form.organization_id)`) porque no hay JWT que lo haga automáticamente, arma el `LeadCreate` mapeando `{lead_field_id: valor}` desde el payload, e invoca `LeadService.create(user_context=None)` — el lead resultante queda con `created_by=None` (nadie logueado lo creó), pasando igualmente por todo el pipeline de validación/automatización de `lead.md` §4.
 
 ---
 
@@ -95,7 +95,7 @@ Un `WebFormField` con `hidden_value` no se muestra al visitante (el frontend pú
 
 - **CRUD privado** (`TestWebFormPrivateCRUD`): creación exitosa, rechazo de `lead_field_id` duplicado en el mismo payload, rechazo anti-IDOR de un campo que pertenece a otra campaña, rechazo de campo inactivo, reemplazo total de campos en `update`.
 - **`GET /public/forms/{uuid}`** (`TestPublicFormGet`): devuelve la config pública sin exponer `organization_id`/`campaign_id`, `404` con UUID inexistente, `404` con formulario inactivo.
-- **`POST /public/forms/{uuid}/submit`** (`TestPublicFormSubmit`): caso feliz (crea el lead, `created_by=None`), honeypot relleno (responde éxito simulado sin crear lead), inyección forzada de `hidden_value` (no se puede sobreescribir), CAPTCHA requerido sin token (`400`), CAPTCHA rechazado por el verificador externo mockeado (`400`), CAPTCHA aprobado por el verificador mockeado (crea el lead), origen no permitido (`403`), origen permitido (`200`), y rate limit de `5/minuto` (el 6to intento en la misma ventana da `429`).
+- **`POST /public/forms/{uuid}/submit`** (`TestPublicFormSubmit`): caso feliz (crea el lead, `created_by=None`), honeypot relleno (responde éxito simulado sin crear lead), inyección forzada de `hidden_value` (no se puede sobreescribir), campo `is_required=True` ausente/vacío (`400`, hallazgo #9), campo requerido presente (`200`), campo requerido con `hidden_value` (no se exige en el payload, se autocompleta), CAPTCHA requerido sin token (`400`), CAPTCHA rechazado por el verificador externo mockeado (`400`), CAPTCHA aprobado por el verificador mockeado (crea el lead), origen no permitido (`403`), origen permitido (`200`), y rate limit de `5/minuto` (el 6to intento en la misma ventana da `429`).
 
 **Decisiones de testing a tener en cuenta:**
 
@@ -105,10 +105,10 @@ Un `WebFormField` con `hidden_value` no se muestra al visitante (el frontend pú
 
 ---
 
-## 8. [PENDIENTE] Hallazgos de la ronda de bug-hunting
+## 8. Hallazgos de la ronda de bug-hunting
 
 Detalle completo en `hallazgos_agente/formularios_web.md` (hallazgos #9, #10, #11). Resumen:
 
-- **#9 — `is_required` de `WebFormField` no se aplica nunca.** Es un flag pensado para "obligatorio en este formulario puntual", visible en el modelo/schema y expuesto al frontend público, pero `submit_public_form` nunca lo lee. Un visitante puede omitir un campo marcado obligatorio y el lead se crea igual (llamando la API directo, sin pasar por el frontend). Mayor impacto de los tres, recomendado priorizar.
-- **#10 — La verificación de CAPTCHA no maneja errores.** La llamada al proveedor externo (`httpx`) no tiene `try/except` ni timeout explícito; si el proveedor falla o tarda, el endpoint devuelve un `500` crudo en vez de un error prolijo.
-- **#11 — `request.client.host` puede no ser la IP real si hay proxy delante** (rate limit y CAPTCHA `remoteip`). No confirmado si aplica al despliegue real — depende de la infraestructura.
+- **[RESUELTO 2026-07-11] #9 — `is_required` de `WebFormField` no se aplicaba nunca.** Era un flag pensado para "obligatorio en este formulario puntual", visible en el modelo/schema y expuesto al frontend público, pero `submit_public_form` nunca lo leía. Un visitante podía omitir un campo marcado obligatorio y el lead se creaba igual (llamando la API directo, sin pasar por el frontend). Fix: validación agregada en `submit_public_form` (ver §5) — `400` con la lista de campos faltantes si alguno requerido viene vacío/ausente.
+- **[PENDIENTE] #10 — La verificación de CAPTCHA no maneja errores.** La llamada al proveedor externo (`httpx`) no tiene `try/except` ni timeout explícito; si el proveedor falla o tarda, el endpoint devuelve un `500` crudo en vez de un error prolijo.
+- **[PENDIENTE] #11 — `request.client.host` puede no ser la IP real si hay proxy delante** (rate limit y CAPTCHA `remoteip`). No confirmado si aplica al despliegue real — depende de la infraestructura.

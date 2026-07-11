@@ -72,11 +72,32 @@ async def submit_public_form(uuid: str, request: Request, payload: Dict[str, Any
         if not origin or not any(domain in origin for domain in form.allowed_domains):
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Origen no autorizado para enviar leads.")
 
-    # 3. 🛡️ INYECCIÓN DE CONTEXTO (Súper importante)
+    # 3. Validación de campos requeridos (Hallazgo #9)
+    # is_required se declara por campo del FORMULARIO (no confundir con LeadField.required,
+    # que es un flag distinto a nivel de CRM). Un campo con hidden_value nunca se exige acá
+    # porque el backend lo autocompleta más abajo, sin importar lo que mande el payload.
+    missing_labels = []
+    for field_config in form.fields:
+        if not field_config.is_required or field_config.hidden_value is not None:
+            continue
+        value = payload.get(str(field_config.id))
+        if value is None or (isinstance(value, str) and not value.strip()):
+            missing_labels.append(
+                field_config.custom_label
+                or (field_config.lead_field.name if field_config.lead_field else f"Campo #{field_config.id}")
+            )
+
+    if missing_labels:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=f"Faltan campos requeridos: {', '.join(missing_labels)}."
+        )
+
+    # 4. 🛡️ INYECCIÓN DE CONTEXTO (Súper importante)
     # Como saltamos el security.py, seteamos la Organización a mano para que el LeadService funcione.
     TENANT_ORG_ID.set(form.organization_id)
 
-    # 4. Mapeo Seguro e Inyección de Valores Ocultos
+    # 5. Mapeo Seguro e Inyección de Valores Ocultos
     form_fields_map = {str(f.id): f for f in form.fields}
     lead_values = []
 
@@ -98,7 +119,7 @@ async def submit_public_form(uuid: str, request: Request, payload: Dict[str, Any
         if str(f.id) not in sent_keys and f.hidden_value is not None:
             lead_values.append(LeadFieldValueCreate(field_id=f.lead_field_id, value=f.hidden_value))
 
-    # 5. Estructurar payload final e inyectar al Core
+    # 6. Estructurar payload final e inyectar al Core
     lead_in = LeadCreate(
         campaign_id=form.campaign_id,
         values=lead_values
@@ -114,7 +135,7 @@ async def submit_public_form(uuid: str, request: Request, payload: Dict[str, Any
             detail="Ocurrió un error al procesar el formulario. Intente nuevamente más tarde."
         )
 
-    # 6. Respuesta final
+    # 7. Respuesta final
     return {
         "success": True,
         "message": form.success_message or "Formulario enviado exitosamente."
