@@ -436,27 +436,25 @@ class TestLeadContactStateIsolation:
         query cruda sin filtro de tenant — un obj_id de otra organización debe
         dar 404, no un 500 no controlado.
 
-        Nota: se usa el cliente superadmin (sin as_user) en vez de ctx_alpha.owner/
-        ctx_beta.owner, porque "lead_contact_state" no está dado de alta en
-        SYSTEM_ENTITIES_REGISTRY (app/core/dictionaries.py) — no existe NINGÚN
-        permiso lead_contact_state:* en la base, así que ningún usuario no-superadmin
-        puede pasar el PermissionChecker acá (hallazgo nuevo, documentado aparte en
-        hallazgos_agente/estados_de_contacto.md, no forma parte de este fix). El
-        superadmin sirve igual para probar el fix de tenant-filter: bypasea el
-        PermissionChecker pero NO el filtro de tenant a nivel de repositorio, que es
-        justamente lo que este test verifica."""
+        Usa as_user(ctx_alpha.owner)/as_user(ctx_beta.owner) como el resto de los
+        tests de esta clase de tenant isolation — antes tuvo que usarse el cliente
+        superadmin directo porque "lead_contact_state" no estaba dado de alta en
+        SYSTEM_ENTITIES_REGISTRY (hallazgo #27, ya RESUELTO), así que ningún usuario
+        no-superadmin podía pasar el PermissionChecker acá."""
         api_a = ApiClient(client, ctx_alpha.org_id)
         api_b = ApiClient(client, ctx_beta.org_id)
 
-        resp_create = client.post(
-            "/lead_contact_states/", json={"name": "Estado Ajeno Alpha"}, headers=api_a.headers,
-        )
-        assert resp_create.status_code == 200
-        state_id = resp_create.json()["id"]
+        with as_user(api_a, ctx_alpha.owner):
+            resp_create = client.post(
+                "/lead_contact_states/", json={"name": "Estado Ajeno Alpha"}, headers=api_a.headers,
+            )
+            assert resp_create.status_code == 200
+            state_id = resp_create.json()["id"]
 
-        resp = client.put(
-            f"/lead_contact_states/{state_id}", json={"name": "Intento Ajeno"}, headers=api_b.headers,
-        )
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.put(
+                f"/lead_contact_states/{state_id}", json={"name": "Intento Ajeno"}, headers=api_b.headers,
+            )
         assert resp.status_code == 404
 
 

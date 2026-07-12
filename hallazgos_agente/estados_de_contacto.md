@@ -41,7 +41,7 @@ Encontrado en simultáneo con el hallazgo #21 (`hallazgos_agente/flujo_de_leads.
 # Hallazgo #27 — `lead_contact_state` no está en `SYSTEM_ENTITIES_REGISTRY`: ningún usuario no-superadmin puede gestionarlo vía API (encontrado 2026-07-11, al escribir el test de regresión del #22)
 
 **Doc de usuario:** `docs/estados_de_contacto.md` §7
-**Estado:** PENDIENTE — investigado y confirmado, sin aplicar fix (requiere decisión del usuario sobre migración de orgs existentes, no es mecánico).
+**Estado:** [RESUELTO 2026-07-11]
 
 ## Cómo se encontró
 
@@ -61,3 +61,19 @@ Al escribir el test de regresión del hallazgo #22 (`tests/functional/test_tenan
 2. Correr de nuevo la sincronización de permisos (la función de `init_data.py` que arma `all_permissions` desde el registro) para que se creen las filas `Permission` nuevas y la plantilla `admin` (global, `ADMIN_ORG_ID`) las herede automáticamente (`r_admin.permissions = all_db_perms` las recoge solas la próxima vez que corra). Decidir también si `agent`/`viewer` deberían tener algo de este entity en `AGENT_PERMS`/`VIEWER_PERMS` (hoy ninguna de las dos listas menciona `lead_contact_state` — probablemente `viewer` debería tener al menos `lead_contact_state:view`, a definir con el usuario).
 3. **Punto importante que sí requiere decisión, no es mecánico:** las organizaciones que ya existen tienen sus propios roles `admin`/`agent`/`viewer` **clonados** (`_clone_default_roles_for_org`, ver `docs/organizaciones.md` §4) con una foto fija de los permisos que tenía la plantilla en el momento del clonado — agregar el permiso a la plantilla global **no se retro-propaga** a esas organizaciones ya creadas (ver nota explícita en `docs/organizaciones.md` §4). Haría falta un script de migración de datos (mismo patrón que `scripts/migrate_add_user_profile_fields.py`) que recorra los roles `admin`/`agent`/`viewer` de cada organización existente y les agregue el/los permiso(s) nuevo(s) correspondientes.
 4. Test: usuario `admin` de una organización (no superadmin) hace `POST`/`PUT`/`GET`/`DELETE` sobre `/lead_contact_states/` de su propia organización → debe funcionar (hoy da `403`).
+
+## Fix aplicado (2026-07-11)
+
+Se le explicó al usuario la causa raíz y las dos decisiones pendientes. Resolvió:
+
+1. **Niveles de permiso:** `viewer` solo puede ver (`view`/`view_all`); `agent` puede crear y editar pero **no** borrar; `admin` mantiene CRUD completo (automático, porque el rol `admin` obtiene "todos los permisos que existan" — no requiere listarlo aparte).
+2. **Organizaciones ya existentes, sin script de migración:** confirmado explícitamente por el usuario que esto es el diseño esperado — los roles clonados por organización son una plantilla de un momento dado, no una referencia viva a la plantilla global. Si el dueño de una organización quiere permisos distintos a los de la plantilla, la vía es que edite los roles de su propia organización directamente (quedan "pisados" respecto de la plantilla, intencionalmente). No se escribió ningún script de backfill.
+
+**Cambios:**
+- `app/core/dictionaries.py::SYSTEM_ENTITIES_REGISTRY`: se agregó `"lead_contact_state": {"model": "LeadContactState", "name": "Estado de Contacto", "crud_type": "FULL"}`.
+- `app/db/init_data.py`: `AGENT_PERMS` suma `lead_contact_state:view`, `view_all`, `create`, `update` (sin `delete`); `VIEWER_PERMS` suma `lead_contact_state:view`, `view_all`.
+- `tests/functional/test_tenant_isolation.py::TestLeadContactStateIsolation::test_update_blocked_for_foreign_lead_contact_state`: se revirtió al patrón estándar `as_user(ctx_alpha.owner)`/`as_user(ctx_beta.owner)` (ya no hace falta el cliente superadmin directo — el `owner` con rol `admin` ahora tiene el permiso).
+
+**Test de regresión:** `tests/functional/test_lead_contact_states.py` — `test_lead_contact_state_org_admin_can_manage` (admin no-superadmin: crea/edita/borra, todo `200`), `test_lead_contact_state_agent_can_create_and_update_but_not_delete` (agent: crea/edita `200`, borra `403`), `test_lead_contact_state_viewer_can_only_view` (viewer: `GET` `200`, `POST` `403`).
+
+**Nota operativa:** `run_seeds()` corre en cada arranque del backend (`app/main.py::lifespan`) y es idempotente (`_get_or_create_permission`) — alcanza con reiniciar el backend para que existan las filas `Permission` nuevas y para que la plantilla global (`ADMIN_ORG_ID`) las tenga. Esto NO retro-propaga el permiso a roles ya clonados en organizaciones existentes (ver decisión arriba) — si el usuario quiere que sus organizaciones de prueba actuales tengan estos permisos, tiene que recrearlas (o borrar/recrear la base, regla ya documentada en `AGENTS.md` §6).

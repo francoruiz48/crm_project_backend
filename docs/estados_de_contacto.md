@@ -10,7 +10,7 @@ Documentación técnica de los estados de contacto de un lead (ej. "Sin contacta
 4. [Reglas de negocio](#4-reglas-de-negocio)
 5. [RESUELTO: bug de `org_id` no definido en `update`](#5-resuelto-bug-de-org_id-no-definido-en-update)
 6. [RESUELTO: `update` lee el objeto sin filtro de tenant](#6-resuelto-2026-07-11-update-lee-el-objeto-sin-filtro-de-tenant)
-7. [PENDIENTE: `lead_contact_state` no tiene permisos dados de alta](#7-pendiente-lead_contact_state-no-tiene-permisos-dados-de-alta--solo-el-superadmin-puede-usarlo)
+7. [RESUELTO: `lead_contact_state` no tenía permisos dados de alta](#7-resuelto-2026-07-11-lead_contact_state-no-tenía-permisos-dados-de-alta--solo-el-superadmin-podía-usarlo)
 8. [Cómo se testea](#8-cómo-se-testea)
 
 ---
@@ -78,11 +78,15 @@ La persistencia real ya estaba protegida (`cls.repository.update(...)` aplica `_
 
 ---
 
-## 7. [PENDIENTE] `lead_contact_state` no tiene permisos dados de alta — solo el superadmin puede usarlo
+## 7. [RESUELTO 2026-07-11] `lead_contact_state` no tenía permisos dados de alta — solo el superadmin podía usarlo
 
-`SYSTEM_ENTITIES_REGISTRY` (`app/core/dictionaries.py`) es la única fuente desde la que se generan los permisos `<entidad>:<acción>` en la base. `"lead_contact_state"` **no está registrado ahí** — no existe ninguna fila `Permission` con codename `lead_contact_state:*`, en ninguna organización, ni siquiera en el rol `admin`. Consecuencia: **todos** los endpoints de `/lead_contact_states/*` (`GET`, `POST`, `PUT`, `DELETE`, activar/desactivar) son, en la práctica, accesibles únicamente por el superadmin — ningún dueño ni admin de una organización puede gestionar sus propios estados de contacto vía API, a pesar de ser una entidad pensada como CRUD completo scoped a la organización.
+`SYSTEM_ENTITIES_REGISTRY` (`app/core/dictionaries.py`) es la única fuente desde la que se generan los permisos `<entidad>:<acción>` en la base. `"lead_contact_state"` **no estaba registrado ahí** — no existía ninguna fila `Permission` con codename `lead_contact_state:*`, en ninguna organización, ni siquiera en el rol `admin`. Consecuencia: **todos** los endpoints de `/lead_contact_states/*` (`GET`, `POST`, `PUT`, `DELETE`, activar/desactivar) eran, en la práctica, accesibles únicamente por el superadmin — ningún dueño ni admin de una organización podía gestionar sus propios estados de contacto vía API, a pesar de ser una entidad pensada como CRUD completo scoped a la organización.
 
-Encontrado el 2026-07-11 al escribir un test de regresión para el hallazgo #22 con un usuario real de organización (no superadmin) — todos los tests anteriores de este módulo usaban el fixture superadmin, por eso no se había detectado. Solución recomendada (requiere decisión sobre cómo migrar organizaciones ya existentes, no es un fix mecánico) en `hallazgos_agente/estados_de_contacto.md` (hallazgo #27).
+Encontrado el 2026-07-11 al escribir un test de regresión para el hallazgo #22 con un usuario real de organización (no superadmin) — todos los tests anteriores de este módulo usaban el fixture superadmin, por eso no se había detectado.
+
+**Fix:** se agregó `"lead_contact_state": {"model": "LeadContactState", "name": "Estado de Contacto", "crud_type": "FULL"}` a `SYSTEM_ENTITIES_REGISTRY`, lo que genera automáticamente `lead_contact_state:create/view/update/delete/view_all`. Niveles de permiso por rol (decisión del usuario): `admin` mantiene CRUD completo (automático — obtiene todos los permisos que existan); `agent` puede crear y editar pero no borrar (`AGENT_PERMS` suma `view`/`view_all`/`create`/`update`); `viewer` solo puede ver (`VIEWER_PERMS` suma `view`/`view_all`).
+
+**Organizaciones ya existentes:** decisión explícita del usuario, sin script de migración — los roles clonados por organización (`_clone_default_roles_for_org`, ver `organizaciones.md` §4) son una plantilla de un momento dado, no una referencia viva a la plantilla global; es el diseño esperado. Si el dueño de una organización quiere permisos distintos, la vía es editar los roles de su propia organización directamente.
 
 ---
 
@@ -90,4 +94,6 @@ Encontrado el 2026-07-11 al escribir un test de regresión para el hallazgo #22 
 
 `tests/functional/test_lead_contact_states.py`: inyección de estados por defecto al crear una organización, creación exitosa, nombre duplicado (create y update), segundo estado inicial rechazado, y `test_lead_contact_state_prevent_uncheck_initial` (no se puede desmarcar el único inicial). Desde 2026-07-10 también incluye `test_lead_contact_state_set_initial_without_changing_name_returns_400`, regresión del bug de §5: hace un `PUT` con `is_initial=True` sin tocar `name` y verifica que devuelva `400` (antes rompía con `500`).
 
-`tests/functional/test_tenant_isolation.py::TestLeadContactStateIsolation`: regresión del hallazgo #22 (tenant-filter en `update`), usando el cliente superadmin en vez de un usuario real de organización — ver la nota en el propio test sobre por qué (hallazgo #27, arriba).
+`tests/functional/test_tenant_isolation.py::TestLeadContactStateIsolation`: regresión del hallazgo #22 (tenant-filter en `update`), usando `as_user(ctx_alpha.owner)`/`as_user(ctx_beta.owner)` (usuarios reales de organización, no superadmin — posible desde que se resolvió el hallazgo #27).
+
+`tests/functional/test_lead_contact_states.py`: `test_lead_contact_state_org_admin_can_manage`, `test_lead_contact_state_agent_can_create_and_update_but_not_delete`, `test_lead_contact_state_viewer_can_only_view` — regresión del hallazgo #27 (permisos por rol, §7).

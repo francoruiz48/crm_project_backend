@@ -299,6 +299,10 @@ def seed_rbac(db):
         "lead_activity_history:view", "lead_activity_history:view_all",
         # Equipo (solo lectura)
         "team:view", "team_member:view", "team_member:view_all",
+        # Estados de contacto — hallazgo #27 (2026-07-11): agent puede crear/editar,
+        # no borrar (decisión del usuario).
+        "lead_contact_state:view", "lead_contact_state:view_all",
+        "lead_contact_state:create", "lead_contact_state:update",
     ]
     agent_perms = db.query(Permission).filter(Permission.codename.in_(AGENT_PERMS)).all()
     r_agent.permissions = agent_perms
@@ -318,6 +322,8 @@ def seed_rbac(db):
         "lead_activity_history:view", "lead_activity_history:view_all",
         "tag:view", "tag:view_all",
         "team:view", "team_member:view",
+        # Estados de contacto — hallazgo #27 (2026-07-11): viewer solo lectura.
+        "lead_contact_state:view", "lead_contact_state:view_all",
     ]
     viewer_perms = db.query(Permission).filter(Permission.codename.in_(VIEWER_PERMS)).all()
     r_viewer.permissions = viewer_perms
