@@ -59,13 +59,20 @@ class LeadContactStateService(BaseService):
     @classmethod
     def update(cls, obj_id: int, obj_in, user_context: Optional[UserContext] = None):
         def do_update(uow):
-            current_obj = uow.session.query(LeadContactState).filter_by(id=obj_id).first()
+            # Hallazgo #22: antes esto era una query cruda sin filtro de tenant
+            # (session.query(...).filter_by(id=obj_id)) — un obj_id de otra
+            # organización llegaba hasta acá y terminaba en un 500 no controlado
+            # más abajo, en vez de un 404 limpio. get_by_id sí aplica el filtro.
+            current_obj = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
             if not current_obj:
                 cls._not_found(obj_id)
 
+            # org_id se calcula una sola vez acá arriba porque lo usan tanto la Regla 1
+            # como la Regla 2, sin importar qué combinación de campos venga en el PUT.
+            org_id = user_context.organization_id if user_context and getattr(user_context, 'organization_id', None) is not None else TENANT_ORG_ID.get()
+
             # REGLA 1: Unicidad en Update
             if obj_in.name and obj_in.name.lower() != current_obj.name.lower():
-                org_id = user_context.organization_id if user_context and getattr(user_context, 'organization_id', None) is not None else TENANT_ORG_ID.get()
                 existing = uow.session.query(LeadContactState).filter(
                     LeadContactState.name.ilike(obj_in.name),
                     LeadContactState.id != obj_id,

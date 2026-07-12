@@ -4,12 +4,12 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.services.lead_import_export_service import LeadImportExportService
 from app.schemas.import_export_schema import ImportHeadersResponse, ImportResultResponse
-from app.core.security import get_current_user_roles
+from app.core.security import get_current_user_roles, PermissionChecker
 
 router = APIRouter()
 
 @router.post("/import/detect-headers", response_model=ImportHeadersResponse)
-def detect_headers(file: UploadFile = File(...)):
+def detect_headers(file: UploadFile = File(...), user_context = Depends(get_current_user_roles)):
     """
     Sube un Excel y devuelve la lista de encabezados detectados.
     """
@@ -19,7 +19,11 @@ def detect_headers(file: UploadFile = File(...)):
     headers = LeadImportExportService.get_excel_headers(file)
     return {"headers": headers}
 
-@router.post("/import/process", response_model=ImportResultResponse)
+@router.post(
+    "/import/process",
+    response_model=ImportResultResponse,
+    dependencies=[Depends(PermissionChecker("lead:create"))],
+)
 def process_import(
     campaign_id: int = Form(...),
     mapping: str = Form(..., description='JSON String: {"ColumnaExcel": "NombreCampoDB"}'),
@@ -42,7 +46,10 @@ def process_import(
         user_context=user_context
     )
 
-@router.get("/export/{campaign_id}")
+@router.get(
+    "/export/{campaign_id}",
+    dependencies=[Depends(PermissionChecker("lead:view"))],
+)
 def export_leads(
     campaign_id: int,
     db: Session = Depends(get_db),

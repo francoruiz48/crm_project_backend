@@ -7,7 +7,7 @@ Cubre:
   - Creación básica (B2B / B2C / sin audiencia)
   - Validaciones de workspace y lead_flow
   - Unicidad de nombre (activas e inactivas)
-  - Control de acceso en update (creador / no-creador / superuser)
+  - Control de acceso en update / delete / deactivate (creador / no-creador / superuser)
   - Validaciones de negocio en update (nombre duplicado, cambio de flow)
   - Filtros dinámicos permitidos y no permitidos
 """
@@ -295,6 +295,103 @@ def test_campaign_update_by_superuser_succeeds_regardless_of_creator(api, db_ses
     res = api.client.put(f"/campaigns/{camp['id']}", json={"name": "Editada por Superuser"}, headers=api.headers)
     assert res.status_code == 200
     assert res.json()["name"] == "Editada por Superuser"
+
+
+# ======================================================================
+# BORRAR / DESACTIVAR CAMPAÑA — CONTROL DE ACCESO (hallazgo #19)
+# ======================================================================
+
+def test_campaign_delete_by_creator_succeeds(api, initial_structure, two_users):
+    """El usuario que creó la campaña puede borrarla."""
+    ws_id = initial_structure["workspace_id"]
+    lf_id = initial_structure["lead_flow_id"]
+    creator = two_users["creator"]
+
+    with as_user(api, creator):
+        camp = api.create_campaign(workspace_id=ws_id, name="Camp Borrable por Creador", lead_flow_id=lf_id, expected_status=200)
+        res = api.client.delete(f"/campaigns/{camp['id']}", headers=api.headers)
+
+    assert res.status_code == 200, f"Esperaba 200 pero recibió {res.status_code}: {res.text}"
+
+
+def test_campaign_delete_by_non_creator_fails_with_403(api, initial_structure, two_users):
+    """Un usuario que no creó la campaña debe recibir 403 al intentar borrarla, aunque tenga permiso campaign:delete."""
+    ws_id = initial_structure["workspace_id"]
+    lf_id = initial_structure["lead_flow_id"]
+    creator = two_users["creator"]
+    outsider = two_users["outsider"]
+
+    with as_user(api, creator):
+        camp = api.create_campaign(workspace_id=ws_id, name="Camp Protegida Delete", lead_flow_id=lf_id, expected_status=200)
+
+    with as_user(api, outsider):
+        res = api.client.delete(f"/campaigns/{camp['id']}", headers=api.headers)
+
+    assert res.status_code == 403, f"Esperaba 403 pero recibió {res.status_code}: {res.text}"
+
+
+def test_campaign_delete_by_superuser_succeeds_regardless_of_creator(api, db_session, initial_structure):
+    """Un superuser puede borrar cualquier campaña aunque no la haya creado."""
+    ws_id = initial_structure["workspace_id"]
+    lf_id = initial_structure["lead_flow_id"]
+    org_id = initial_structure["org_id"]
+
+    regular = _make_user(db_session, "Regular No Super Delete", f"regular_nosuper_delete_{org_id}@test.com")
+    _link_user_to_org(db_session, regular, org_id)
+    db_session.commit()
+
+    with as_user(api, regular):
+        camp = api.create_campaign(workspace_id=ws_id, name="Camp de Regular Delete", lead_flow_id=lf_id, expected_status=200)
+
+    # Borrar como superuser (el fixture 'api' usa superuser por defecto)
+    res = api.client.delete(f"/campaigns/{camp['id']}", headers=api.headers)
+    assert res.status_code == 200, f"Esperaba 200 pero recibió {res.status_code}: {res.text}"
+
+
+def test_campaign_deactivate_by_creator_succeeds(api, initial_structure, two_users):
+    """El usuario que creó la campaña puede desactivarla."""
+    ws_id = initial_structure["workspace_id"]
+    lf_id = initial_structure["lead_flow_id"]
+    creator = two_users["creator"]
+
+    with as_user(api, creator):
+        camp = api.create_campaign(workspace_id=ws_id, name="Camp Desactivable por Creador", lead_flow_id=lf_id, expected_status=200)
+        res = api.client.delete(f"/campaigns/active/{camp['id']}", headers=api.headers)
+
+    assert res.status_code == 200, f"Esperaba 200 pero recibió {res.status_code}: {res.text}"
+
+
+def test_campaign_deactivate_by_non_creator_fails_with_403(api, initial_structure, two_users):
+    """Un usuario que no creó la campaña debe recibir 403 al intentar desactivarla, aunque tenga permiso campaign:delete."""
+    ws_id = initial_structure["workspace_id"]
+    lf_id = initial_structure["lead_flow_id"]
+    creator = two_users["creator"]
+    outsider = two_users["outsider"]
+
+    with as_user(api, creator):
+        camp = api.create_campaign(workspace_id=ws_id, name="Camp Protegida Deactivate", lead_flow_id=lf_id, expected_status=200)
+
+    with as_user(api, outsider):
+        res = api.client.delete(f"/campaigns/active/{camp['id']}", headers=api.headers)
+
+    assert res.status_code == 403, f"Esperaba 403 pero recibió {res.status_code}: {res.text}"
+
+
+def test_campaign_deactivate_by_superuser_succeeds_regardless_of_creator(api, db_session, initial_structure):
+    """Un superuser puede desactivar cualquier campaña aunque no la haya creado."""
+    ws_id = initial_structure["workspace_id"]
+    lf_id = initial_structure["lead_flow_id"]
+    org_id = initial_structure["org_id"]
+
+    regular = _make_user(db_session, "Regular No Super Deactivate", f"regular_nosuper_deactivate_{org_id}@test.com")
+    _link_user_to_org(db_session, regular, org_id)
+    db_session.commit()
+
+    with as_user(api, regular):
+        camp = api.create_campaign(workspace_id=ws_id, name="Camp de Regular Deactivate", lead_flow_id=lf_id, expected_status=200)
+
+    res = api.client.delete(f"/campaigns/active/{camp['id']}", headers=api.headers)
+    assert res.status_code == 200, f"Esperaba 200 pero recibió {res.status_code}: {res.text}"
 
 
 # ======================================================================

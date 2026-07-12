@@ -35,11 +35,11 @@ class SearchService:
         results["workspaces"] = workspaces_list
 
         _, items_list = NomenclatorItemRepository.get_all(
-            session, 
+            session,
             user_context=user_context,
-            search=query, 
-            search_fields=["code", "value"], 
-            page=1, 
+            search=query,
+            search_fields=["value"],
+            page=1,
             page_size=5
         )
         results["nomenclator_items"] = items_list

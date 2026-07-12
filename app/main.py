@@ -1,10 +1,10 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from fastapi.exceptions import RequestValidationError
 from app.core.middlewares import setup_cors
+from app.core.security import get_client_ip
 from app.core.wait_for_db import wait_for_db
 from app.db.base_sql import Base
 from app.db.session import engine
@@ -14,7 +14,10 @@ from app.core.exceptions.exceptions import ValidationError
 from app.core.exceptions.handlers import pydantic_exception_handler, custom_validation_exception_handler
 
 # Instanciamos el limitador basado en la IP del cliente
-limiter = Limiter(key_func=get_remote_address)
+# Hallazgo #11 (2026-07-11): key_func usa get_client_ip (X-Forwarded-For/
+# X-Real-IP con fallback a request.client.host) en vez de get_remote_address
+# de slowapi — necesario si hay un proxy delante, ver app/core/security.py.
+limiter = Limiter(key_func=get_client_ip)
 
 # --- CICLO DE VIDA (LIFESPAN) ---
 @asynccontextmanager

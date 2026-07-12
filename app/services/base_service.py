@@ -10,6 +10,7 @@ from app.db.unit_of_work import UnitOfWork
 from sqlalchemy.exc import SQLAlchemyError
 from app.core.security import UserContext
 from app.core.constans import SystemAuditLogAction
+from app.core.context import TENANT_ORG_ID
 
 class BaseService:
     repository = None  # Subclases deben definirlo
@@ -37,8 +38,32 @@ class BaseService:
 
         from app.models.audit.system_audit_log import SystemAuditLog # Importación tardía para evitar ciclos
 
+        # Si el modelo auditado no tiene organization_id propio (ej. LeadComment,
+        # FieldAutomation, TeamMember), la fila de auditoría quedaba con
+        # organization_id=NULL y el filtro de tenant de lectura la volvía invisible
+        # por API para cualquier organización (ver docs/auditoria.md §7).
+        obj_org_id = getattr(obj, "organization_id", None)
+
+        if obj_org_id is None:
+            if model_name == "Organization":
+                # Caso especial: la propia Organization recién creada/tocada es su
+                # mejor "dueña" de auditoría (no depende del header de la request).
+                obj_org_id = obj.id
+            else:
+                # Fallback: la organización activa del request. OJO: system_audit_log.organization_id
+                # tiene FK real contra organization.id (no es solo nullable) — X-Organization-Id
+                # puede traer un valor que todavía no existe como fila real (ej. al crear una
+                # organización nueva, o al promover a superadmin), así que hay que confirmar que
+                # exista antes de usarlo, o el INSERT revienta con IntegrityError y aborta la
+                # operación completa (bug real detectado en producción el 2026-07-10, ver AGENTS.md).
+                candidate_org_id = TENANT_ORG_ID.get()
+                if candidate_org_id is not None:
+                    from app.models.organization import Organization
+                    if session.query(Organization.id).filter_by(id=candidate_org_id).first():
+                        obj_org_id = candidate_org_id
+
         audit = SystemAuditLog(
-            organization_id=getattr(obj, "organization_id", None),
+            organization_id=obj_org_id,
             entity_type=model_name,
             entity_id=obj.id,
             action=action,

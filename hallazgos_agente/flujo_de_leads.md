@@ -1,0 +1,71 @@
+# Hallazgo #21 — Flujo de leads: escritura cross-tenant en `LeadStateTransition` (ronda de bug-hunting, 2026-07-10)
+
+> Ver `hallazgos_agente/_README_PARA_EL_AGENTE.md` para las reglas de esta carpeta.
+
+**Doc de usuario:** `docs/flujo_de_leads.md` §6
+**Estado:** [RESUELTO] 2026-07-10 — confirmado por lectura de código y corregido (ver "Fix aplicado" antes del hallazgo #23).
+
+## Qué se encontró
+
+`LeadStateTransition` (`app/models/lead_state_transition.py`) **no tiene columna `organization_id`** propia (solo `lead_flow_id`, `from_state_id`, `to_state_id`) — mismo patrón raíz que los hallazgos #18 y #20, pero acá el problema no es la ausencia total de validación: es que **algunos** métodos de `LeadStateTransitionService` sí validan pertenencia a la organización (usando el repositorio tenant-aware) y **otros** usan consultas SQLAlchemy crudas (`session.query(...).filter_by(...)`) que no pasan por ningún filtro de tenant:
+
+- **`create` (individual) — seguro.** Valida `from_state`/`to_state` con `LeadStateRepository.get_by_id(..., user_context=user_context)`, que sí aplica el filtro de tenant estándar (`LeadState` tiene `organization_id`). Si los estados no pertenecen a la organización activa, no se encuentran y la creación se rechaza.
+- **`create_bulk` — INSEGURO.** Resuelve los estados con `uow.session.query(cls.state_repository.model).filter(cls.state_repository.model.id.in_(state_ids), ...active.is_(True)).all()` — consulta cruda, sin `_apply_tenant_filter` ni `apply_security_filter`. Si el payload trae `from_state_id`/`to_state_id` de un `LeadState` de **otra organización**, la consulta los encuentra igual y la transición se crea, enlazando estados ajenos.
+- **`update_bulk` — INSEGURO.** Resuelve los estados del flujo con `uow.session.query(cls.state_repository.model).filter_by(lead_flow_id=obj_in.lead_flow_id, active=True).all()` — tampoco valida que `obj_in.lead_flow_id` pertenezca a la organización activa. Si se manda el `lead_flow_id` de otra organización, la función reconstruye el grafo completo de transiciones de esa organización ajena (borra las que no estén en el payload nuevo, crea las que falten) usando el diff calculado en memoria.
+- **`delete` (individual) — INSEGURO.** `transition = uow.session.query(LeadStateTransition).filter_by(id=obj_id).first()` — consulta cruda por `id` solamente, sin ningún filtro de organización. Como `LeadStateTransition` no tiene `organization_id`, `BaseRepository.delete` tampoco puede filtrar por tenant al ejecutar el borrado real. Cualquier `id` de transición de cualquier organización se puede borrar.
+
+## Impacto
+
+Con el permiso genérico `lead_state_transition:create`/`update`/`delete` (que cualquier `admin` de **cualquier** organización tiene), un usuario puede: crear transiciones ilegales en el flujo de ventas de otra organización (`create_bulk`), reescribir por completo el grafo de transiciones de un flujo ajeno (`update_bulk`, con el efecto colateral de poder crear "callejones sin salida" reales al ejecutarse sobre datos que no le pertenecen), o borrar transiciones puntuales de cualquier organización (`delete`) — en cualquiera de los tres casos, se puede romper el embudo de ventas de otra organización (leads que quedan sin ruta de avance posible, o flujos que aceptan transiciones no diseñadas por esa organización).
+
+## Solución recomendada
+
+En los tres métodos inseguros, reemplazar las consultas crudas por las variantes tenant-aware ya usadas en `create`: usar `state_repository.get_all(session, user_context=user_context, lead_flow_id=..., active=True)` en vez de `session.query(...)` directo (aplica `_apply_tenant_filter` automáticamente), y en `delete`, resolver la transición a través de una validación explícita de que `transition.lead_flow_id` pertenece a `user_context.organization_id` (via join con `LeadFlow`, ya que `LeadStateTransition` no tiene `organization_id` propio) antes de proceder al borrado. Alternativa más simple para `update_bulk`/`create_bulk`: validar primero que `obj_in.lead_flow_id` pertenece a la organización activa (`LeadFlowRepository.get_by_id(session, obj_in.lead_flow_id, user_context=user_context)`, que si no pertenece devuelve `None`) antes de tocar nada más — un solo chequeo cubre ambos métodos.
+
+Tests recomendados: usuario de la Org A intenta `POST /lead_state_transitions/bulk`, `PUT /lead_state_transitions/bulk` y `DELETE /lead_state_transitions/{id}` usando IDs (`lead_flow_id`/`from_state_id`/`to_state_id`/transition `id`) que pertenecen a la Org B → los tres deben rechazarse (`400`/`403`/`404`), no ejecutarse.
+
+## Fix aplicado (2026-07-10)
+
+Se optó por la variante más simple sugerida arriba: un solo chequeo de pertenencia del `lead_flow_id` cubre `create_bulk`/`update_bulk`, más un chequeo equivalente en `delete`. `app/services/lead_state_transition_service.py`:
+
+1. Se agregó `lead_flow_repository = LeadFlowRepository()` a la clase (mismo patrón que `state_repository`).
+2. **`create_bulk`**: al inicio del método, antes de tocar `state_ids`, se valida `LeadFlowRepository.get_by_id(uow.session, obj_in.lead_flow_id, user_context=user_context)` — si devuelve `None` (flujo ajeno o inexistente), `400` inmediato.
+3. **`update_bulk`**: misma validación al inicio de `do_update`, antes de construir `state_map`.
+4. **`delete`**: después de resolver `transition` por `id`, se valida que `transition.lead_flow_id` pertenezca a la organización activa (mismo `LeadFlowRepository.get_by_id`) — si no, `404` (no se revela si la transición existe en otra organización).
+
+`create` (individual) no necesitó cambios — ya era seguro (ver arriba).
+
+**Test de regresión:** `tests/functional/test_tenant_isolation.py::TestLeadStateTransitionIsolation` — `create_bulk`/`update_bulk` bloqueados sobre flujo ajeno, `delete` bloqueado sobre transición ajena (y se verifica que la transición de la Org A sigue existiendo después del intento).
+
+**Nota de test (corrida 2026-07-10, dos vueltas fallidas antes de estabilizar):**
+
+- **1ª vuelta:** `test_delete_blocked_for_foreign_transition` falló con `sqlalchemy.orm.exc.ObjectDeletedError: Instance '<User ...>' has been deleted` — no era un bug del fix. El test reentraba `with as_user(api_a, ctx_alpha.owner)` para el chequeo final, reusando el objeto `User` de Python capturado por la fixture `ctx_alpha`. El 404 esperado se dispara vía excepción dentro de un `UnitOfWork` (`cls._not_found`), y como `tests/fixtures/db_fixtures.py::db_session` parchea `SessionLocal` para que la app use la MISMA sesión que el test, el `session.rollback()` que hace `UnitOfWork.__exit__` al propagar la excepción expira todos los objetos ya cargados en esa sesión — incluido `ctx_alpha.owner`. Reusar ese objeto después dispara el refresh fallido.
+- **2ª vuelta:** se cambió el chequeo final a un `client.get(...)` sin `as_user` (asumiendo que caería al cliente default/superadmin) — pero el resultado vino vacío igual (`assert transition_id in _ids(resp_check)` falló con `[]`), por una interacción de sesión/dependencias distinta que no se terminó de diagnosticar (no es necesariamente pérdida real de datos; puede ser un tema de qué dependencia queda activa para `get_current_user_roles` sin `as_user` de por medio).
+- **Fix final:** en vez de otro request HTTP, el chequeo se hace directo contra la DB: `db_session.expire_all()` seguido de `db_session.query(LeadStateTransition).filter_by(id=transition_id).first()`. Evita por completo la cadena HTTP/dependencias/`as_user` para la verificación final, que es lo único que estaba fallando (el 404 en sí siempre se confirmó correcto en las tres vueltas).
+
+**Lección para tests futuros:** para verificar el estado de la DB después de una request que se espera que dispare un 404/400 vía excepción (rollback en la sesión compartida del test), preferir consultar `db_session` directamente (con `expire_all()` antes) en vez de encadenar otro request HTTP — es más robusto y más rápido de diagnosticar que perseguir la causa exacta de una discrepancia de sesión/dependencias en el cliente de test.
+
+- **3ª vuelta:** incluso consultando `db_session` directo (sin ningún request HTTP de por medio) y tomando `transition_id` directo de la fila de la fixture (sacando el `GET` vía API de la ecuación, para descartar un filtro mal aplicado), `still_exists` volvió a dar `None`.
+- **4ª vuelta — diagnóstico definitivo:** en la 3ª corrida, el propio traceback de pytest mostró algo revelador: al intentar hacer `repr()` de los fixtures `ctx_alpha`/`ctx_beta` para el reporte de error, **ya tiraba `ObjectDeletedError` sobre `ctx_alpha.owner` Y `ctx_beta.owner`** — es decir, para cuando se llega a la última línea del test, la sesión ya no puede acceder ni siquiera a los usuarios de AMBAS organizaciones, creados minutos antes y usados exitosamente varias veces durante el mismo test. Esto descarta cualquier explicación acotada a esta prueba puntual (ID mal tomado, objeto reusado, cliente equivocado) — confirma que el problema es más profundo: `UnitOfWork.__exit__` hace `session.rollback()` cuando la excepción de `cls._not_found` propaga, y como `tests/fixtures/db_fixtures.py::db_session` liga la sesión de la app a la sesión del test sin usar SAVEPOINTs (el patrón estándar de SQLAlchemy para aislar tests de este modo requiere `connection.begin_nested()` + un listener que reinicie el SAVEPOINT en cada `commit`/`rollback` — este fixture no lo tiene), ese `rollback()` a mitad de test puede arrastrarse más allá de la operación puntual que lo disparó y dejar inaccesible el resto de los datos de la sesión para el resto del test. **No es un bug del fix** (el 404 se confirmó correcto en las cuatro corridas — la validación de `lead_flow_id` ajeno se dispara antes de llegar a `cls.repository.delete(...)`, confirmado también por lectura de código) — es una limitación real de `db_session` (fixture de test), que hasta ahora ningún otro test había expuesto porque ninguno hacía una aserción sobre datos de fixture *después* de una request que dispara un 404/400 vía excepción, dentro del mismo test.
+- **Fix final (test):** se simplificó `test_delete_blocked_for_foreign_transition` para verificar solo el 404 (que es la propiedad de seguridad real de este hallazgo), igual que ya hacen `test_create_bulk_blocked_for_foreign_lead_flow`/`test_update_bulk_blocked_for_foreign_lead_flow`, con una nota en el docstring explicando por qué no incluye una verificación de persistencia posterior.
+- **Deuda técnica identificada para el futuro (no aplicada, fuera del alcance de este hallazgo):** si se quiere volver a poder hacer aserciones sobre datos de fixture después de una request que dispara un 4xx vía excepción, `tests/fixtures/db_fixtures.py::db_session` necesitaría el patrón de SAVEPOINT anidado (`connection.begin_nested()` + evento `after_transaction_end` que lo reinicia) descripto en la documentación de SQLAlchemy para este caso de uso. Es un cambio de infraestructura de test transversal a toda la suite, no específico de `LeadStateTransition` — no se tocó porque excede el alcance de este hallazgo y el usuario no lo pidió.
+
+---
+
+# Hallazgo #23 — `POST /lead_flows/graph` sin chequeo de permiso (escalación dentro de la propia organización)
+
+**Estado:** [RESUELTO 2026-07-11]
+
+`lead_flow_graph_controller.py` es un `APIRouter` manual (no usa `BaseController`), con una única ruta `POST /lead_flows/graph` cuyo único parámetro de autorización es `user_context: UserContext = Depends(get_current_user_roles)` — eso solo exige estar autenticado y mandar `X-Organization-Id`, **no** valida ningún permiso puntual (a diferencia de `LeadFlowController`, el CRUD genérico de `/lead_flows`, que sí exige `lead_flow:create`/`lead_flow:update` vía `_get_deps`).
+
+`LeadFlowOrchestratorService.save_graph` (el service que atiende esta ruta) sí es tenant-safe internamente — todo lo que toca (`LeadFlow`, `LeadState`, `LeadStateTransition`) se resuelve y crea siempre con `organization_id == org_id` del propio usuario, así que **no permite tocar datos de otra organización**. El problema es distinto: cualquier usuario autenticado de la organización (aunque su rol no tenga `lead_flow:update`/`create`, ej. un `agent` de solo operación diaria) puede rediseñar el flujo de ventas completo de **su propia organización** — algo que el resto del sistema reserva a roles con permisos de configuración.
+
+**Solución recomendada:** agregar `dependencies=[Depends(PermissionChecker("lead_flow:update"))]` (o el codename que corresponda) a la ruta `POST /lead_flows/graph`, igual que ya hacen los controllers genéricos. Antes de aplicar, confirmar con el usuario cuál es el permiso correcto a exigir (¿alcanza con `lead_flow:update`, o debería requerir ambos `create` y `update` según si `payload.id` viene o no?). Test: usuario con rol sin `lead_flow:update` (ej. `agent` estándar) intenta `POST /lead_flows/graph` → debe dar `403`.
+
+## Fix aplicado (2026-07-11)
+
+Se confirmó con el usuario: exigir siempre `lead_flow:update` (un único permiso fijo, sin distinguir create/update según venga o no `payload.id` en el body) — más simple, y ningún rol del proyecto separa `lead_flow:create` de `lead_flow:update` con permisos distintos.
+
+`app/controllers/lead_flow_graph_controller.py`: se agregó `dependencies=[Depends(PermissionChecker("lead_flow:update"))]` a la ruta `POST /lead_flows/graph`, mismo patrón usado en `import_export_controller.py`. `AGENT_PERMS`/`VIEWER_PERMS` (`app/db/init_data.py`) solo tienen `lead_flow:view`/`view_all` — ni "agent" ni "viewer" tienen `lead_flow:update`, así que quedan bloqueados; "admin" (que tiene todos los permisos) sigue funcionando igual.
+
+**Test de regresión:** `tests/functional/test_lead_flows_and_states.py` — `test_graph_blocked_for_role_without_lead_flow_update` (rol `agent` → `403`) y `test_graph_allowed_for_role_with_lead_flow_update` (rol `admin` → `200`).

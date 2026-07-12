@@ -1,4 +1,5 @@
 import pytest
+from tests.fixtures.user_fixtures import _make_user, _link_user_to_org, as_user
 
 # =============================================================================
 # FIXTURE LOCAL (Aislado para estos tests)
@@ -110,6 +111,29 @@ def test_lead_contact_state_create_second_initial_fails(api_with_states):
     assert res.status_code == 400
     assert "Ya existe un estado inicial" in res.text
 
+def test_lead_contact_state_set_initial_without_changing_name_returns_400(api_with_states):
+    """
+    Regresión: un PUT que marca is_initial=True SIN cambiar el name no debe romper con 500.
+
+    Bug (hasta 2026-07-10): `org_id` solo se calculaba dentro del bloque de la Regla 1
+    (unicidad de nombre), pero la Regla 2 (estado inicial único) lo reutilizaba fuera de
+    ese bloque. Si el PUT no traía `name` (o traía el mismo), la Regla 1 nunca se
+    ejecutaba, `org_id` quedaba sin definir, y la Regla 2 explotaba con NameError → 500
+    en vez del 400 de validación esperado.
+    """
+    states = api_with_states.client.get("/lead_contact_states/", headers=api_with_states.headers).json()["items"]
+
+    # Tomamos un estado que NO sea el inicial (ya hay uno: "No Contactado", del seed).
+    non_initial_state = next(s for s in states if s.get("is_initial") is False)
+
+    res = api_with_states.client.put(f"/lead_contact_states/{non_initial_state['id']}", json={
+        "is_initial": True
+    }, headers=api_with_states.headers)
+
+    assert res.status_code == 400
+    assert "ya es el inicial" in res.text
+
+
 def test_lead_contact_state_prevent_uncheck_initial(api_with_states):
     """Impide que el único estado inicial pierda su marca, evitando que el sistema quede sin estado de entrada."""
     states = api_with_states.client.get("/lead_contact_states/", headers=api_with_states.headers).json()["items"]
@@ -118,6 +142,85 @@ def test_lead_contact_state_prevent_uncheck_initial(api_with_states):
     res = api_with_states.client.put(f"/lead_contact_states/{initial_state['id']}", json={
         "is_initial": False
     }, headers=api_with_states.headers)
-    
+
     assert res.status_code == 400
     assert "No puede quitar el estado inicial" in res.text
+
+
+# =============================================================================
+# TESTS DE PERMISOS POR ROL (hallazgo #27)
+# =============================================================================
+# "lead_contact_state" faltaba en SYSTEM_ENTITIES_REGISTRY (app/core/dictionaries.py)
+# — no existía ningún permiso lead_contact_state:*, así que ningún usuario
+# no-superadmin podía usar /lead_contact_states/*, ni siquiera el admin de su
+# propia organización. Decisión del usuario (2026-07-11): admin (obtiene todos
+# los permisos que existan) mantiene CRUD completo, agent puede crear/editar
+# pero no borrar, viewer solo puede ver.
+
+def test_lead_contact_state_org_admin_can_manage(api, db_session, initial_structure):
+    """Un admin de organización (no superadmin) puede crear, editar y borrar
+    estados de contacto de su propia organización."""
+    org_id = initial_structure["org_id"]
+    admin_user = _make_user(db_session, "Admin CS", f"admin_cs_{org_id}@test.com")
+    _link_user_to_org(db_session, admin_user, org_id, role_code="admin")
+    db_session.commit()
+
+    with as_user(api, admin_user, db_session):
+        res_create = api.client.post(
+            "/lead_contact_states/", json={"name": "Admin State"}, headers=api.headers
+        )
+        assert res_create.status_code == 200, res_create.text
+        state_id = res_create.json()["id"]
+
+        res_update = api.client.put(
+            f"/lead_contact_states/{state_id}", json={"color": "#abcdef"}, headers=api.headers
+        )
+        assert res_update.status_code == 200, res_update.text
+
+        res_delete = api.client.delete(
+            f"/lead_contact_states/{state_id}", headers=api.headers
+        )
+        assert res_delete.status_code == 200, res_delete.text
+
+
+def test_lead_contact_state_agent_can_create_and_update_but_not_delete(api, db_session, initial_structure):
+    """Un agent puede crear y editar estados de contacto, pero no borrarlos
+    (decisión del usuario: agent solo crea/edita, no borra)."""
+    org_id = initial_structure["org_id"]
+    agent_user = _make_user(db_session, "Agent CS", f"agent_cs_{org_id}@test.com")
+    _link_user_to_org(db_session, agent_user, org_id, role_code="agent")
+    db_session.commit()
+
+    with as_user(api, agent_user, db_session):
+        res_create = api.client.post(
+            "/lead_contact_states/", json={"name": "Agent State"}, headers=api.headers
+        )
+        assert res_create.status_code == 200, res_create.text
+        state_id = res_create.json()["id"]
+
+        res_update = api.client.put(
+            f"/lead_contact_states/{state_id}", json={"color": "#123456"}, headers=api.headers
+        )
+        assert res_update.status_code == 200, res_update.text
+
+        res_delete = api.client.delete(
+            f"/lead_contact_states/{state_id}", headers=api.headers
+        )
+        assert res_delete.status_code == 403, res_delete.text
+
+
+def test_lead_contact_state_viewer_can_only_view(api, db_session, initial_structure):
+    """Un viewer puede listar estados de contacto pero no crearlos."""
+    org_id = initial_structure["org_id"]
+    viewer_user = _make_user(db_session, "Viewer CS", f"viewer_cs_{org_id}@test.com")
+    _link_user_to_org(db_session, viewer_user, org_id, role_code="viewer")
+    db_session.commit()
+
+    with as_user(api, viewer_user, db_session):
+        res_list = api.client.get("/lead_contact_states/", headers=api.headers)
+        assert res_list.status_code == 200, res_list.text
+
+        res_create = api.client.post(
+            "/lead_contact_states/", json={"name": "Viewer Intento"}, headers=api.headers
+        )
+        assert res_create.status_code == 403, res_create.text

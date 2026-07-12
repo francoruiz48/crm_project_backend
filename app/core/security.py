@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -26,6 +26,51 @@ def hash_password(plain_password: str) -> str:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
+
+
+# ---------------------------------------------------------------------------
+# Normalización de email
+# ---------------------------------------------------------------------------
+# Hallazgo #13 (ronda de bug-hunting 2026-07-10): el email no se normalizaba
+# antes de guardarlo/compararlo (registro y login usaban el string tal cual
+# vino en el request) — dos registros con el mismo email en distinta
+# capitalización (Test@x.com / test@x.com) se trataban como cuentas distintas,
+# y loguearse con otra capitalización que la usada al registrarse fallaba.
+# Única fuente de verdad: la usan LoginRequest/RegisterRequest/UserUpdate.
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+# ---------------------------------------------------------------------------
+# IP real del visitante detrás de un proxy (hallazgo #11, 2026-07-11)
+# ---------------------------------------------------------------------------
+# request.client.host es la IP del último "hop" TCP. Si el backend corre
+# detrás de un proxy/load balancer (nginx, ALB, Cloudflare, el proxy que arma
+# docker-compose, etc.), esa IP es la del proxy, no la del visitante real —
+# todos los visitantes terminan compartiendo la misma IP a ojos del backend.
+# Decisión del usuario (2026-07-11): la infraestructura de producción todavía
+# no está definida, pero se asume que va a haber un proxy delante (es lo más
+# probable) y se prioriza X-Forwarded-For / X-Real-IP, con fallback a
+# request.client.host por si el proxy no los setea. Única fuente de verdad:
+# la usan tanto el rate limiter como el `remoteip` que se le manda al
+# proveedor de CAPTCHA (ambos en web_form_public_controller.py) — si cambia
+# la infraestructura real, alcanza con tocar esta función.
+#
+# Nota de seguridad: X-Forwarded-For puede ser falsificado por un cliente
+# malicioso si no hay un proxy de confianza que lo sobreescriba (o si hay
+# varios proxies encadenados y no se sabe cuántos son de confianza). Mientras
+# no se confirme la infraestructura real, esto es una mejora sobre el estado
+# actual (todos comparten la misma IP), no una garantía anti-spoofing.
+def get_client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        # El primer valor de la lista es el IP original del cliente; los
+        # proxies subsiguientes van agregando el suyo a la derecha.
+        return forwarded_for.split(",")[0].strip()
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+    return request.client.host if request.client else "unknown"
 
 
 # ---------------------------------------------------------------------------
