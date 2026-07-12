@@ -1,6 +1,7 @@
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from fastapi import HTTPException, status
 from app.core.constans import ADMIN_ORG_ID
@@ -62,6 +63,49 @@ def _build_token_response(user: User, session: Session) -> TokenResponse:
     )
 
 
+def _try_join_org_from_invite(
+    session: Session, user: User, invite_token: str, register_email: str
+) -> Optional[str]:
+    """
+    Intenta usar un invite_token durante el registro para unir al usuario recién
+    creado a la organización indicada en el token.
+
+    Nunca interrumpe el registro: si el token es inválido, expiró, o no
+    corresponde al email con el que se registró, la cuenta se crea igual y se
+    devuelve un mensaje explicativo (invite_warning) para que el frontend le
+    avise al usuario que no quedó unido a ninguna organización.
+    """
+    try:
+        payload = decode_token(invite_token)
+    except HTTPException:
+        return "No pudimos unirte a la organización: el link de invitación no es válido o expiró."
+
+    if payload.get("type") != "invite":
+        return "No pudimos unirte a la organización: el link de invitación no es válido."
+
+    invite_email = (payload.get("email") or "").strip().lower()
+    if invite_email != register_email.strip().lower():
+        return "No pudimos unirte a la organización: la invitación era para otro email."
+
+    org_id = payload.get("org_id")
+    org = session.get(Organization, org_id) if org_id else None
+    if not org:
+        return "No pudimos unirte a la organización: ya no existe."
+
+    role_code = payload.get("role_code", "agent")
+    role = (
+        session.query(Role).filter_by(code=role_code, organization_id=org_id).first()
+        or session.query(Role).filter_by(code=role_code, organization_id=ADMIN_ORG_ID).first()
+    )
+
+    membership = UserOrganization(user_id=user.id, organization_id=org_id, is_owner=False)
+    if role:
+        membership.roles = [role]
+    session.add(membership)
+    session.flush()
+    return None
+
+
 class AuthService:
 
     @classmethod
@@ -88,7 +132,18 @@ class AuthService:
             uow.session.add(new_user)
             uow.session.flush()
 
-            return _build_token_response(new_user, uow.session)
+            # 3. Si viene de un link de invitación, intentar unirlo a esa org.
+            #    No hace falta contraseña ni datos puestos por quien invitó:
+            #    el propio usuario los define acá, en su registro.
+            invite_warning = None
+            if data.invite_token:
+                invite_warning = _try_join_org_from_invite(
+                    uow.session, new_user, data.invite_token, data.email
+                )
+
+            token_response = _build_token_response(new_user, uow.session)
+            token_response.invite_warning = invite_warning
+            return token_response
 
         with UnitOfWork() as uow:
             result = do_register(uow)
@@ -231,18 +286,13 @@ class AuthService:
     def change_password(cls, data: ChangePasswordRequest, current_user: User) -> dict:
         """
         Cambia la contraseña del usuario autenticado.
+        - La fortaleza de new_password ya se valida en el schema
+          (ChangePasswordRequest → validate_password_strength en core/security.py,
+          la misma regla que usa el registro).
         - Verifica la contraseña actual antes de aceptar la nueva.
         - Revoca todos los refresh tokens activos (fuerza logout de otras sesiones).
         - Usa tiempo de respuesta constante para no filtrar si el password es correcto.
         """
-        MIN_PASSWORD_LENGTH = 8
-
-        if len(data.new_password) < MIN_PASSWORD_LENGTH:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"La nueva contraseña debe tener al menos {MIN_PASSWORD_LENGTH} caracteres.",
-            )
-
         with UnitOfWork() as uow:
             user = uow.session.get(User, current_user.id)
 
@@ -272,10 +322,15 @@ class AuthService:
         return {"message": "Contraseña actualizada correctamente. Las demás sesiones fueron cerradas."}
 
     @classmethod
-    def accept_invite(cls, invite_token: str, name: str, password: str) -> TokenResponse:
+    def accept_invite(cls, invite_token: str, current_user: User) -> dict:
         """
-        El usuario invitado usa el token para crear su cuenta y unirse a la org.
-        Si ya tiene cuenta, solo lo agrega a la org.
+        Un usuario YA AUTENTICADO (ya hizo login con su cuenta existente) usa un
+        invite_token para unirse a la organización indicada en el token.
+
+        No crea usuarios ni recibe contraseña: la identidad ya fue verificada
+        por el login previo. Si el token pertenece a otro email, se rechaza.
+        Para usuarios que todavía no tienen cuenta, el alta se hace por
+        /auth/register (con invite_token incluido en el body).
         """
         payload = decode_token(invite_token)
 
@@ -285,46 +340,50 @@ class AuthService:
                 detail="Token de invitación inválido.",
             )
 
-        email = payload.get("email")
+        invite_email = (payload.get("email") or "").strip().lower()
+        if invite_email != (current_user.email or "").strip().lower():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Esta invitación es para otro email.",
+            )
+
         org_id = payload.get("org_id")
+        role_code = payload.get("role_code", "agent")
 
         with UnitOfWork() as uow:
-            user = uow.session.query(User).filter_by(email=email).first()
-
-            if not user:
-                # Crear cuenta nueva
-                user = User(
-                    name=name,
-                    email=email,
-                    hashed_password=hash_password(password),
-                    is_superuser=False,
+            org = uow.session.get(Organization, org_id)
+            if not org:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Organización no encontrada.",
                 )
-                uow.session.add(user)
-                uow.session.flush()
+            org_name = org.name  # capturar antes de que la sesión se cierre
 
-            # Agregar a la org si no está ya
             existing_link = uow.session.query(UserOrganization).filter_by(
-                user_id=user.id,
+                user_id=current_user.id,
                 organization_id=org_id,
             ).first()
 
-            if not existing_link:
-                membership = UserOrganization(
-                    user_id=user.id,
-                    organization_id=org_id,
-                    is_owner=False,
-                )
-                uow.session.add(membership)
-                uow.session.flush()
+            if existing_link:
+                return {"message": f"Ya formás parte de '{org_name}'.", "organization_id": org_id}
 
-                # Asignar el rol de la org especificado en el token (default: agent)
-                role_code = payload.get("role_code", "agent")
-                org_role = uow.session.query(Role).filter_by(
-                    code=role_code, organization_id=org_id
-                ).first()
-                if org_role:
-                    membership.roles = [org_role]
+            membership = UserOrganization(
+                user_id=current_user.id,
+                organization_id=org_id,
+                is_owner=False,
+            )
 
-                uow.session.flush()
+            org_role = (
+                uow.session.query(Role).filter_by(code=role_code, organization_id=org_id).first()
+                or uow.session.query(Role).filter_by(code=role_code, organization_id=ADMIN_ORG_ID).first()
+            )
+            if org_role:
+                membership.roles = [org_role]
 
-            return _build_token_response(user, uow.session)
+            uow.session.add(membership)
+            uow.session.flush()
+
+        return {
+            "message": f"Te uniste a '{org_name}' con el rol '{role_code}'.",
+            "organization_id": org_id,
+        }

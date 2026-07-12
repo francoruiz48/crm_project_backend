@@ -6,7 +6,7 @@ from app.core.exceptions.exceptions import AppException, NotFoundException
 from app.core.constans import DeleteStrategy, ADMIN_ORG_ID
 from app.core.error_messages import ERROR_DATABASE, ERROR_NOT_FOUND
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import func, inspect, or_
+from sqlalchemy import func, inspect, or_, distinct
 from app.core.context import TENANT_ORG_ID
 from app.core.security import UserContext
 from fastapi.encoders import jsonable_encoder
@@ -72,7 +72,9 @@ class BaseRepository:
         Aplica paginación y devuelve (total, query_paginada).
         Si page o page_size son 0/None, devuelve (total, query_original).
         """
-        total = query.count()
+        # Usar COUNT(DISTINCT id) para no inflar el total cuando hay JOINs que duplican filas
+        # (ej: filtros EAV que hacen JOIN sobre lead_field_values)
+        total = query.order_by(False).with_entities(func.count(distinct(cls.model.id))).scalar()
 
         if page_size > 0:
             total_pages = ceil(total / page_size)
@@ -735,3 +737,5 @@ class BaseRepository:
             except Exception as e:
                 # Si por algun motivo de base de datos falla la actualizacion
                 results["failed"].append(obj_id)
+
+        return results

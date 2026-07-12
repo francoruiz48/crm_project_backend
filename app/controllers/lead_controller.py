@@ -101,19 +101,22 @@ class LeadController(BaseController):
             page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=PAGE_SIZE_LIMIT),
             search_req: LeadSearchRequest = Body(...),
             detailed: bool = Query(False),
-            order_by: str = Query(None, description="Campo por el cual ordenar"), 
+            only_active: bool = Query(True),
+            campaign_id: Optional[int] = Query(None, description="Filtrar por ID de campaña"),
+            order_by: str = Query(None, description="Campo por el cual ordenar"),
             ascending: bool = Query(True, description="Orden ascendente (true) o descendente (false)")
         ):
-            
 
             total, items_pydantic = cls.service.search(
                 user_context=user_context,
                 page=page,
                 page_size=page_size,
-                search_req=search_req, 
+                search_req=search_req,
                 detailed=detailed,
                 order_by=order_by,
-                ascending=ascending
+                ascending=ascending,
+                only_active=only_active,
+                campaign_id=campaign_id
             )
             
             return PaginatedResponse.create(

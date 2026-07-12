@@ -1,12 +1,14 @@
 
-from app.schemas.base_schema import BaseDetailedResponse, BaseCreate, BaseResponse
+from app.schemas.base_schema import BaseDetailedResponse, BaseCreate, BaseResponse, UserSimpleResponse
 from pydantic import BaseModel, computed_field, Field
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 from app.schemas.lead_comment_shema import LeadCommentDetailedResponse
 from app.schemas.lead_field_value_schema import LeadFieldValueCreate, LeadFieldValueDetailedResponse, LeadFieldValueResponse
 from app.schemas.lead_state_schema import LeadStateDetailedResponse, LeadStateResponse
 from app.schemas.tag_schema import TagResponse
 from app.schemas.lead_contact_state_schema import LeadContactStateResponse, LeadContactStateDetailedResponse
+from app.schemas.team_schema import TeamResponse
 
 
 class LeadBase(BaseModel):
@@ -34,6 +36,10 @@ class LeadResponse(LeadBase, BaseResponse):
     current_state: LeadStateResponse
     contact_state: Optional[LeadContactStateResponse] = None
     tags: List[TagResponse] = Field(default_factory=list)
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    team: Optional[TeamResponse] = None
+    assigned_to_user: Optional[UserSimpleResponse] = None
 
 class LeadLiteResponse(LeadBase, BaseResponse):
     organization_id : int
