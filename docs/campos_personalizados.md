@@ -1,6 +1,6 @@
 # Campos Personalizados (`LeadField`)
 
-Documentación técnica del sistema de campos dinámicos de una campaña: definición del campo (`LeadField`), su tipo/subtipo (`LeadFieldType`/`LeadFieldSubtype`), su agrupación visual (`LeadFieldSection`) y el valor que toma en cada lead (`LeadFieldValue`). Se documentan juntos porque son 5 tablas que solo tienen sentido como una unidad — es el sistema de "campos personalizados" del CRM. Asume conocido `convenciones_generales.md`. Última revisión: 2026-07-10.
+Documentación técnica del sistema de campos dinámicos de una campaña: definición del campo (`LeadField`), su tipo/subtipo (`LeadFieldType`/`LeadFieldSubtype`), su agrupación visual (`LeadFieldSection`) y el valor que toma en cada lead (`LeadFieldValue`). Se documentan juntos porque son 5 tablas que solo tienen sentido como una unidad — es el sistema de "campos personalizados" del CRM. Asume conocido `convenciones_generales.md`. Última revisión: 2026-07-12.
 
 ## Índice
 
@@ -14,6 +14,7 @@ Documentación técnica del sistema de campos dinámicos de una campaña: defini
 8. [Reordenamiento (`/reorder/bulk`)](#8-reordenamiento-reorderbulk)
 9. [`LeadFieldValue`: cómo se guarda el valor](#9-leadfieldvalue-cómo-se-guarda-el-valor)
 10. [Cómo se testea](#10-cómo-se-testea)
+11. [Feature: campos dependientes de un nomenclador (`depends_on_field_id`)](#11-feature-campos-dependientes-de-un-nomenclador-depends_on_field_id)
 
 ---
 
@@ -45,6 +46,7 @@ Campaign ──< LeadField >── LeadFieldType (field_type_code)
    │              ├──> LeadFieldSection (lead_field_section_id)
    │              ├──> Nomenclator (nomenclator_id, opcional — para SELECTOR/CHECKBOX)
    │              ├──> Campaign (related_campaign_id, opcional — para tipo LEAD)
+   │              ├──> LeadField (depends_on_field_id, opcional — self, ver §11)
    │              └──< ValidationRule (cascade delete-orphan)
    │
    └──< Lead >── LeadFieldValue >── LeadField
@@ -53,7 +55,7 @@ Campaign ──< LeadField >── LeadFieldType (field_type_code)
                        └──M2M── Lead (lead_field_value_leads, related_leads — campos tipo LEAD)
 ```
 
-Campos propios de `LeadField` (además de `BaseModelDB`): `name`, `required`, `default_value`, `is_primary` (identificador de duplicados, ver `lead.md` §5), `input_mask`, `order`, `is_visible`, `calculation_expression` (solo `CALCULATED`), `configuration` (JSON libre), `title_order` (define qué campos arman el "título" visible de un lead relacionado, ver `lead.md` §8), `field_template_code`/`field_template_name` (si se creó desde una plantilla).
+Campos propios de `LeadField` (además de `BaseModelDB`): `name`, `required`, `default_value`, `is_primary` (identificador de duplicados, ver `lead.md` §5), `input_mask`, `order`, `is_visible`, `calculation_expression` (solo `CALCULATED`), `configuration` (JSON libre), `title_order` (define qué campos arman el "título" visible de un lead relacionado, ver `lead.md` §8), `field_template_code`/`field_template_name` (si se creó desde una plantilla), `depends_on_field_id` (opcional, self-referencia — ver §11).
 
 `LeadFieldSection` solo tiene `name` y `color`, agrupa campos visualmente dentro de una organización (no de una campaña). `LeadFieldValue.value` **siempre se guarda como texto** — la interpretación al tipo real (`int`, `float`, `date`, etc.) ocurre en la capa de servicio (`lead_service.py::_convert_value_by_type`), nunca en la base.
 
@@ -97,6 +99,8 @@ Sembrados en `app/db/init_data.py` (no hay endpoint de escritura para `LeadField
 | `PATCH /lead_fields/reorder/bulk` | Reordena varios campos de una campaña en una sola llamada (ver §8) |
 
 `allowed_filter_fields` habilita filtrar `GET /` por `name`, `required`, `is_primary`, `order`, `is_visible`, `campaign_id`, `nomenclator_id`, `related_campaign_id`, `field_type_code`, `lead_field_section_id`, `field_subtype_code`.
+
+`POST`/`PUT` aceptan `depends_on_field_id` (opcional, ver §11) — declara que este campo depende de otro campo nomenclador de la misma campaña.
 
 `LeadFieldSection`, `LeadFieldSubtype` y `LeadFieldType` tienen sus propios controllers (`lead_field_section_controller.py`, `lead_field_subtype_controller.py`, `lead_field_type_controller.py`) — genéricos, sin lógica propia; los dos últimos son de solo catálogo (`PROTECTED`, no tiene sentido exponer `POST`/`PUT`/`DELETE` reales aunque el router los registre, cualquier intento de borrado los rechaza).
 
@@ -150,4 +154,24 @@ Recibe una lista `{field_id, order}` y una `campaign_id`. Antes de aplicar nada,
 
 ## 10. Cómo se testea
 
-`tests/functional/test_lead_fields.py` (CRUD, validaciones de tipo/subtipo, unicidad de nombre/orden, restricciones históricas), `test_lead_field_templates.py` (creación desde plantilla, con y sin validación exitosa). La interacción con la carga real de valores en un lead se cubre desde `test_leads.py` (ver `lead.md` §12).
+`tests/functional/test_lead_fields.py` (CRUD, validaciones de tipo/subtipo, unicidad de nombre/orden, restricciones históricas), `test_lead_field_templates.py` (creación desde plantilla, con y sin validación exitosa). La interacción con la carga real de valores en un lead se cubre desde `test_leads.py` (ver `lead.md` §12). La feature de campos dependientes (`depends_on_field_id`, §11) se testea en `tests/functional/test_nomenclator_dependencies.py` (ver `nomencladores.md` §8.6).
+
+---
+
+## 11. Feature: campos dependientes de un nomenclador (`depends_on_field_id`)
+
+**Objetivo (pedido por el usuario, 2026-07-12):** un campo `SELECTOR`/`CHECKBOX` puede declarar que depende de otro campo nomenclador de la misma campaña (ej. campo "Ciudad" depende del campo "País") para que, al cargar/editar un lead, solo se acepten ítems que sean hijos (jerarquía M2M de catálogo, ver `nomencladores.md` §2 y §8) del ítem elegido en el campo padre.
+
+**Por qué a nivel de campo y no de catálogo:** el mismo catálogo (ej. "Ciudades") puede usarse en más de un `LeadField` de la campaña, con relaciones padre distintas o sin relación — declarar la dependencia en el catálogo sería ambiguo (¿de cuál campo padre depende, si hay dos campos que usan "País"?). `depends_on_field_id` resuelve la ambigüedad puntualizando la relación en cada campo.
+
+**Reglas (implementadas en `lead_field_service.py`, detalle completo con tabla en `nomencladores.md` §8.2):**
+
+- Solo válido si **ambos** campos (el que declara la dependencia y `depends_on_field_id`) son de tipo nomenclador (`field_type_code` en `NOMENCLATOR_FIELD_TYPES`, o sea `SELECTOR`/`CHECKBOX`).
+- El campo padre debe ser de la **misma campaña**.
+- El catálogo (`nomenclator_id`) del campo padre debe estar declarado como padre válido del catálogo de este campo (`Nomenclator.parent_nomenclators`, ver `nomencladores.md` §8) — si no, `400` indicando que hay que agregarlo primero a los padres del catálogo.
+- Sin auto-referencia ni ciclos en la cadena de dependencias (se permiten cadenas de N niveles: A depende de B que depende de C).
+- **Borrado/desactivación bloqueados** (`400`) si otros campos activos dependen de este campo (`dependent_fields`, backref de `depends_on_field_id`) — hay que desvincularlos primero.
+
+**Validación al cargar/editar un lead** (`lead_service.py::_validate_processed_data`, detalle en `nomencladores.md` §8.4-§8.5): el/los ítem(s) elegido(s) en el campo hijo deben ser hijos del/los ítem(s) elegido(s) en el campo padre. Si el campo padre no tiene valor asignado (ni en el request ni ya persistido), `400`. En un `PUT` parcial que no incluye el campo padre, se usa su valor ya persistido en la base (no se omite la validación). Si el padre permite selección múltiple, alcanza con que el hijo descienda de **cualquiera** de los valores elegidos (semántica OR).
+
+Ver `nomencladores.md` §8 para el diseño completo (incluye el lado "catálogo" de la feature, compartido con `Nomenclator`/`NomenclatorItem`).

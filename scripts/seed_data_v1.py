@@ -604,8 +604,6 @@ def build_org_salud():
          "Ginecología", "Pediatría", "Nutrición", "Psicología", "Kinesiología"]
     )
     items_genero, _  = get_global_nomenclator("Genero")
-    items_paises, _  = get_global_nomenclator("Países")
-    items_prov, _    = get_global_nomenclator("Provincias")
 
     # --- Workspaces ---
     ws_pacientes = create_workspace("Pacientes Generales", "Gestión de pacientes ambulatorios")
@@ -1028,8 +1026,6 @@ def build_org_inmobiliaria():
         "Estado de la Propiedad",
         ["A estrenar", "Muy bueno", "Bueno", "A refaccionar", "En construcción"]
     )
-    items_paises, _ = get_global_nomenclator("Países")
-    items_prov, _   = get_global_nomenclator("Provincias")
 
     # --- Workspaces ---
     ws_ventas    = create_workspace("Ventas",    "Operaciones de compraventa")
@@ -1484,7 +1480,6 @@ def build_org_concesionaria():
         ["Contado", "Crédito Banco Nación", "Crédito Banco Provincia", "Plan de Ahorro",
          "Leasing", "Tarjeta de Crédito"]
     )
-    items_paises, _ = get_global_nomenclator("Países")
 
     ws_nuevos = create_workspace("Vehículos 0km")
     ws_usados = create_workspace("Vehículos Usados")

@@ -31,9 +31,13 @@ class LeadFieldCreate(LeadFieldBase, BaseCreate):
     related_campaign_id: Optional[int] = Field(default=None, gt=0)
     lead_field_section_id: Optional[int] = Field(default=None, gt=0)
     mask_template_code: Optional[str] = Field(
-        default=None, 
+        default=None,
         description="Código de máscara predefinida (Ej: DNI_ARG, MOBILE_AR)"
     )
+    # Feature de nomencladores dependientes (ver docs/nomencladores.md): este
+    # campo (SELECTOR/CHECKBOX) solo va a ofrecer ítems hijos del valor
+    # elegido en el campo referenciado, que debe ser de la misma campaña.
+    depends_on_field_id: Optional[int] = Field(default=None, gt=0)
 
 class LeadFieldUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=3, max_length=150)
@@ -47,6 +51,10 @@ class LeadFieldUpdate(BaseModel):
     configuration: Optional[Dict[str, Any]] = None
     lead_field_section_id: Optional[int] = Field(default=None, gt=0)
     title_order: Optional[int] = Field(default=None, gt=0)
+    # No mandar el campo = no tocar la dependencia actual. Mandar explícitamente
+    # `null` desvincula (gracias a exclude_unset=True en el repositorio, que sí
+    # distingue "no vino" de "vino en null" — ver BaseRepository._normalize_data).
+    depends_on_field_id: Optional[int] = Field(default=None, gt=0)
 
 class LeadFieldResponse(LeadFieldBase, BaseResponse):
     field_template_name: Optional[str] = None
@@ -55,8 +63,9 @@ class LeadFieldResponse(LeadFieldBase, BaseResponse):
     lead_field_section: LeadFieldSectionResponse
     nomenclator_id: Optional[int] = None
     related_campaign_id: Optional[int] = None
+    depends_on_field_id: Optional[int] = None
     organization_id : int
-    
+
 class LeadFieldLiteResponse(BaseModel, BaseResponse):
     name: str
     order: int
@@ -73,6 +82,7 @@ class LeadFieldDetailedResponse(LeadFieldBase, BaseDetailedResponse):
     validation_rules: List[ValidationRuleResponse] = []
     nomenclator: Optional[NomenclatorResponse] = None
     related_campaign: Optional[CampaignResponse] = None
+    depends_on_field_id: Optional[int] = None
     organization_id : int
     
 class LeadFieldOrderUpdate(BaseModel):

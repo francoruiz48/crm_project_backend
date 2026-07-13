@@ -1,6 +1,6 @@
 # Índice General de Documentación
 
-Punto de entrada a la documentación técnica del backend del CRM. Si no sabés en qué archivo buscar algo, empezá acá. Última revisión: 2026-07-10.
+Punto de entrada a la documentación técnica del backend del CRM. Si no sabés en qué archivo buscar algo, empezá acá. Última revisión: 2026-07-12.
 
 ## Cómo está organizada esta documentación
 
@@ -26,7 +26,7 @@ Recomendación de lectura si es tu primera vez: `convenciones_generales.md` → 
 | [`flujo_de_leads.md`](./flujo_de_leads.md) | `LeadFlow`, `LeadState`, `LeadStateTransition`: el embudo comercial y su editor visual de grafo. |
 | [`importacion_y_exportacion.md`](./importacion_y_exportacion.md) | Carga masiva de leads desde Excel y exportación. |
 | [`vistas_de_leads.md`](./vistas_de_leads.md) | `LeadView`: filtros y configuración visual guardada (privada/equipo/pública). |
-| [`nomencladores.md`](./nomencladores.md) | `Nomenclator`/`NomenclatorItem`: catálogos de opciones para campos selector/checkbox. |
+| [`nomencladores.md`](./nomencladores.md) | `Nomenclator`/`NomenclatorItem`: catálogos de opciones para campos selector/checkbox, incluyendo jerarquía de múltiples padres (M2M) para nomencladores dependientes. |
 | [`etiquetas.md`](./etiquetas.md) | `Tag`: etiquetas libres sobre leads. |
 | [`reglas_de_validacion.md`](./reglas_de_validacion.md) | `ValidationRule`: reglas de validación por campo (plantilla o fórmula manual). |
 | [`formularios_web.md`](./formularios_web.md) | `WebForm`: formularios embebibles que crean leads públicamente, sin login. |
@@ -52,7 +52,7 @@ Recomendación de lectura si es tu primera vez: `convenciones_generales.md` → 
 - **Importar/exportar leads desde Excel** → `importacion_y_exportacion.md`
 - **Formularios públicos embebidos en una landing page** → `formularios_web.md`
 - **Quién hizo qué cambio y cuándo (auditoría)** → `auditoria.md`
-- **Catálogos de opciones (países, rubros, etc.)** → `nomencladores.md`
+- **Catálogos de opciones (países, rubros, etc.), incluyendo catálogos/campos "dependientes" (ej. Ciudad depende de País)** → `nomencladores.md` §8, `campos_personalizados.md` §11
 - **Reglas de validación de un campo (mínimo, máximo, formato, etc.)** → `reglas_de_validacion.md`
 - **Subida de archivos/imágenes** → `almacenamiento.md`
 - **Multi-tenancy: por qué un dato de otra empresa no debería aparecer nunca** → `autenticacion.md` §8 + `convenciones_generales.md` §6
@@ -107,3 +107,9 @@ Módulos revisados sin hallazgos nuevos: Usuarios y permisos, Campos personaliza
 **Hallazgo #23 — RESUELTO (2026-07-11):** `POST /lead_flows/graph` ahora exige `lead_flow:update` (`PermissionChecker`) — antes cualquier rol autenticado, incluido `agent` (sin ese permiso), podía rediseñar el flujo de ventas completo de su organización. Ver `hallazgos_agente/flujo_de_leads.md` y `docs/flujo_de_leads.md` §4.
 
 **Hallazgo #27 (encontrado 2026-07-11, al escribir el test de regresión del #22) — RESUELTO (2026-07-11):** `lead_contact_state` nunca se agregó a `SYSTEM_ENTITIES_REGISTRY` (`app/core/dictionaries.py`) — no existía ningún permiso `lead_contact_state:*` en la base, así que ningún usuario no-superadmin podía usar `/lead_contact_states/*`. No se había detectado antes porque todos los tests de ese módulo corrían como superadmin. Fix: entidad agregada al registro; `admin` CRUD completo (automático), `agent` crea/edita sin borrar, `viewer` solo ve. Sin script de migración para organizaciones existentes — decisión explícita del usuario, es el diseño esperado (los roles clonados por organización son una plantilla de un momento dado). Ver `hallazgos_agente/estados_de_contacto.md` y `docs/estados_de_contacto.md` §7.
+
+Con esto se cierran los 18 hallazgos de la Ronda 2 (2026-07-10/11) — 17 resueltos con código/tests, 1 (carrera TOCTOU en duplicados, `lead.md` §5) documentado sin implementar por decisión explícita del usuario.
+
+## Feature nueva (no es un hallazgo): nomencladores y campos dependientes (2026-07-12)
+
+A pedido del usuario: los campos `SELECTOR`/`CHECKBOX` de una campaña ahora pueden declarar que dependen de otro campo nomenclador de la misma campaña (`LeadField.depends_on_field_id`, ej. "Ciudad" depende de "País"), de forma que al cargar/editar un lead solo se acepten ítems que sean hijos del ítem elegido en el campo padre. La jerarquía de catálogos (`Nomenclator`/`NomenclatorItem`) pasó de columna única (`parent_nomenclator_id`/`parent_item_id`) a relación muchos-a-muchos, para poder declarar **más de un catálogo padre válido** (ej. "Ciudades" puede depender de "País" *o* de "Región"). Diseño completo, validaciones (existencia, consistencia catálogo↔campo, ciclos, bloqueo de borrado con dependientes) y tests en `docs/nomencladores.md` §8 y `docs/campos_personalizados.md` §11.

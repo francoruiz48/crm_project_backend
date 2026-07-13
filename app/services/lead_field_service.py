@@ -2,6 +2,7 @@ from typing import Optional
 from fastapi import HTTPException, status
 from app.models.lead_field_section import LeadFieldSection
 from app.models.nomenclator import Nomenclator
+from app.db.unit_of_work import UnitOfWork
 from app.services.base_service import BaseService
 from app.core.templates.field_templates import STANDARD_FIELD_TEMPLATES
 from app.services.nomenclator_service import NomenclatorService
@@ -83,6 +84,68 @@ class LeadFieldService(BaseService):
             has_leads = LeadRepository.has_leads_in_campaign(session, field.campaign_id)
             if has_leads:
                 errors.append({"field": "is_primary", "message": "No se puede marcar como 'Primary' porque ya existen Leads en esta campaña."})
+
+    # =========================================================================
+    # HELPERS: NOMENCLADORES DEPENDIENTES (ver docs/nomencladores.md)
+    # =========================================================================
+
+    @classmethod
+    def _validate_depends_on_field(
+        cls, session, campaign_id: int, own_nomenclator_id: Optional[int], own_field_type_code: Optional[str],
+        depends_on_field_id: int, errors: list, exclude_field_id: int = None
+    ):
+        """Valida que depends_on_field_id sea un campo válido para que ESTE
+        campo dependa de él: ambos deben ser de tipo nomenclador, de la misma
+        campaña, y el catálogo del campo padre tiene que estar declarado como
+        padre válido del catálogo de este campo (Nomenclator.parent_nomenclators).
+        No hace chequeo de ciclos acá — eso lo maneja el caller, que sabe si
+        hace falta (solo en update, un campo nuevo no puede formar ciclos)."""
+        if not own_nomenclator_id or own_field_type_code not in NOMENCLATOR_FIELD_TYPES:
+            errors.append({"field": "depends_on_field_id", "message": "Solo un campo de tipo nomenclador (SELECTOR/CHECKBOX) puede depender de otro campo."})
+            return None
+
+        if exclude_field_id is not None and depends_on_field_id == exclude_field_id:
+            errors.append({"field": "depends_on_field_id", "message": "Un campo no puede depender de sí mismo."})
+            return None
+
+        parent_field = session.query(LeadField).filter_by(id=depends_on_field_id).first()
+        if not parent_field:
+            errors.append({"field": "depends_on_field_id", "message": "El campo del que depende no existe."})
+            return None
+        if parent_field.campaign_id != campaign_id:
+            errors.append({"field": "depends_on_field_id", "message": "El campo del que depende debe ser de la misma campaña."})
+            return None
+        if not parent_field.nomenclator_id:
+            errors.append({"field": "depends_on_field_id", "message": "El campo del que depende también debe ser de tipo nomenclador."})
+            return None
+
+        own_nomenclator = session.query(Nomenclator).filter_by(id=own_nomenclator_id).first()
+        allowed_parent_nomenclator_ids = {n.id for n in own_nomenclator.parent_nomenclators} if own_nomenclator else set()
+        if parent_field.nomenclator_id not in allowed_parent_nomenclator_ids:
+            errors.append({
+                "field": "depends_on_field_id",
+                "message": "El catálogo del campo del que depende no está declarado como padre válido del catálogo de este campo. Agregalo primero a los padres del catálogo."
+            })
+            return None
+
+        return parent_field
+
+    @classmethod
+    def _would_create_field_dependency_cycle(cls, session, node_id: int, candidate_parent_id: int) -> bool:
+        """Recorre depends_on_field_id hacia arriba desde candidate_parent_id;
+        si en algún punto se llega de nuevo a node_id, asignarlo como padre
+        formaría un ciclo (permite cadenas de más de un nivel, ej. A->B->C)."""
+        current_id = candidate_parent_id
+        visited = set()
+        while current_id is not None:
+            if current_id == node_id:
+                return True
+            if current_id in visited:
+                break
+            visited.add(current_id)
+            current = session.query(LeadField).filter_by(id=current_id).first()
+            current_id = current.depends_on_field_id if current else None
+        return False
 
     # =========================================================================
     # CREATE
@@ -207,7 +270,13 @@ class LeadFieldService(BaseService):
 
         if nomenclator_id and field_type_code not in NOMENCLATOR_FIELD_TYPES:
             errors.append({"field": "field_type_code", "message": f"Para usar un nomenclador, el tipo debe ser uno de {NOMENCLATOR_FIELD_TYPES}."})
-        
+
+        # Feature de nomencladores dependientes: no hace falta chequeo de ciclo
+        # acá — un campo recién creado todavía no es ancestro de nada.
+        depends_on_field_id = data.get("depends_on_field_id")
+        if depends_on_field_id:
+            cls._validate_depends_on_field(session, campaign_id, nomenclator_id, field_type_code, depends_on_field_id, errors)
+
         if field_type_code == "LEAD" and not rel_campaign_id:
             errors.append({"field": "related_campaign_id", "message": "Requerido para campos tipo LEAD."})
         elif rel_campaign_id and field_type_code != "LEAD":
@@ -399,6 +468,19 @@ class LeadFieldService(BaseService):
                     errors.append({"field": "default_value", "message": f"El campo tipo '{field_type_code}' no acepta valor por defecto. Los valores seleccionables se gestionan desde el nomenclador."})
                     data.pop("default_value", None)
 
+            # 7. Feature de nomencladores dependientes (ver docs/nomencladores.md).
+            # No mandar el campo = no tocar. Mandar null = desvincular (no
+            # necesita validación). Mandar un id = validar + chequear ciclo.
+            if "depends_on_field_id" in data and data["depends_on_field_id"] is not None:
+                new_depends_on = data["depends_on_field_id"]
+                if cls._would_create_field_dependency_cycle(uow.session, obj_id, new_depends_on):
+                    errors.append({"field": "depends_on_field_id", "message": "Esa dependencia formaría un ciclo entre campos."})
+                else:
+                    cls._validate_depends_on_field(
+                        uow.session, current_field.campaign_id, current_field.nomenclator_id,
+                        current_field.field_type_code, new_depends_on, errors, exclude_field_id=obj_id
+                    )
+
             # --- CHECK FINAL ---
             if errors:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
@@ -435,6 +517,42 @@ class LeadFieldService(BaseService):
             func=do_update,
             success_msg=f"LeadField({obj_id}) actualizado correctamente."
         )
+
+    # =========================================================================
+    # DELETE / DEACTIVATE — bloqueo si hay campos dependientes
+    # =========================================================================
+    # Feature de nomencladores dependientes (ver docs/nomencladores.md):
+    # decisión del usuario, no se puede borrar ni desactivar un campo mientras
+    # otro campo activo tenga depends_on_field_id apuntando a él — quedaría
+    # una dependencia colgando de un campo inexistente/inactivo. Mismo patrón
+    # de UnitOfWork + super() que CampaignService (hallazgo #19).
+
+    @classmethod
+    def _assert_no_active_dependents(cls, obj_id: int, user_context: Optional[UserContext], action_label: str):
+        with UnitOfWork() as uow:
+            current_field = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
+            if not current_field:
+                cls._not_found(obj_id)
+            db_field = uow.session.query(LeadField).filter_by(id=obj_id).first()
+            dependents = [f.name for f in db_field.dependent_fields if f.active] if db_field else []
+            if dependents:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    detail=[{
+                        "field": "general",
+                        "message": f"No se puede {action_label} este campo: dependen de él los campos {', '.join(dependents)}. Desvincúlelos primero."
+                    }]
+                )
+
+    @classmethod
+    def delete(cls, obj_id: int, user_context: Optional[UserContext] = None, force: bool = False):
+        cls._assert_no_active_dependents(obj_id, user_context, "eliminar")
+        return super().delete(obj_id, user_context=user_context, force=force)
+
+    @classmethod
+    def deactivate(cls, obj_id: int, user_context: Optional[UserContext] = None):
+        cls._assert_no_active_dependents(obj_id, user_context, "desactivar")
+        return super().deactivate(obj_id, user_context=user_context)
 
     # =========================================================================
     # SET ACTIVE (Reactivar)
