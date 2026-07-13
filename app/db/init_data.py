@@ -368,25 +368,43 @@ def seed_rbac(db):
     print(f"✅ RBAC Procesado. Se sincronizaron {len(SYSTEM_ENTITIES_REGISTRY)} entidades. Roles: admin, agent, viewer.")
 
 
-def get_or_create_nomenclator(db, name, parent_id=None, org_id=ADMIN_ORG_ID):
+def get_or_create_nomenclator(db, name, parent_ids=None, org_id=ADMIN_ORG_ID):
+    """parent_ids: lista de ids de Nomenclator declarados como padre válido
+    (feature de nomencladores dependientes, ver docs/nomencladores.md).
+    Reemplaza al viejo parent_id único."""
     nom = db.query(Nomenclator).filter_by(name=name, organization_id=org_id).first()
     if not nom:
-        nom = Nomenclator(name=name, parent_nomenclator_id=parent_id, organization_id=org_id)
+        nom = Nomenclator(name=name, organization_id=org_id)
         db.add(nom)
         db.flush()
+    if parent_ids:
+        existing_parent_ids = {p.id for p in nom.parent_nomenclators}
+        missing = [pid for pid in parent_ids if pid not in existing_parent_ids]
+        if missing:
+            parent_objs = db.query(Nomenclator).filter(Nomenclator.id.in_(missing)).all()
+            nom.parent_nomenclators = list(nom.parent_nomenclators) + parent_objs
+            db.flush()
     return nom
 
-def get_or_create_nomenclator_item(db, nomenclator_id, value, parent_id, org_id=ADMIN_ORG_ID):
+def get_or_create_nomenclator_item(db, nomenclator_id, value, parent_ids=None, org_id=ADMIN_ORG_ID):
+    """parent_ids: lista de ids de NomenclatorItem padre (uno por cada
+    catálogo padre válido que aplique). Reemplaza al viejo parent_id único."""
     item = db.query(NomenclatorItem).filter_by(value=value, nomenclator_id=nomenclator_id).first()
     if not item:
         item = NomenclatorItem(
             value=value,
             nomenclator_id=nomenclator_id,
-            parent_item_id=parent_id,
             organization_id=org_id,
         )
         db.add(item)
         db.flush()
+    if parent_ids:
+        existing_parent_ids = {p.id for p in item.parent_items}
+        missing = [pid for pid in parent_ids if pid not in existing_parent_ids]
+        if missing:
+            parent_objs = db.query(NomenclatorItem).filter(NomenclatorItem.id.in_(missing)).all()
+            item.parent_items = list(item.parent_items) + parent_objs
+            db.flush()
     return item
 
 # -----------------------------------------------------------------------------
@@ -397,7 +415,7 @@ def seed_geography_separated(db):
 
     # 1. Nomencladores Base
     nom_pais = get_or_create_nomenclator(db, "Países")
-    nom_prov = get_or_create_nomenclator(db, "Provincias", parent_id=nom_pais.id)
+    nom_prov = get_or_create_nomenclator(db, "Provincias", parent_ids=[nom_pais.id])
 
     # 2. Datos Externos
     TARGET_COUNTRIES = ["AR", "CL", "BR", "ES", "US"] 
@@ -423,9 +441,9 @@ def seed_geography_separated(db):
             # País
             country_item = get_or_create_nomenclator_item(
                 db=db,
-                nomenclator_id=nom_pais.id, 
-                value=c_name, 
-                parent_id=None 
+                nomenclator_id=nom_pais.id,
+                value=c_name,
+                parent_ids=None
             )
 
             # Provincias / Estados
@@ -436,7 +454,7 @@ def seed_geography_separated(db):
                     db=db,
                     nomenclator_id=nom_prov.id,
                     value=s_name,
-                    parent_id=country_item.id 
+                    parent_ids=[country_item.id]
                 )
 
     except Exception as e:
@@ -457,7 +475,7 @@ def seed_nomenclator_sex(db):
     for item in datos:
         get_or_create_nomenclator_item(
             db=db,
-            nomenclator_id=nom_gen.id, 
+            nomenclator_id=nom_gen.id,
             value=item["value"],
-            parent_id=None
+            parent_ids=None
         )

@@ -338,6 +338,35 @@ class LeadService(BaseService):
                         errors.append({"field": field.name, "message": "Una o más opciones seleccionadas no son válidas para este campo."})
                         continue
 
+                # Feature de nomencladores dependientes (ver docs/nomencladores.md):
+                # si este campo depende de otro, cada ítem elegido tiene que
+                # tener como padre alguno de los ítems elegidos en el campo
+                # padre (semántica OR si el padre es de selección múltiple).
+                # full_context ya trae el valor persistido del padre si no vino
+                # en este request puntual (merge db_values + incoming_data más
+                # arriba) — decisión del usuario: validar contra ese valor, no
+                # ignorar la coherencia solo porque el padre no vino explícito.
+                if getattr(field, "depends_on_field_id", None):
+                    parent_val = full_context.get(field.depends_on_field_id)
+                    parent_ids = parent_val if isinstance(parent_val, list) else ([parent_val] if parent_val is not None else [])
+                    parent_ids = [x for x in parent_ids if x is not None]
+                    if not parent_ids:
+                        parent_name = all_defs.get(field.depends_on_field_id).name if all_defs.get(field.depends_on_field_id) else "el campo del que depende"
+                        errors.append({"field": field.name, "message": f"Este campo depende de '{parent_name}', que todavía no tiene un valor asignado."})
+                        continue
+
+                    from app.models.nomenclator_item import nomenclator_item_parent_association
+                    valid_child_rows = uow.session.query(nomenclator_item_parent_association.c.item_id).filter(
+                        nomenclator_item_parent_association.c.item_id.in_(items_ids),
+                        nomenclator_item_parent_association.c.parent_item_id.in_(parent_ids)
+                    ).all()
+                    valid_child_ids = {row.item_id for row in valid_child_rows}
+                    mismatched = [x for x in items_ids if x not in valid_child_ids]
+                    if mismatched:
+                        parent_name = all_defs.get(field.depends_on_field_id).name if all_defs.get(field.depends_on_field_id) else "el campo del que depende"
+                        errors.append({"field": field.name, "message": f"Una o más opciones seleccionadas no son hijas del valor elegido en '{parent_name}'."})
+                        continue
+
             # --- Validaciones de Leads Relacionados ---
             elif field.field_type_code == "LEAD":
                 if val is None: 

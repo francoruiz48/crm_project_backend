@@ -25,7 +25,16 @@ def client(db_session):
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[_get_current_user] = override_get_current_user
 
-    with patch("app.main.run_seeds"):
+    # El schema ya lo crea una única vez por corrida el fixture `db_engine`
+    # (scope="session", ver db_fixtures.py). El lifespan de app.main también
+    # llama a Base.metadata.create_all + run_seeds en cada startup — y como
+    # este fixture es scope="function", eso se repetía en CADA test (~570
+    # veces por corrida) contra una base que ya tiene todo creado. run_seeds
+    # ya estaba parcheado por este motivo; create_all no, y de vez en cuando
+    # esa redundancia corría una carrera real contra el catálogo interno de
+    # Postgres (pg_type) y tiraba un IntegrityError espurio en un test
+    # cualquiera sin relación con lo que ese test verificaba.
+    with patch("app.main.run_seeds"), patch("app.main.Base.metadata.create_all"):
         with TestClient(app) as c:
             yield c
 
