@@ -253,11 +253,19 @@ class BaseRepository:
         creator_email = kwargs.pop('creator_email', None)
         updater_name = kwargs.pop('updater_name', None)
         updater_email = kwargs.pop('updater_email', None)
+        # Filtro combinado: busca con OR entre nombre, apellido, email y "nombre apellido"
+        # concatenado, en vez de exigir que el mismo texto matchee un único campo (como
+        # pasaba con creator_name/creator_email por separado, que además se combinaban con
+        # AND). Pensado para pantallas de auditoría, donde el usuario puede no acordarse si
+        # buscaba por nombre, apellido o email — o el nombre pudo haber cambiado desde que
+        # se generó el registro.
+        creator_search = kwargs.pop('creator_search', None)
+        updater_search = kwargs.pop('updater_search', None)
 
-        if creator_name or creator_email:
+        if creator_name or creator_email or creator_search:
             # Importación local para evitar dependencias circulares en la inicialización
-            from app.models.security_models import User 
-            
+            from app.models.security_models import User
+
             # Hacemos un OUTER JOIN con la tabla de usuarios
             query = query.outerjoin(User, cls.model.created_by == User.id)
 
@@ -265,16 +273,34 @@ class BaseRepository:
                 query = query.filter(User.name.ilike(f"%{creator_name}%"))
             if creator_email:
                 query = query.filter(User.email.ilike(f"%{creator_email}%"))
+            if creator_search:
+                like = f"%{creator_search}%"
+                full_name = func.concat(User.name, ' ', User.last_name)
+                query = query.filter(or_(
+                    User.name.ilike(like),
+                    User.last_name.ilike(like),
+                    User.email.ilike(like),
+                    full_name.ilike(like)
+                ))
 
-        if updater_name or updater_email:
-            from app.models.security_models import User 
-            
+        if updater_name or updater_email or updater_search:
+            from app.models.security_models import User
+
             query = query.outerjoin(User, cls.model.updated_by == User.id)
 
             if updater_name:
                 query = query.filter(User.name.ilike(f"%{updater_name}%"))
             if updater_email:
                 query = query.filter(User.email.ilike(f"%{updater_email}%"))
+            if updater_search:
+                like = f"%{updater_search}%"
+                full_name = func.concat(User.name, ' ', User.last_name)
+                query = query.filter(or_(
+                    User.name.ilike(like),
+                    User.last_name.ilike(like),
+                    User.email.ilike(like),
+                    full_name.ilike(like)
+                ))
 
         for key, value in kwargs.items():
             if value is None:

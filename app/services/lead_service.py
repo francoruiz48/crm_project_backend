@@ -778,6 +778,26 @@ class LeadService(BaseService):
             if not leads:
                 return []
 
+            # Hallazgo (auditoría): antes se guardaba solo new_team_id/new_user_id crudos en el
+            # timeline del lead, obligando al frontend a resolverlos (y ni siquiera lo hacía).
+            # Se resuelven acá los nombres de equipo/usuario (viejo y nuevo) en un solo batch,
+            # para no hacer una query por lead dentro del loop.
+            from app.models.security_models import User
+
+            all_team_ids = {lead.team_id for lead in leads if lead.team_id is not None}
+            all_user_ids = {lead.assigned_to_user_id for lead in leads if lead.assigned_to_user_id is not None}
+            if target_team_id is not None:
+                all_team_ids.add(target_team_id)
+            if target_user_id is not None:
+                all_user_ids.add(target_user_id)
+
+            teams_map = {
+                t.id: t.name for t in uow.session.query(Team).filter(Team.id.in_(all_team_ids)).all()
+            } if all_team_ids else {}
+            users_map = {
+                u.id: f"{u.name} {u.last_name}" for u in uow.session.query(User).filter(User.id.in_(all_user_ids)).all()
+            } if all_user_ids else {}
+
             for lead in leads:
                 old_team = lead.team_id
                 old_user = lead.assigned_to_user_id
@@ -787,16 +807,25 @@ class LeadService(BaseService):
                     lead.team_id = target_team_id
                 if target_user_id is not None:
                     lead.assigned_to_user_id = target_user_id
-                
+
                 # 1. Timeline del Lead
                 cls._log_activity(
                     session=uow.session,
                     lead_id=lead.id,
                     activity_type="LEAD_REASSIGNED",
-                    details={"new_team_id": lead.team_id, "new_user_id": lead.assigned_to_user_id},
+                    details={
+                        "previous_team_id": old_team,
+                        "previous_team_name": teams_map.get(old_team),
+                        "previous_user_id": old_user,
+                        "previous_user_name": users_map.get(old_user),
+                        "new_team_id": lead.team_id,
+                        "new_team_name": teams_map.get(lead.team_id),
+                        "new_user_id": lead.assigned_to_user_id,
+                        "new_user_name": users_map.get(lead.assigned_to_user_id),
+                    },
                     user_id=updated_by
                 )
-                
+
                 # 2. Auditoría Global del Sistema
                 cls._log_audit(
                     session=uow.session,
@@ -808,7 +837,7 @@ class LeadService(BaseService):
                     },
                     user_id=updated_by
                 )
-                
+
             return leads
             
         return cls._execute(action="Reasignación Masiva", func=do_bulk, success_msg="Leads reasignados con éxito.")
@@ -883,16 +912,92 @@ class LeadService(BaseService):
             cls._log_audit(uow.session, lead, action=SystemAuditLogAction.UPDATED, changes=diff_state, user_id=user_context.user.id if user_context else None)
 
             # Registrar en la línea de tiempo visible del lead
+            # Hallazgo (auditoría): antes se guardaba solo from_state_id/to_state_id crudos,
+            # obligando al frontend a hacer un fetch aparte de los estados del flujo y
+            # buscarlos por id. Se resuelve nombre/color acá, en el momento del cambio,
+            # para que quede "congelado" en el historial aunque el estado se renombre después.
+            from_state = cls.state_repository.get_by_id(uow.session, current_state_id, user_context=user_context) if current_state_id else None
+            to_state = cls.state_repository.get_by_id(uow.session, new_state_id, user_context=user_context)
             cls._log_activity(
                 session=uow.session,
                 lead_id=obj_id,
                 activity_type="STATE_CHANGED",
                 details={
                     "from_state_id": current_state_id,
+                    "from_state_name": from_state.name if from_state else None,
+                    "from_state_color": from_state.color if from_state else None,
                     "to_state_id": new_state_id,
+                    "to_state_name": to_state.name if to_state else None,
+                    "to_state_color": to_state.color if to_state else None,
                     "notes": notes
                 },
                 user_id=user_context.user.id if user_context else None
+            )
+
+        # Devolvemos el Lead actualizado para el Frontend
+        return cls.get_by_id(obj_id, detailed=True)
+
+    @classmethod
+    def change_contact_state(cls, obj_id: int, new_contact_state_id: int, notes: str = None, user_context: Optional[UserContext] = None):
+        """
+        Cambia el estado de contacto de un lead. A diferencia del estado de flujo, no tiene
+        transiciones restringidas (se puede pasar a cualquier estado de contacto activo de
+        la organización).
+
+        Hallazgo: antes esto se hacía a través del PUT genérico de leads (`contact_state_id`
+        como un campo más) y no dejaba ningún rastro de auditoría — ni en el timeline visible
+        del lead ni en el log técnico general. Se agrega este método dedicado, en el mismo
+        patrón que `change_state`, para que quede registrado igual.
+        """
+        from app.models.lead_contact_state import LeadContactState
+
+        with UnitOfWork() as uow:
+            lead = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
+            if not lead:
+                cls._not_found(obj_id)
+
+            current_contact_state_id = lead.contact_state_id
+
+            if current_contact_state_id == new_contact_state_id:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    detail=[{"field": "new_contact_state_id", "message": "El lead ya se encuentra en este estado de contacto."}]
+                )
+
+            new_contact_state = uow.session.query(LeadContactState).filter_by(
+                id=new_contact_state_id, organization_id=lead.organization_id, active=True
+            ).first()
+            if not new_contact_state:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    detail=[{"field": "new_contact_state_id", "message": "El estado de contacto no existe o no pertenece a esta organización."}]
+                )
+
+            current_contact_state = None
+            if current_contact_state_id:
+                current_contact_state = uow.session.query(LeadContactState).filter_by(id=current_contact_state_id).first()
+
+            cls.repository.update(uow.session, obj_id, {"contact_state_id": new_contact_state_id}, user_context=user_context)
+
+            updated_by = user_context.user.id if user_context else None
+
+            diff = {"contact_state_id": {"old": current_contact_state_id, "new": new_contact_state_id}}
+            cls._log_audit(uow.session, lead, action=SystemAuditLogAction.UPDATED, changes=diff, user_id=updated_by)
+
+            cls._log_activity(
+                session=uow.session,
+                lead_id=obj_id,
+                activity_type="CONTACT_STATE_CHANGED",
+                details={
+                    "from_contact_state_id": current_contact_state_id,
+                    "from_contact_state_name": current_contact_state.name if current_contact_state else None,
+                    "from_contact_state_color": current_contact_state.color if current_contact_state else None,
+                    "to_contact_state_id": new_contact_state_id,
+                    "to_contact_state_name": new_contact_state.name,
+                    "to_contact_state_color": new_contact_state.color,
+                    "notes": notes
+                },
+                user_id=updated_by
             )
 
         # Devolvemos el Lead actualizado para el Frontend

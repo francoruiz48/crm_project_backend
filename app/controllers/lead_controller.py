@@ -240,12 +240,29 @@ class LeadController(BaseController):
             user_context = Depends(get_current_user_roles)
         ):
             return cls.service.change_state(
-                obj_id=id, 
-                new_state_id=payload.new_state_id, 
-                notes=payload.notes, 
+                obj_id=id,
+                new_state_id=payload.new_state_id,
+                notes=payload.notes,
                 user_context=user_context
             )
-        
+
+        class ChangeContactStateRequest(BaseModel):
+            new_contact_state_id: int = Field(gt=0)
+            notes: str = None
+
+        @router.post("/{id}/change_contact_state", response_model=ResponseModelItem, dependencies=cls._get_deps("update"))
+        async def change_lead_contact_state(
+            id: int,
+            payload: ChangeContactStateRequest = Body(...),
+            user_context = Depends(get_current_user_roles)
+        ):
+            return cls.service.change_contact_state(
+                obj_id=id,
+                new_contact_state_id=payload.new_contact_state_id,
+                notes=payload.notes,
+                user_context=user_context
+            )
+
 
         @router.patch("/bulk-assign", response_model=List[ResponseModelItem], dependencies=cls._get_deps("update"))
         async def bulk_assign_leads(
