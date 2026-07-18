@@ -41,7 +41,8 @@ class LeadFlowService(BaseService):
     def update(cls, obj_id: int, obj_in, user_context: Optional[UserContext] = None):
         def do_update(uow):
             org_id = TENANT_ORG_ID.get()
-            current_obj = uow.session.query(LeadFlow).filter_by(id=obj_id).first()
+            # Hallazgo #25: query cruda sin filtro de tenant. get_by_id sí lo aplica.
+            current_obj = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
             if not current_obj:
                 cls._not_found(obj_id)
 

@@ -1,4 +1,5 @@
 import pytest
+from tests.fixtures.user_fixtures import _make_user, _link_user_to_org, as_user
 
 # =============================================================================
 # FIXTURES DE PREPARACIÓN
@@ -579,6 +580,52 @@ def test_transition_bulk_update_success(api, bulk_flow_setup):
 # =============================================================================
 # TESTS DEL ENDPOINT DE GRAFO — ORCHESTRATOR (/lead_flows/graph)
 # =============================================================================
+
+# --- Control de acceso (hallazgo #23) -------------------------------------
+# POST /lead_flows/graph no tenía ningún chequeo de permiso más allá de estar
+# autenticado — cualquier rol (incluso "agent", que no tiene lead_flow:update)
+# podía rediseñar el flujo de ventas completo de su organización.
+
+def test_graph_blocked_for_role_without_lead_flow_update(api, db_session, initial_structure):
+    """Un usuario con rol 'agent' (sin lead_flow:update) recibe 403 al usar el grafo."""
+    org_id = initial_structure["org_id"]
+    agent_user = _make_user(db_session, "Agent Sin Permiso Grafo", f"agent_graph_{org_id}@test.com")
+    _link_user_to_org(db_session, agent_user, org_id, role_code="agent")
+    db_session.commit()
+
+    with as_user(api, agent_user, db_session):
+        res = api.client.post("/lead_flows/graph", json={
+            "name": "Flujo Intentado por Agent",
+            "states": [
+                {"id": -1, "name": "Inicio", "category": "OPEN", "is_initial": True, "order": 1},
+            ],
+            "transitions": []
+        }, headers=api.headers)
+
+    assert res.status_code == 403, f"Esperaba 403 pero recibió {res.status_code}: {res.text}"
+
+
+def test_graph_allowed_for_role_with_lead_flow_update(api, db_session, initial_structure):
+    """Un usuario con rol 'admin' (tiene lead_flow:update) puede usar el grafo normalmente."""
+    org_id = initial_structure["org_id"]
+    admin_user = _make_user(db_session, "Admin Con Permiso Grafo", f"admin_graph_{org_id}@test.com")
+    _link_user_to_org(db_session, admin_user, org_id, role_code="admin")
+    db_session.commit()
+
+    with as_user(api, admin_user, db_session):
+        res = api.client.post("/lead_flows/graph", json={
+            "name": "Flujo Creado por Admin",
+            "states": [
+                {"id": -1, "name": "Inicio", "category": "OPEN", "is_initial": True, "order": 1},
+                {"id": -2, "name": "Cerrado", "category": "WON", "is_initial": False},
+            ],
+            "transitions": [
+                {"from_state_id": -1, "to_state_id": -2},
+            ]
+        }, headers=api.headers)
+
+    assert res.status_code == 200, f"Esperaba 200 pero recibió {res.status_code}: {res.text}"
+
 
 def test_graph_create_new_flow(api):
     """El Orchestrator crea un flujo completo desde cero usando IDs negativos."""

@@ -105,7 +105,11 @@ class LeadRoutingPolicyService(BaseService):
     def create(cls, obj_in: LeadRoutingPolicyCreate, user_context: Optional[UserContext] = None):
         def do_create(uow):
             from app.core.context import TENANT_ORG_ID
-            org_id = TENANT_ORG_ID.get()
+            # FIX DE PRECEDENCIA: TENANT_ORG_ID puede no estar seteado si la dependencia
+            # sync corrió en otro thread (mismo problema ya parcheado en validate()).
+            # user_context.organization_id es más confiable: se resuelve como atributo
+            # normal en get_current_user_roles, sin depender del contextvar.
+            org_id = TENANT_ORG_ID.get() or (user_context.organization_id if user_context else None)
             if not org_id:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Falta el header X-Organization-Id.")
 
@@ -149,7 +153,10 @@ class LeadRoutingPolicyService(BaseService):
     def update(cls, obj_id: int, obj_in: LeadRoutingPolicyUpdate, user_context: Optional[UserContext] = None):
         def do_update(uow):
             from app.core.context import TENANT_ORG_ID
-            org_id = TENANT_ORG_ID.get()
+            # FIX DE PRECEDENCIA: mismo caso que en create() (ver comentario ahí).
+            org_id = TENANT_ORG_ID.get() or (user_context.organization_id if user_context else None)
+            if not org_id:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Falta el header X-Organization-Id.")
 
             policy = uow.session.query(LeadRoutingPolicy).filter_by(id=obj_id, organization_id=org_id).first()
             if not policy:
@@ -191,6 +198,38 @@ class LeadRoutingPolicyService(BaseService):
             return LeadRoutingPolicyDetailedResponse.model_validate(policy)
 
         return cls._execute(action="Actualizar Política", obj_id=obj_id, func=do_update)
+
+    @classmethod
+    def _get_policy_or_404(cls, session, obj_id: int, user_context: Optional[UserContext] = None) -> LeadRoutingPolicy:
+        policy = cls.repository.get_by_id(session, obj_id, user_context, detailed=False)
+        if not policy:
+            cls._not_found(obj_id)
+        return policy
+
+    @classmethod
+    def delete(cls, obj_id: int, user_context: Optional[UserContext] = None, force: bool = False):
+        # Hallazgo #16: a diferencia de create/update, el genérico de BaseService
+        # solo valida organización (vía get_by_id) — no rol MANAGER del equipo.
+        with UnitOfWork() as uow:
+            policy = cls._get_policy_or_404(uow.session, obj_id, user_context)
+            _assert_manager(uow.session, user_context, policy.target_team_id)
+        return super().delete(obj_id, user_context=user_context, force=force)
+
+    @classmethod
+    def set_active(cls, obj_id: int, user_context: Optional[UserContext] = None):
+        # Hallazgo #16: mismo chequeo que delete/deactivate.
+        with UnitOfWork() as uow:
+            policy = cls._get_policy_or_404(uow.session, obj_id, user_context)
+            _assert_manager(uow.session, user_context, policy.target_team_id)
+        return super().set_active(obj_id, user_context=user_context)
+
+    @classmethod
+    def deactivate(cls, obj_id: int, user_context: Optional[UserContext] = None):
+        # Hallazgo #16: mismo chequeo que delete/set_active.
+        with UnitOfWork() as uow:
+            policy = cls._get_policy_or_404(uow.session, obj_id, user_context)
+            _assert_manager(uow.session, user_context, policy.target_team_id)
+        return super().deactivate(obj_id, user_context=user_context)
 
     @classmethod
     def validate(cls, obj_in: LeadRoutingPolicyValidateRequest, user_context: Optional[UserContext] = None) -> LeadRoutingPolicyValidateResponse:

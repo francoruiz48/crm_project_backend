@@ -66,9 +66,12 @@ class UserService(BaseService):
             if user_context and user_context.is_superuser:
                 has_permission = True
             elif user_context and user_context.is_owner:
-                # Verificamos si es owner en LA MISMA organización donde quiere promover a otro
-                from app.core.context import TENANT_ORG_ID
-                if TENANT_ORG_ID.get() == organization_id:
+                # Verificamos si es owner en LA MISMA organización donde quiere promover a otro.
+                # Usamos user_context.organization_id (viaja explícito en el objeto UserContext,
+                # lo llena get_current_user_roles desde el mismo header X-Organization-Id) en vez
+                # de TENANT_ORG_ID.get() — mismo valor en la práctica, pero no depende de una
+                # contextvar global implícita.
+                if user_context.organization_id == organization_id:
                     has_permission = True
 
             if not has_permission:

@@ -1,12 +1,16 @@
 from fastapi import APIRouter, Depends
 from app.controllers.base_controller import get_current_user_roles
-from app.core.security import UserContext
+from app.core.security import UserContext, PermissionChecker
 from app.services.lead_flow_orchestrator_service import LeadFlowOrchestratorService
 from app.schemas.lead_flow_schema import LeadFlowGraphPayload
 
 router = APIRouter(prefix="/lead_flows", tags=["Lead Flows Graph"])
 
-@router.post("/graph", response_model=dict) # Cambiar dict por LeadFlowDetailedResponse
+@router.post(
+    "/graph",
+    response_model=dict,  # Cambiar dict por LeadFlowDetailedResponse
+    dependencies=[Depends(PermissionChecker("lead_flow:update"))],  # Hallazgo #23: antes solo exigía estar autenticado
+)
 def save_lead_flow_graph(
     payload: LeadFlowGraphPayload,
     user_context: UserContext = Depends(get_current_user_roles)

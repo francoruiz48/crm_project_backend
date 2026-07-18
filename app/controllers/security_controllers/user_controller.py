@@ -121,7 +121,12 @@ class UserController(BaseController):
         ):
             return cls.service.promote_to_superuser(target_user_id=id, user_context=user_context)
 
-        @router.patch("/organization/{organization_id}/promote-owner/{user_id}", dependencies=[Depends(require_superuser)])
+        # Sin Depends(require_superuser) a propósito: el service ya valida
+        # "superadmin O owner de ESA organización" (ver UserService.promote_to_org_owner).
+        # Antes, require_superuser cortaba con 403 a cualquier no-superadmin antes de
+        # que el service pudiera correr, dejando la rama de owner como código muerto
+        # inalcanzable (ver hallazgos_agente/usuarios_y_permisos.md).
+        @router.patch("/organization/{organization_id}/promote-owner/{user_id}")
         async def promote_to_org_owner(
             user_id: int,
             organization_id: int,

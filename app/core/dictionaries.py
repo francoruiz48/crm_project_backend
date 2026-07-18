@@ -15,8 +15,8 @@ LEAD_SEARCH_OPERATORS = [
 ]
 
 LEAD_ROUTING_RULE_CONDITION_TYPES = [
-    {"code": "NOMENCLATOR", "label": "Valor de Nomenclador"},
-    {"code": "CUSTOM_FIELD", "label": "Campo Personalizado"}
+    {"code": "NATIVE", "label": "Campo Nativo del Lead"},
+    {"code": "DYNAMIC", "label": "Campo Personalizado (Dinámico)"}
 ]
 
 TEAM_ROLES = [
@@ -62,6 +62,10 @@ SYSTEM_ENTITIES_REGISTRY = {
     "web_form": {"model": "WebForm", "name": "Formulario Web", "crud_type": "FULL"},
     "field_automation": {"model": "FieldAutomation", "name": "Automatización de Campo", "crud_type": "FULL"},
     "tag": {"model": "Tag", "name": "Etiqueta", "crud_type": "FULL"},
+    # Hallazgo #27 (2026-07-11): faltaba en el registro — sin esta entrada no
+    # existe ningún permiso lead_contact_state:*, y ningún usuario no-superadmin
+    # puede usar /lead_contact_states/*, ni siquiera el admin de la organización.
+    "lead_contact_state": {"model": "LeadContactState", "name": "Estado de Contacto", "crud_type": "FULL"},
 
     # --- ENTIDADES DE SOLO LECTURA (Catálogos y Logs) ---
     "lead_field_type": {"model": "LeadFieldType", "name": "Tipo de Campo", "crud_type": "READ_ONLY"},

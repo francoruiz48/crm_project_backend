@@ -1,6 +1,6 @@
 """
 Controller para LeadRoutingPolicy v3.
-Endpoints: GET all, GET one, POST, PUT, DELETE, POST /validate
+Endpoints: GET all, GET one, POST, PUT, DELETE, PUT /active, DELETE /active, POST /validate
 """
 from typing import Optional, Union
 from fastapi import APIRouter, Body, Depends, Query
@@ -80,7 +80,19 @@ def update(
 
 @router.delete("/{obj_id}")
 def delete(obj_id: int, user_context=Depends(get_current_user_roles)):
+    """
+    Elimina la política. La estrategia de borrado es HARD_DELETE_WITH_TOGGLE:
+    esto es un borrado FÍSICO e IRREVERSIBLE. Para deshabilitar sin borrar,
+    usar DELETE /active/{obj_id}.
+    """
     return LeadRoutingPolicyService.delete(obj_id, user_context=user_context)
+
+
+@router.put("/active/{obj_id}")
+def set_active(obj_id: int, user_context=Depends(get_current_user_roles)):
+    """Reactiva (active=True) una política previamente deshabilitada."""
+    LeadRoutingPolicyService.set_active(obj_id, user_context=user_context)
+    return {"actived": True}
 
 
 @router.delete("/active/{obj_id}")

@@ -5,6 +5,14 @@ Verifica que los datos de una organización NO son visibles desde otra.
 
 Patrón general: Alpha crea → Beta no lo ve → Alpha sí lo ve.
 
+También cubre el patrón "Beta intenta PUT/DELETE con un obj_id de Alpha → 404,
+no 500" para los hallazgos #22/#24/#25 (queries crudas sin filtro de tenant en
+update/delete de LeadContactState, NomenclatorItem, Nomenclator, LeadFlow, Tag
+— ver hallazgos_agente/patron_queries_sin_tenant_filter.md). Estos tests NO
+encadenan ninguna verificación posterior al 404 (ver AGENTS.md §5.1: una
+excepción dentro de un UnitOfWork hace rollback sobre la sesión compartida
+del test, lo que puede dejar otros datos del test inaccesibles después).
+
 Usa:
   - ctx_alpha / ctx_beta: TenantContext con org + owner + member + estructura base
   - as_user(api, user): context manager que simula un usuario específico
@@ -21,14 +29,20 @@ from tests.fixtures.org_fixtures import TenantContext
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _ids(resp) -> list:
-    """Extrae IDs de una respuesta que puede ser lista o paginada."""
+def _items(resp) -> list:
+    """Extrae la lista de items de una respuesta que puede ser lista o paginada
+    (iterar directo sobre un dict paginado da sus keys como strings, no los items)."""
     data = resp.json()
     if isinstance(data, list):
-        return [item["id"] for item in data]
+        return data
     if isinstance(data, dict) and "items" in data:
-        return [item["id"] for item in data["items"]]
+        return data["items"]
     return []
+
+
+def _ids(resp) -> list:
+    """Extrae IDs de una respuesta que puede ser lista o paginada."""
+    return [item["id"] for item in _items(resp)]
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +148,23 @@ class TestLeadFlowIsolation:
 
         assert flow_id in _ids(resp)
 
+    def test_update_blocked_for_foreign_lead_flow(self, client, ctx_alpha, ctx_beta):
+        """Hallazgo #25: LeadFlowService.update resolvía el objeto con una query
+        cruda sin filtro de tenant — un obj_id de otra organización debe dar 404,
+        no un 500 no controlado. No se encadena ninguna verificación posterior
+        (ver AGENTS.md §5.1: una excepción dentro de UnitOfWork hace rollback
+        sobre la sesión compartida del test)."""
+        api_a = ApiClient(client, ctx_alpha.org_id)
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.put(
+                f"/lead_flows/{ctx_alpha.lead_flow_id}",
+                json={"name": "Intento Ajeno"},
+                headers=api_b.headers,
+            )
+        assert resp.status_code == 404
+
 
 # ---------------------------------------------------------------------------
 # Lead Field Section
@@ -214,6 +245,25 @@ class TestTagIsolation:
 
         assert tag_id in _ids(resp)
 
+    def test_update_blocked_for_foreign_tag(self, client, ctx_alpha, ctx_beta):
+        """Hallazgo #25: TagService.update resolvía el objeto con una query cruda
+        sin filtro de tenant — un obj_id de otra organización debe dar 404."""
+        api_a = ApiClient(client, ctx_alpha.org_id)
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        with as_user(api_a, ctx_alpha.owner):
+            resp_create = client.post(
+                "/tags/", json={"name": "Tag Ajeno Alpha"}, headers=api_a.headers,
+            )
+            assert resp_create.status_code == 200
+            tag_id = resp_create.json()["id"]
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.put(
+                f"/tags/{tag_id}", json={"name": "Intento Ajeno"}, headers=api_b.headers,
+            )
+        assert resp.status_code == 404
+
 
 # ---------------------------------------------------------------------------
 # Team
@@ -289,6 +339,123 @@ class TestNomenclatorIsolation:
             resp = client.get("/nomenclators/", headers=api_b.headers)
 
         assert nom_id not in _ids(resp)
+
+    def test_update_blocked_for_foreign_nomenclator(self, client, ctx_alpha, ctx_beta):
+        """Hallazgo #25: NomenclatorService.update resolvía el objeto con una query
+        cruda sin filtro de tenant — un obj_id de otra organización debe dar 404."""
+        api_a = ApiClient(client, ctx_alpha.org_id)
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        with as_user(api_a, ctx_alpha.owner):
+            resp_create = client.post(
+                "/nomenclators/", json={"name": "Nomenclador Ajeno Alpha"}, headers=api_a.headers,
+            )
+            assert resp_create.status_code == 200
+            nom_id = resp_create.json()["id"]
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.put(
+                f"/nomenclators/{nom_id}", json={"name": "Intento Ajeno"}, headers=api_b.headers,
+            )
+        assert resp.status_code == 404
+
+    def test_delete_blocked_for_foreign_nomenclator(self, client, ctx_alpha, ctx_beta):
+        """Hallazgo #25: mismo caso que update(), para NomenclatorService.delete."""
+        api_a = ApiClient(client, ctx_alpha.org_id)
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        with as_user(api_a, ctx_alpha.owner):
+            resp_create = client.post(
+                "/nomenclators/", json={"name": "Nomenclador a Borrar Alpha"}, headers=api_a.headers,
+            )
+            assert resp_create.status_code == 200
+            nom_id = resp_create.json()["id"]
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.delete(f"/nomenclators/{nom_id}", headers=api_b.headers)
+        assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Nomenclator Item
+# ---------------------------------------------------------------------------
+
+class TestNomenclatorItemIsolation:
+
+    def test_update_blocked_for_foreign_nomenclator_item(self, client, ctx_alpha, ctx_beta):
+        """Hallazgo #24: NomenclatorItemService.update resolvía el objeto con una
+        query cruda sin filtro de tenant — un obj_id de otra organización debe
+        dar 404, no un 500 no controlado."""
+        api_a = ApiClient(client, ctx_alpha.org_id)
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        with as_user(api_a, ctx_alpha.owner):
+            nom = client.post(
+                "/nomenclators/", json={"name": "Nomenclador con Items Alpha"}, headers=api_a.headers,
+            ).json()
+            item = client.post(
+                "/nomenclator_items/",
+                json={"value": "Item Ajeno Alpha", "nomenclator_id": nom["id"]},
+                headers=api_a.headers,
+            ).json()
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.put(
+                f"/nomenclator_items/{item['id']}", json={"value": "Intento Ajeno"}, headers=api_b.headers,
+            )
+        assert resp.status_code == 404
+
+    def test_delete_blocked_for_foreign_nomenclator_item(self, client, ctx_alpha, ctx_beta):
+        """Hallazgo #24: mismo caso que update(), para NomenclatorItemService.delete."""
+        api_a = ApiClient(client, ctx_alpha.org_id)
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        with as_user(api_a, ctx_alpha.owner):
+            nom = client.post(
+                "/nomenclators/", json={"name": "Nomenclador con Items a Borrar Alpha"}, headers=api_a.headers,
+            ).json()
+            item = client.post(
+                "/nomenclator_items/",
+                json={"value": "Item a Borrar Alpha", "nomenclator_id": nom["id"]},
+                headers=api_a.headers,
+            ).json()
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.delete(f"/nomenclator_items/{item['id']}", headers=api_b.headers)
+        assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Lead Contact State
+# ---------------------------------------------------------------------------
+
+class TestLeadContactStateIsolation:
+
+    def test_update_blocked_for_foreign_lead_contact_state(self, client, ctx_alpha, ctx_beta):
+        """Hallazgo #22: LeadContactStateService.update resolvía el objeto con una
+        query cruda sin filtro de tenant — un obj_id de otra organización debe
+        dar 404, no un 500 no controlado.
+
+        Usa as_user(ctx_alpha.owner)/as_user(ctx_beta.owner) como el resto de los
+        tests de esta clase de tenant isolation — antes tuvo que usarse el cliente
+        superadmin directo porque "lead_contact_state" no estaba dado de alta en
+        SYSTEM_ENTITIES_REGISTRY (hallazgo #27, ya RESUELTO), así que ningún usuario
+        no-superadmin podía pasar el PermissionChecker acá."""
+        api_a = ApiClient(client, ctx_alpha.org_id)
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        with as_user(api_a, ctx_alpha.owner):
+            resp_create = client.post(
+                "/lead_contact_states/", json={"name": "Estado Ajeno Alpha"}, headers=api_a.headers,
+            )
+            assert resp_create.status_code == 200
+            state_id = resp_create.json()["id"]
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.put(
+                f"/lead_contact_states/{state_id}", json={"name": "Intento Ajeno"}, headers=api_b.headers,
+            )
+        assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -418,3 +585,283 @@ class TestMultiOrgUser:
 
         assert team_b["id"] in ids_as_beta
         assert team_a["id"] not in ids_as_beta
+
+
+# ---------------------------------------------------------------------------
+# Lead Comment (hallazgo #18 — LeadComment no tiene organization_id propio)
+# ---------------------------------------------------------------------------
+
+class TestLeadCommentIsolation:
+
+    def _create_alpha_lead(self, api_a, ctx_alpha):
+        field = api_a.create_lead_field(
+            campaign_id=ctx_alpha.campaign_id,
+            name="Nombre Lead Comment",
+            field_type_code="STRING",
+            required=True,
+            section_id=ctx_alpha.section_id,
+        )
+        return api_a.create_lead(
+            campaign_id=ctx_alpha.campaign_id,
+            values=[{"field_id": field["id"], "value": "Juan Alpha Comment"}],
+        )
+
+    def test_create_comment_blocked_for_foreign_lead(self, client, ctx_alpha, ctx_beta):
+        """Beta no debe poder crear un comentario sobre un lead de Alpha (hallazgo #18)."""
+        api_a = ApiClient(client, ctx_alpha.org_id)
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        with as_user(api_a, ctx_alpha.owner):
+            lead = self._create_alpha_lead(api_a, ctx_alpha)
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.post(
+                "/lead_comments/",
+                json={"content": "Comentario intruso", "lead_id": lead["id"]},
+                headers=api_b.headers,
+            )
+
+        assert resp.status_code == 400, \
+            f"Beta no debería poder comentar un lead de Alpha. Body: {resp.text}"
+
+    def test_comment_not_visible_from_other_org(self, client, ctx_alpha, ctx_beta):
+        """Los comentarios de un lead de Alpha no deben verse consultando desde Beta."""
+        api_a = ApiClient(client, ctx_alpha.org_id)
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        with as_user(api_a, ctx_alpha.owner):
+            lead = self._create_alpha_lead(api_a, ctx_alpha)
+            resp_create = client.post(
+                "/lead_comments/",
+                json={"content": "Comentario Alpha", "lead_id": lead["id"]},
+                headers=api_a.headers,
+            )
+            assert resp_create.status_code == 200
+            comment_id = resp_create.json()["id"]
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.get(f"/lead_comments/?lead_id={lead['id']}", headers=api_b.headers)
+
+        assert comment_id not in _ids(resp), "Beta no debería ver el comentario de Alpha"
+
+    def test_comment_visible_from_own_org(self, client, ctx_alpha):
+        api_a = ApiClient(client, ctx_alpha.org_id)
+
+        with as_user(api_a, ctx_alpha.owner):
+            lead = self._create_alpha_lead(api_a, ctx_alpha)
+            resp_create = client.post(
+                "/lead_comments/",
+                json={"content": "Comentario Propio Alpha", "lead_id": lead["id"]},
+                headers=api_a.headers,
+            )
+            assert resp_create.status_code == 200
+            comment_id = resp_create.json()["id"]
+            resp = client.get(f"/lead_comments/?lead_id={lead['id']}", headers=api_a.headers)
+
+        assert comment_id in _ids(resp)
+
+
+# ---------------------------------------------------------------------------
+# Field Automation (hallazgo #20 — FieldAutomation no tiene organization_id propio)
+# ---------------------------------------------------------------------------
+
+class TestFieldAutomationIsolation:
+
+    def _payload(self, campaign_id: int, name: str) -> dict:
+        return {
+            "name": name,
+            "campaign_id": campaign_id,
+            "trigger_events": ["ON_CREATE"],
+            "conditions": {"operator": "AND", "rules": []},
+            "actions": [{"type": "SET_VALUE", "target_field_id": 1, "value": "x"}],
+        }
+
+    def test_create_automation_blocked_for_foreign_campaign(self, client, ctx_alpha, ctx_beta):
+        """Beta no debe poder crear una automatización sobre la campaña de Alpha (hallazgo #20)."""
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.post(
+                "/field_automations/",
+                json=self._payload(ctx_alpha.campaign_id, "Automatización intrusa"),
+                headers=api_b.headers,
+            )
+
+        assert resp.status_code == 400, \
+            f"Beta no debería poder crear automatización sobre campaña de Alpha. Body: {resp.text}"
+
+    def test_automation_not_visible_from_other_org(self, client, ctx_alpha, ctx_beta):
+        api_a = ApiClient(client, ctx_alpha.org_id)
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        with as_user(api_a, ctx_alpha.owner):
+            resp_create = client.post(
+                "/field_automations/",
+                json=self._payload(ctx_alpha.campaign_id, "Automatización Privada Alpha"),
+                headers=api_a.headers,
+            )
+            assert resp_create.status_code == 200
+            automation_id = resp_create.json()["id"]
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.get("/field_automations/", headers=api_b.headers)
+
+        assert automation_id not in _ids(resp)
+
+    def test_automation_visible_from_own_org(self, client, ctx_alpha):
+        api_a = ApiClient(client, ctx_alpha.org_id)
+
+        with as_user(api_a, ctx_alpha.owner):
+            resp_create = client.post(
+                "/field_automations/",
+                json=self._payload(ctx_alpha.campaign_id, "Automatización Propia Alpha"),
+                headers=api_a.headers,
+            )
+            assert resp_create.status_code == 200
+            automation_id = resp_create.json()["id"]
+            resp = client.get("/field_automations/", headers=api_a.headers)
+
+        assert automation_id in _ids(resp)
+
+
+# ---------------------------------------------------------------------------
+# Lead State Transition (hallazgo #21 — consultas crudas sin filtro de tenant
+# en create_bulk / update_bulk / delete)
+# ---------------------------------------------------------------------------
+
+class TestLeadStateTransitionIsolation:
+
+    def test_create_bulk_blocked_for_foreign_lead_flow(self, client, ctx_alpha, ctx_beta):
+        """Beta no debe poder crear transiciones en el flujo de Alpha vía /bulk (hallazgo #21)."""
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.post(
+                "/lead_state_transitions/bulk",
+                json={
+                    "lead_flow_id": ctx_alpha.lead_flow_id,
+                    "transitions": [
+                        {"from_state_id": ctx_alpha.state_contact_id, "to_state_id": ctx_alpha.state_initial_id}
+                    ],
+                },
+                headers=api_b.headers,
+            )
+
+        assert resp.status_code == 400, \
+            f"Beta no debería poder crear transiciones sobre el flujo de Alpha. Body: {resp.text}"
+
+    def test_update_bulk_blocked_for_foreign_lead_flow(self, client, ctx_alpha, ctx_beta):
+        """Beta no debe poder resincronizar (borrar/recrear) las transiciones del flujo de Alpha."""
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.put(
+                "/lead_state_transitions/bulk",
+                json={
+                    "lead_flow_id": ctx_alpha.lead_flow_id,
+                    "transitions": [
+                        {"from_state_id": ctx_alpha.state_initial_id, "to_state_id": ctx_alpha.state_contact_id}
+                    ],
+                },
+                headers=api_b.headers,
+            )
+
+        assert resp.status_code == 400, \
+            f"Beta no debería poder resincronizar el flujo de Alpha. Body: {resp.text}"
+
+    def test_delete_blocked_for_foreign_transition(self, client, db_session, ctx_alpha, ctx_beta):
+        """Beta no debe poder borrar una transición que pertenece al flujo de Alpha.
+
+        Nota (2026-07-10): esta prueba originalmente también verificaba que la transición
+        siguiera existiendo después del intento bloqueado. Esa verificación falló en tres
+        variantes distintas (reentrar `as_user`, pedirlo por API con otro cliente, y hasta
+        consultarlo directo contra `db_session`) — incluso la tercera vez el `repr()` de
+        `ctx_alpha`/`ctx_beta` en el traceback de pytest ya tiraba `ObjectDeletedError`,
+        lo que confirma que el problema no es de esta prueba puntual: el `rollback()` que
+        dispara `UnitOfWork.__exit__` cuando la excepción de `cls._not_found` propaga
+        "envenena" toda la sesión compartida del test (`tests/fixtures/db_fixtures.py`
+        liga la sesión de la app a la del test sin usar SAVEPOINTs, así que un rollback a
+        mitad de test puede arrastrarse más allá de la operación que lo disparó). El 404
+        en sí — la propiedad de seguridad real del hallazgo #21 — se confirmó correcto en
+        las cuatro corridas. Detalle completo en `hallazgos_agente/flujo_de_leads.md`.
+        """
+        from app.models.lead_state_transition import LeadStateTransition
+
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        transition = db_session.query(LeadStateTransition).filter_by(lead_flow_id=ctx_alpha.lead_flow_id).first()
+        assert transition is not None, "Fixture inconsistente: ctx_alpha debería traer una transición ya creada."
+        transition_id = transition.id
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.delete(f"/lead_state_transitions/{transition_id}", headers=api_b.headers)
+
+        assert resp.status_code == 404, \
+            f"Beta no debería poder borrar una transición del flujo de Alpha. Body: {resp.text}"
+
+
+# ---------------------------------------------------------------------------
+# Lead Activity History / Lead State History (hallazgo #26 — ninguno de los
+# dos modelos tiene organization_id propio)
+# ---------------------------------------------------------------------------
+
+class TestLeadHistoryIsolation:
+
+    def _create_alpha_lead(self, api_a, ctx_alpha):
+        field = api_a.create_lead_field(
+            campaign_id=ctx_alpha.campaign_id,
+            name="Nombre Lead History",
+            field_type_code="STRING",
+            required=True,
+            section_id=ctx_alpha.section_id,
+        )
+        return api_a.create_lead(
+            campaign_id=ctx_alpha.campaign_id,
+            values=[{"field_id": field["id"], "value": "Juan Alpha History"}],
+        )
+
+    def test_activity_history_not_visible_from_other_org(self, client, ctx_alpha, ctx_beta):
+        api_a = ApiClient(client, ctx_alpha.org_id)
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        with as_user(api_a, ctx_alpha.owner):
+            lead = self._create_alpha_lead(api_a, ctx_alpha)
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.get(f"/lead-activity-histories/?lead_id={lead['id']}", headers=api_b.headers)
+
+        assert _ids(resp) == [], "Beta no debería ver el historial de actividad de un lead de Alpha"
+
+    def test_activity_history_visible_from_own_org(self, client, ctx_alpha):
+        api_a = ApiClient(client, ctx_alpha.org_id)
+
+        with as_user(api_a, ctx_alpha.owner):
+            lead = self._create_alpha_lead(api_a, ctx_alpha)
+            resp = client.get(f"/lead-activity-histories/?lead_id={lead['id']}", headers=api_a.headers)
+
+        items = _items(resp)
+        assert items != [], "Alpha debería ver el historial de actividad de su propio lead"
+        assert all(item["lead_id"] == lead["id"] for item in items)
+
+    def test_state_history_not_visible_from_other_org(self, client, ctx_alpha, ctx_beta):
+        api_a = ApiClient(client, ctx_alpha.org_id)
+        api_b = ApiClient(client, ctx_beta.org_id)
+
+        with as_user(api_a, ctx_alpha.owner):
+            lead = self._create_alpha_lead(api_a, ctx_alpha)
+
+        with as_user(api_b, ctx_beta.owner):
+            resp = client.get(f"/lead_state_history/?lead_id={lead['id']}", headers=api_b.headers)
+
+        assert _ids(resp) == [], "Beta no debería ver el historial de estados de un lead de Alpha"
+
+    def test_state_history_visible_from_own_org(self, client, ctx_alpha):
+        api_a = ApiClient(client, ctx_alpha.org_id)
+
+        with as_user(api_a, ctx_alpha.owner):
+            lead = self._create_alpha_lead(api_a, ctx_alpha)
+            resp = client.get(f"/lead_state_history/?lead_id={lead['id']}", headers=api_a.headers)
+
+        items = _items(resp)
+        assert items != [], "Alpha debería ver el historial de estados de su propio lead"
+        assert all(item["lead_id"] == lead["id"] for item in items)
