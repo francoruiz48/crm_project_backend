@@ -17,6 +17,11 @@ class LeadField(BaseModelDB):
     calculation_expression = Column(String, nullable=True)
     configuration = Column(JSON, nullable=True)
     title_order = Column(Integer, nullable=True)
+    #Igual que title_order pero para el subtítulo (línea secundaria debajo del título, ej. Cargo
+    #+ Empresa). Mismo mecanismo: varios campos pueden tener subtitle_order, se concatenan en ese
+    #orden. Ver LeadFieldService._maybe_auto_assign_title_order (auto-detección) y
+    #getLeadSubtitleArray en el frontend (leadUtils.ts).
+    subtitle_order = Column(Integer, nullable=True)
 
     #relations
     campaign_id = Column(Integer, ForeignKey("campaign.id"), nullable=False)

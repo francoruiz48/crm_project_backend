@@ -5,6 +5,7 @@ from pydantic import BaseModel
 class UserSimpleResponse(BaseModel):
     id: int
     name: str
+    last_name: Optional[str] = None
     email: str
 
     model_config = {"from_attributes": True}
