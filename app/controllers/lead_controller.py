@@ -98,7 +98,11 @@ class LeadController(BaseController):
         def search_leads(
             user_context = Depends(get_current_user_roles),
             page: int = Query(1, ge=1),
-            page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=PAGE_SIZE_LIMIT),
+            #ge=0 (no ge=1): page_size=0 es la convención del resto de la app para "traer todo sin
+            #paginar" (ver base_repository._paginate, que ya trata page_size<=0 como sin límite).
+            #Este controller define su propia validación en vez de heredar la de BaseController,
+            #así que había quedado más estricto que el resto y rechazaba ese valor con 422.
+            page_size: int = Query(DEFAULT_PAGE_SIZE, ge=0, le=PAGE_SIZE_LIMIT),
             search_req: LeadSearchRequest = Body(...),
             detailed: bool = Query(False),
             only_active: bool = Query(True),
@@ -132,7 +136,11 @@ class LeadController(BaseController):
         def get_all(
             user_context = Depends(get_current_user_roles),
             page: int = Query(1, ge=1),
-            page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=PAGE_SIZE_LIMIT),
+            #ge=0 (no ge=1): page_size=0 es la convención del resto de la app para "traer todo sin
+            #paginar" (ver base_repository._paginate, que ya trata page_size<=0 como sin límite).
+            #Este controller define su propia validación en vez de heredar la de BaseController,
+            #así que había quedado más estricto que el resto y rechazaba ese valor con 422.
+            page_size: int = Query(DEFAULT_PAGE_SIZE, ge=0, le=PAGE_SIZE_LIMIT),
             only_active: bool = True, 
             detailed: bool = Query(False),
             campaign_id: Optional[int] = Query(None, description="Filtrar por ID de campaña"),

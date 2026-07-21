@@ -57,3 +57,15 @@ class CampaignRepository(BaseRepository):
                 cls.model.id.in_(inherited_camp_ids)   # 4. Mi equipo tiene acceso heredado
             )
         )
+
+    @classmethod
+    def get_accessible_campaign_ids(cls, session, user_context: Optional[UserContext] = None) -> set:
+        """
+        Devuelve el conjunto de IDs de campaña a los que el usuario tiene acceso, reutilizando
+        exactamente la misma regla que apply_security_filter (para no duplicar la lógica de
+        is_public/TeamCampaignAccess/TeamWorkspaceAccess). Se usa para redactar, en la respuesta
+        de un lead, los datos de leads relacionados (campo tipo LEAD) que pertenezcan a una
+        campaña a la que el usuario no tiene acceso (ver LeadService._redact_inaccessible_related_leads).
+        """
+        query = cls.apply_security_filter(session, session.query(cls.model.id), user_context)
+        return {row[0] for row in query.all()}

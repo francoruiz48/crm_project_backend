@@ -1,4 +1,5 @@
 from typing import Optional
+import unicodedata
 from fastapi import HTTPException, status
 from app.models.lead_field_section import LeadFieldSection
 from app.models.nomenclator import Nomenclator
@@ -27,6 +28,19 @@ from app.schemas.lead_field_schema import LeadFieldOrderList
 from app.core.context import TENANT_ORG_ID
 from app.db.repository.lead_field_section_repository import LeadFieldSectionRepository
 
+# Auto-asignación "inteligente" de title_order/subtitle_order al crear un campo (ver
+# LeadFieldService._maybe_auto_assign_order y sus dos wrappers). Match EXACTO de nombre (con
+# sinónimos, incluyendo variantes en inglés), sin importar mayúsculas/tildes — a propósito no es
+# un "contains", para no matchear de más (ej. "Nombre de la empresa" no dispara nada).
+AUTO_TITLE_ORDER_NAMES = {
+    "nombre": 1, "nombres": 1, "name": 1, "first name": 1, "firstname": 1,
+    "apellido": 2, "apellidos": 2, "lastname": 2, "last name": 2, "surname": 2,
+}
+AUTO_SUBTITLE_ORDER_NAMES = {
+    "cargo": 1, "puesto": 1, "position": 1, "job title": 1, "jobtitle": 1,
+    "empresa": 2, "compañía": 2, "company": 2, "organización": 2,
+}
+
 class LeadFieldService(BaseService):
     repository = LeadFieldRepository
     nomenclatorService = NomenclatorService
@@ -36,6 +50,51 @@ class LeadFieldService(BaseService):
     # =========================================================================
     # HELPERS DE VALIDACIÓN (CHECKERS)
     # =========================================================================
+
+    @classmethod
+    def _normalize_field_name(cls, name: str) -> str:
+        """Minúsculas y sin tildes, para matchear nombres de campo sin importar cómo se hayan tipeado."""
+        return "".join(
+            c for c in unicodedata.normalize("NFD", name.strip().lower())
+            if unicodedata.category(c) != "Mn"
+        )
+
+    @classmethod
+    def _maybe_auto_assign_order(cls, session, campaign_id: int, name: Optional[str], data: dict,
+                                  data_key: str, model_column, synonym_map: dict):
+        """
+        Helper genérico detrás de _maybe_auto_assign_title_order/_maybe_auto_assign_subtitle_order.
+        Si el usuario no especificó `data_key` (title_order/subtitle_order) a mano, y el nombre
+        del campo matchea EXACTO (sin importar mayúsculas/tildes) con algún sinónimo del mapa, se
+        autoasigna el slot correspondiente — pero SOLO si ESE slot puntual todavía no está ocupado
+        por otro campo activo, para no pisar nunca una configuración manual ya hecha. El chequeo
+        es por slot, no por campaña completa: así "Nombre"/"Apellido" (o "Cargo"/"Empresa") se
+        pueden ir creando en pasos separados, el caso más común, sin que el primero bloquee al
+        segundo. Solo aplica al crear el campo, no si luego se lo renombra.
+        """
+        if data.get(data_key) is not None or not name:
+            return
+
+        auto_order = synonym_map.get(cls._normalize_field_name(name))
+        if auto_order is None:
+            return
+
+        slot_taken = session.query(LeadField.id).filter(
+            LeadField.campaign_id == campaign_id,
+            model_column == auto_order,
+            LeadField.active == True
+        ).first() is not None
+
+        if not slot_taken:
+            data[data_key] = auto_order
+
+    @classmethod
+    def _maybe_auto_assign_title_order(cls, session, campaign_id: int, name: Optional[str], data: dict):
+        cls._maybe_auto_assign_order(session, campaign_id, name, data, "title_order", LeadField.title_order, AUTO_TITLE_ORDER_NAMES)
+
+    @classmethod
+    def _maybe_auto_assign_subtitle_order(cls, session, campaign_id: int, name: Optional[str], data: dict):
+        cls._maybe_auto_assign_order(session, campaign_id, name, data, "subtitle_order", LeadField.subtitle_order, AUTO_SUBTITLE_ORDER_NAMES)
 
     @classmethod
     def _check_name_uniqueness(cls, session, campaign_id: int, name: str, errors: list, exclude_id: int = None):
@@ -302,6 +361,8 @@ class LeadFieldService(BaseService):
             errors.append({"field": "name", "message": "El nombre del campo es obligatorio."})
         else:
             cls._check_name_uniqueness(session, campaign_id, name, errors=errors)
+            cls._maybe_auto_assign_title_order(session, campaign_id, name, data)
+            cls._maybe_auto_assign_subtitle_order(session, campaign_id, name, data)
 
         has_existing_leads = LeadRepository.has_leads_in_campaign(session, campaign_id)
         if has_existing_leads:

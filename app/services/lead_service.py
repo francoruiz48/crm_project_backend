@@ -513,8 +513,40 @@ class LeadService(BaseService):
         if not lead.field_values: return lead
         for fv in lead.field_values:
             if fv.field and fv.field.field_type_code == "FILE":
-                if fv.value: 
+                if fv.value:
                     fv.value = StorageService.get_public_url(fv.value)
+        return lead
+
+    @classmethod
+    def _redact_inaccessible_related_leads(cls, lead, accessible_campaign_ids: set):
+        """
+        Un campo tipo LEAD puede apuntar a un lead de OTRA campaña, a la que el usuario que está
+        viendo este lead no necesariamente tiene acceso (is_public/TeamCampaignAccess). Sin este
+        chequeo, `LeadFieldValue.related_leads` (relación lazy="joined", sin ningún filtro de
+        permisos) expone en la respuesta TODOS los datos del lead relacionado, sin importar la
+        campaña — una fuga real entre campañas.
+
+        OJO: para cuando este método corre, `lead`/`fv`/`related` YA NO son objetos ORM. El
+        repositorio (BaseRepository._execute_read_query, vía schema_out/schema_out_detail) ya
+        convirtió todo a los schemas Pydantic (LeadResponse/LeadDetailedResponse → ... →
+        RelatedLeadResponse) ANTES de que el service llegue a verlos — LeadRepository.get_all,
+        get_by_id y search hacen esa conversión ellos mismos, no queda como ORM "hasta el final"
+        como en otros services. Por eso acá mutamos directamente los modelos Pydantic (son
+        mutables por default); no hay objetos ORM que tocar ni riesgo de autoflush.
+        """
+        if not lead or not lead.field_values: return lead
+        for fv in lead.field_values:
+            for related in (fv.related_leads or []):
+                if related.campaign_id in accessible_campaign_ids:
+                    continue
+                related.restricted = True
+                #No se manda ningún dato del lead relacionado salvo los campos marcados como
+                #title_order (para poder mostrar igual un nombre identificable, ej. Nombre +
+                #Apellido, sin filtrar el resto de sus datos). Se ordenan por title_order para
+                #que el frontend pueda unirlos directamente sin tener que reordenar.
+                title_values = [rfv for rfv in related.field_values if rfv.field and rfv.field.title_order is not None]
+                title_values.sort(key=lambda rfv: rfv.field.title_order)
+                related.field_values = title_values
         return lead
 
 
@@ -1287,10 +1319,12 @@ class LeadService(BaseService):
                 only_active=only_active,
                 campaign_id=campaign_id
             )
-            
+
+            accessible_campaign_ids = CampaignRepository.get_accessible_campaign_ids(uow.session, user_context)
             for item in items:
                 cls._enrich_lead_with_urls(item)
-                
+                cls._redact_inaccessible_related_leads(item, accessible_campaign_ids)
+
             return total, items
 
         return cls._execute(
@@ -1300,9 +1334,8 @@ class LeadService(BaseService):
     
     @classmethod
     def get_all(cls, user_context: Optional[UserContext] = None, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, only_active: bool = True, detailed: bool = False, query=None, **kwargs):
-        total, items = cls._execute(
-            action=f"Obteniendo listado de leads",
-            func=lambda uow: cls.repository.get_all(
+        def _fetch(uow):
+            total, items = cls.repository.get_all(
                 session=uow.session, user_context=user_context,
                 page=page,
                 page_size=page_size,
@@ -1310,21 +1343,38 @@ class LeadService(BaseService):
                 detailed=detailed,
                 search=query,
                 **kwargs
-            ))
+            )
+            # Se calcula acá adentro (con la sesión todavía abierta) para poder redactar leads
+            # relacionados de otras campañas sin acceso, ver _redact_inaccessible_related_leads.
+            accessible_campaign_ids = CampaignRepository.get_accessible_campaign_ids(uow.session, user_context)
+            return total, items, accessible_campaign_ids
+
+        total, items, accessible_campaign_ids = cls._execute(
+            action=f"Obteniendo listado de leads",
+            func=_fetch
+        )
 
         for item in items:
                 cls._enrich_lead_with_urls(item)
-                
+                cls._redact_inaccessible_related_leads(item, accessible_campaign_ids)
+
         return total, items
 
     @classmethod
     def get_by_id(cls, obj_id: int, user_context: Optional[UserContext] = None, detailed: bool = True):
-        lead = cls._execute(
+        def _fetch(uow):
+            lead = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context, detailed=detailed)
+            if lead is None: return None  # Deja que _execute dispare el 404 de siempre
+            accessible_campaign_ids = CampaignRepository.get_accessible_campaign_ids(uow.session, user_context)
+            return lead, accessible_campaign_ids
+
+        lead, accessible_campaign_ids = cls._execute(
             action="Obteniendo",
             obj_id=obj_id,
-            func=lambda uow: cls.repository.get_by_id(uow.session, obj_id, user_context=user_context, detailed=detailed)
+            func=_fetch
         )
-        
+
+        cls._redact_inaccessible_related_leads(lead, accessible_campaign_ids)
         return cls._enrich_lead_with_urls(lead)
     
     @classmethod
