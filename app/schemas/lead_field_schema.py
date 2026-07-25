@@ -22,7 +22,8 @@ class LeadFieldBase(BaseModel):
     field_type_code: Optional[str] = Field(default=None, min_length=2, max_length=100)
     field_subtype_code: Optional[str] = Field(default=None, min_length=2, max_length=100)
     field_template_code: Optional[str] = None
-    title_order: Optional[int] = Field(default=None, gt=0)
+    title_order: Optional[int] = Field(default=None, gt=0, le=2)
+    subtitle_order: Optional[int] = Field(default=None, gt=0, le=2)
 
 
 class LeadFieldCreate(LeadFieldBase, BaseCreate):
@@ -50,7 +51,8 @@ class LeadFieldUpdate(BaseModel):
     calculation_expression: Optional[str] = Field(default=None, min_length=2, max_length=1000)
     configuration: Optional[Dict[str, Any]] = None
     lead_field_section_id: Optional[int] = Field(default=None, gt=0)
-    title_order: Optional[int] = Field(default=None, gt=0)
+    title_order: Optional[int] = Field(default=None, gt=0, le=2)
+    subtitle_order: Optional[int] = Field(default=None, gt=0, le=2)
     # No mandar el campo = no tocar la dependencia actual. Mandar explícitamente
     # `null` desvincula (gracias a exclude_unset=True en el repositorio, que sí
     # distingue "no vino" de "vino en null" — ver BaseRepository._normalize_data).
@@ -72,6 +74,7 @@ class LeadFieldLiteResponse(BaseModel, BaseResponse):
     field_type_code: Optional[str] = None
     field_subtype_code: Optional[str] = None
     title_order: Optional[int] = None
+    subtitle_order: Optional[int] = None
 
 
 class LeadFieldDetailedResponse(LeadFieldBase, BaseDetailedResponse):

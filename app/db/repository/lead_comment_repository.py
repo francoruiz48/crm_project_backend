@@ -8,7 +8,12 @@ from app.core.security import UserContext
 
 class LeadCommentRepository(BaseRepository):
     model = LeadComment
-    delete_strategy = DeleteStrategy.HARD_DELETE_ALWAYS
+    # Antes HARD_DELETE_ALWAYS: borrar un comentario lo eliminaba físicamente, sin dejar
+    # ningún rastro visible (solo quedaba una entrada de SystemAuditLog, que es un log técnico
+    # interno). Pedido del usuario: los comentarios son registro de interacciones con el cliente,
+    # así que "eliminar" ahora es soft-delete (active=False) — desaparece del timeline (get_all
+    # filtra por active=True por defecto) pero el dato queda en la base.
+    delete_strategy = DeleteStrategy.SOFT_DELETE_ALWAYS
     schema_in = LeadCommentCreate
     schema_out = LeadCommentResponse
     schema_out_detail = LeadCommentDetailedResponse

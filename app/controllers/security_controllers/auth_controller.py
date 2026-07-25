@@ -16,7 +16,7 @@ from app.schemas.security_schemas.auth_schema import (
     RegisterRequest,
     TokenResponse,
 )
-from app.schemas.security_schemas.user_schema import UserResponse, UserUpdate
+from app.schemas.security_schemas.user_schema import UserDetailedResponse, UserUpdate
 from app.services.security_services.auth_service import AuthService
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -30,13 +30,20 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 limiter = Limiter(key_func=get_client_ip)
 
 
-@router.get("/me", response_model=UserResponse)
+@router.get("/me", response_model=UserDetailedResponse)
 def me(current_user: User = Depends(_get_current_user)):
-    """Devuelve los datos del usuario autenticado."""
+    """Devuelve los datos del usuario autenticado.
+    Se usa UserDetailedResponse (en vez de UserResponse) a propósito: es el único endpoint al que
+    puede llegar CUALQUIER usuario autenticado (no requiere ningún permiso puntual), y necesitamos
+    que el frontend sepa qué permisos tiene por organización (organizations_access[].permission_objects)
+    para poder ocultar rutas/botones sin depender de /permissions o /roles, que sí requieren permisos
+    que los roles agent/viewer no tienen. No se agrega lógica nueva: permission_objects ya existía
+    como propiedad de UserOrganization (ver models/security_models.py), simplemente se serializa acá.
+    """
     return current_user
 
 
-@router.put("/me", response_model=UserResponse)
+@router.put("/me", response_model=UserDetailedResponse)
 def update_me(
     data: UserUpdate,
     current_user: User = Depends(_get_current_user),

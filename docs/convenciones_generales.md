@@ -62,7 +62,7 @@ Según qué esté en `enabled_methods`, `get_router()` registra:
 
 | Método/ruta | Flag en `enabled_methods` | Qué hace |
 |---|---|---|
-| `GET /` | `GET_ALL` | Paginado, con `search`, `search_fields`, `order_by`/`ascending`, rango de fechas (`start_date`/`end_date`/`date_field`), filtros por `creator_name`/`creator_email`/`updater_name`/`updater_email`, y **cualquier query param extra se trata como filtro de columna** (`?campaign_id=5`), salvo que `allowed_filter_fields` lo restrinja. |
+| `GET /` | `GET_ALL` | Paginado, con `search`, `search_fields`, `order_by`/`ascending`, rango de fechas (`start_date`/`end_date`/`date_field`), filtros por `creator_name`/`creator_email`/`updater_name`/`updater_email` (cada uno exige match exacto de ESE campo, y si se combinan varios se aplican con AND), filtros combinados `creator_search`/`updater_search` (uno solo, hace OR entre nombre, apellido, email y "nombre apellido" del creador/actualizador — pensado para búsquedas de usuario en pantallas de auditoría), y **cualquier query param extra se trata como filtro de columna** (`?campaign_id=5`), salvo que `allowed_filter_fields` lo restrinja. |
 | `GET /{obj_id}` | `GET_ONE` | `detailed=true` trae la versión "detallada" (`schema_out_detail`) si existe. |
 | `POST /` | `POST` | Crea, valida contra `schema_in`. |
 | `PUT /{obj_id}` | `PUT` | Actualiza, valida contra `schema_update`. |

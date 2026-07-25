@@ -513,8 +513,40 @@ class LeadService(BaseService):
         if not lead.field_values: return lead
         for fv in lead.field_values:
             if fv.field and fv.field.field_type_code == "FILE":
-                if fv.value: 
+                if fv.value:
                     fv.value = StorageService.get_public_url(fv.value)
+        return lead
+
+    @classmethod
+    def _redact_inaccessible_related_leads(cls, lead, accessible_campaign_ids: set):
+        """
+        Un campo tipo LEAD puede apuntar a un lead de OTRA campaña, a la que el usuario que está
+        viendo este lead no necesariamente tiene acceso (is_public/TeamCampaignAccess). Sin este
+        chequeo, `LeadFieldValue.related_leads` (relación lazy="joined", sin ningún filtro de
+        permisos) expone en la respuesta TODOS los datos del lead relacionado, sin importar la
+        campaña — una fuga real entre campañas.
+
+        OJO: para cuando este método corre, `lead`/`fv`/`related` YA NO son objetos ORM. El
+        repositorio (BaseRepository._execute_read_query, vía schema_out/schema_out_detail) ya
+        convirtió todo a los schemas Pydantic (LeadResponse/LeadDetailedResponse → ... →
+        RelatedLeadResponse) ANTES de que el service llegue a verlos — LeadRepository.get_all,
+        get_by_id y search hacen esa conversión ellos mismos, no queda como ORM "hasta el final"
+        como en otros services. Por eso acá mutamos directamente los modelos Pydantic (son
+        mutables por default); no hay objetos ORM que tocar ni riesgo de autoflush.
+        """
+        if not lead or not lead.field_values: return lead
+        for fv in lead.field_values:
+            for related in (fv.related_leads or []):
+                if related.campaign_id in accessible_campaign_ids:
+                    continue
+                related.restricted = True
+                #No se manda ningún dato del lead relacionado salvo los campos marcados como
+                #title_order (para poder mostrar igual un nombre identificable, ej. Nombre +
+                #Apellido, sin filtrar el resto de sus datos). Se ordenan por title_order para
+                #que el frontend pueda unirlos directamente sin tener que reordenar.
+                title_values = [rfv for rfv in related.field_values if rfv.field and rfv.field.title_order is not None]
+                title_values.sort(key=lambda rfv: rfv.field.title_order)
+                related.field_values = title_values
         return lead
 
 
@@ -778,6 +810,26 @@ class LeadService(BaseService):
             if not leads:
                 return []
 
+            # Hallazgo (auditoría): antes se guardaba solo new_team_id/new_user_id crudos en el
+            # timeline del lead, obligando al frontend a resolverlos (y ni siquiera lo hacía).
+            # Se resuelven acá los nombres de equipo/usuario (viejo y nuevo) en un solo batch,
+            # para no hacer una query por lead dentro del loop.
+            from app.models.security_models import User
+
+            all_team_ids = {lead.team_id for lead in leads if lead.team_id is not None}
+            all_user_ids = {lead.assigned_to_user_id for lead in leads if lead.assigned_to_user_id is not None}
+            if target_team_id is not None:
+                all_team_ids.add(target_team_id)
+            if target_user_id is not None:
+                all_user_ids.add(target_user_id)
+
+            teams_map = {
+                t.id: t.name for t in uow.session.query(Team).filter(Team.id.in_(all_team_ids)).all()
+            } if all_team_ids else {}
+            users_map = {
+                u.id: f"{u.name} {u.last_name}" for u in uow.session.query(User).filter(User.id.in_(all_user_ids)).all()
+            } if all_user_ids else {}
+
             for lead in leads:
                 old_team = lead.team_id
                 old_user = lead.assigned_to_user_id
@@ -787,16 +839,25 @@ class LeadService(BaseService):
                     lead.team_id = target_team_id
                 if target_user_id is not None:
                     lead.assigned_to_user_id = target_user_id
-                
+
                 # 1. Timeline del Lead
                 cls._log_activity(
                     session=uow.session,
                     lead_id=lead.id,
                     activity_type="LEAD_REASSIGNED",
-                    details={"new_team_id": lead.team_id, "new_user_id": lead.assigned_to_user_id},
+                    details={
+                        "previous_team_id": old_team,
+                        "previous_team_name": teams_map.get(old_team),
+                        "previous_user_id": old_user,
+                        "previous_user_name": users_map.get(old_user),
+                        "new_team_id": lead.team_id,
+                        "new_team_name": teams_map.get(lead.team_id),
+                        "new_user_id": lead.assigned_to_user_id,
+                        "new_user_name": users_map.get(lead.assigned_to_user_id),
+                    },
                     user_id=updated_by
                 )
-                
+
                 # 2. Auditoría Global del Sistema
                 cls._log_audit(
                     session=uow.session,
@@ -808,7 +869,7 @@ class LeadService(BaseService):
                     },
                     user_id=updated_by
                 )
-                
+
             return leads
             
         return cls._execute(action="Reasignación Masiva", func=do_bulk, success_msg="Leads reasignados con éxito.")
@@ -883,16 +944,92 @@ class LeadService(BaseService):
             cls._log_audit(uow.session, lead, action=SystemAuditLogAction.UPDATED, changes=diff_state, user_id=user_context.user.id if user_context else None)
 
             # Registrar en la línea de tiempo visible del lead
+            # Hallazgo (auditoría): antes se guardaba solo from_state_id/to_state_id crudos,
+            # obligando al frontend a hacer un fetch aparte de los estados del flujo y
+            # buscarlos por id. Se resuelve nombre/color acá, en el momento del cambio,
+            # para que quede "congelado" en el historial aunque el estado se renombre después.
+            from_state = cls.state_repository.get_by_id(uow.session, current_state_id, user_context=user_context) if current_state_id else None
+            to_state = cls.state_repository.get_by_id(uow.session, new_state_id, user_context=user_context)
             cls._log_activity(
                 session=uow.session,
                 lead_id=obj_id,
                 activity_type="STATE_CHANGED",
                 details={
                     "from_state_id": current_state_id,
+                    "from_state_name": from_state.name if from_state else None,
+                    "from_state_color": from_state.color if from_state else None,
                     "to_state_id": new_state_id,
+                    "to_state_name": to_state.name if to_state else None,
+                    "to_state_color": to_state.color if to_state else None,
                     "notes": notes
                 },
                 user_id=user_context.user.id if user_context else None
+            )
+
+        # Devolvemos el Lead actualizado para el Frontend
+        return cls.get_by_id(obj_id, detailed=True)
+
+    @classmethod
+    def change_contact_state(cls, obj_id: int, new_contact_state_id: int, notes: str = None, user_context: Optional[UserContext] = None):
+        """
+        Cambia el estado de contacto de un lead. A diferencia del estado de flujo, no tiene
+        transiciones restringidas (se puede pasar a cualquier estado de contacto activo de
+        la organización).
+
+        Hallazgo: antes esto se hacía a través del PUT genérico de leads (`contact_state_id`
+        como un campo más) y no dejaba ningún rastro de auditoría — ni en el timeline visible
+        del lead ni en el log técnico general. Se agrega este método dedicado, en el mismo
+        patrón que `change_state`, para que quede registrado igual.
+        """
+        from app.models.lead_contact_state import LeadContactState
+
+        with UnitOfWork() as uow:
+            lead = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
+            if not lead:
+                cls._not_found(obj_id)
+
+            current_contact_state_id = lead.contact_state_id
+
+            if current_contact_state_id == new_contact_state_id:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    detail=[{"field": "new_contact_state_id", "message": "El lead ya se encuentra en este estado de contacto."}]
+                )
+
+            new_contact_state = uow.session.query(LeadContactState).filter_by(
+                id=new_contact_state_id, organization_id=lead.organization_id, active=True
+            ).first()
+            if not new_contact_state:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    detail=[{"field": "new_contact_state_id", "message": "El estado de contacto no existe o no pertenece a esta organización."}]
+                )
+
+            current_contact_state = None
+            if current_contact_state_id:
+                current_contact_state = uow.session.query(LeadContactState).filter_by(id=current_contact_state_id).first()
+
+            cls.repository.update(uow.session, obj_id, {"contact_state_id": new_contact_state_id}, user_context=user_context)
+
+            updated_by = user_context.user.id if user_context else None
+
+            diff = {"contact_state_id": {"old": current_contact_state_id, "new": new_contact_state_id}}
+            cls._log_audit(uow.session, lead, action=SystemAuditLogAction.UPDATED, changes=diff, user_id=updated_by)
+
+            cls._log_activity(
+                session=uow.session,
+                lead_id=obj_id,
+                activity_type="CONTACT_STATE_CHANGED",
+                details={
+                    "from_contact_state_id": current_contact_state_id,
+                    "from_contact_state_name": current_contact_state.name if current_contact_state else None,
+                    "from_contact_state_color": current_contact_state.color if current_contact_state else None,
+                    "to_contact_state_id": new_contact_state_id,
+                    "to_contact_state_name": new_contact_state.name,
+                    "to_contact_state_color": new_contact_state.color,
+                    "notes": notes
+                },
+                user_id=updated_by
             )
 
         # Devolvemos el Lead actualizado para el Frontend
@@ -1182,10 +1319,12 @@ class LeadService(BaseService):
                 only_active=only_active,
                 campaign_id=campaign_id
             )
-            
+
+            accessible_campaign_ids = CampaignRepository.get_accessible_campaign_ids(uow.session, user_context)
             for item in items:
                 cls._enrich_lead_with_urls(item)
-                
+                cls._redact_inaccessible_related_leads(item, accessible_campaign_ids)
+
             return total, items
 
         return cls._execute(
@@ -1195,9 +1334,8 @@ class LeadService(BaseService):
     
     @classmethod
     def get_all(cls, user_context: Optional[UserContext] = None, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, only_active: bool = True, detailed: bool = False, query=None, **kwargs):
-        total, items = cls._execute(
-            action=f"Obteniendo listado de leads",
-            func=lambda uow: cls.repository.get_all(
+        def _fetch(uow):
+            total, items = cls.repository.get_all(
                 session=uow.session, user_context=user_context,
                 page=page,
                 page_size=page_size,
@@ -1205,21 +1343,38 @@ class LeadService(BaseService):
                 detailed=detailed,
                 search=query,
                 **kwargs
-            ))
+            )
+            # Se calcula acá adentro (con la sesión todavía abierta) para poder redactar leads
+            # relacionados de otras campañas sin acceso, ver _redact_inaccessible_related_leads.
+            accessible_campaign_ids = CampaignRepository.get_accessible_campaign_ids(uow.session, user_context)
+            return total, items, accessible_campaign_ids
+
+        total, items, accessible_campaign_ids = cls._execute(
+            action=f"Obteniendo listado de leads",
+            func=_fetch
+        )
 
         for item in items:
                 cls._enrich_lead_with_urls(item)
-                
+                cls._redact_inaccessible_related_leads(item, accessible_campaign_ids)
+
         return total, items
 
     @classmethod
     def get_by_id(cls, obj_id: int, user_context: Optional[UserContext] = None, detailed: bool = True):
-        lead = cls._execute(
+        def _fetch(uow):
+            lead = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context, detailed=detailed)
+            if lead is None: return None  # Deja que _execute dispare el 404 de siempre
+            accessible_campaign_ids = CampaignRepository.get_accessible_campaign_ids(uow.session, user_context)
+            return lead, accessible_campaign_ids
+
+        lead, accessible_campaign_ids = cls._execute(
             action="Obteniendo",
             obj_id=obj_id,
-            func=lambda uow: cls.repository.get_by_id(uow.session, obj_id, user_context=user_context, detailed=detailed)
+            func=_fetch
         )
-        
+
+        cls._redact_inaccessible_related_leads(lead, accessible_campaign_ids)
         return cls._enrich_lead_with_urls(lead)
     
     @classmethod

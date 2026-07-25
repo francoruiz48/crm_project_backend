@@ -98,7 +98,11 @@ class LeadController(BaseController):
         def search_leads(
             user_context = Depends(get_current_user_roles),
             page: int = Query(1, ge=1),
-            page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=PAGE_SIZE_LIMIT),
+            #ge=0 (no ge=1): page_size=0 es la convención del resto de la app para "traer todo sin
+            #paginar" (ver base_repository._paginate, que ya trata page_size<=0 como sin límite).
+            #Este controller define su propia validación en vez de heredar la de BaseController,
+            #así que había quedado más estricto que el resto y rechazaba ese valor con 422.
+            page_size: int = Query(DEFAULT_PAGE_SIZE, ge=0, le=PAGE_SIZE_LIMIT),
             search_req: LeadSearchRequest = Body(...),
             detailed: bool = Query(False),
             only_active: bool = Query(True),
@@ -132,7 +136,11 @@ class LeadController(BaseController):
         def get_all(
             user_context = Depends(get_current_user_roles),
             page: int = Query(1, ge=1),
-            page_size: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=PAGE_SIZE_LIMIT),
+            #ge=0 (no ge=1): page_size=0 es la convención del resto de la app para "traer todo sin
+            #paginar" (ver base_repository._paginate, que ya trata page_size<=0 como sin límite).
+            #Este controller define su propia validación en vez de heredar la de BaseController,
+            #así que había quedado más estricto que el resto y rechazaba ese valor con 422.
+            page_size: int = Query(DEFAULT_PAGE_SIZE, ge=0, le=PAGE_SIZE_LIMIT),
             only_active: bool = True, 
             detailed: bool = Query(False),
             campaign_id: Optional[int] = Query(None, description="Filtrar por ID de campaña"),
@@ -240,12 +248,29 @@ class LeadController(BaseController):
             user_context = Depends(get_current_user_roles)
         ):
             return cls.service.change_state(
-                obj_id=id, 
-                new_state_id=payload.new_state_id, 
-                notes=payload.notes, 
+                obj_id=id,
+                new_state_id=payload.new_state_id,
+                notes=payload.notes,
                 user_context=user_context
             )
-        
+
+        class ChangeContactStateRequest(BaseModel):
+            new_contact_state_id: int = Field(gt=0)
+            notes: str = None
+
+        @router.post("/{id}/change_contact_state", response_model=ResponseModelItem, dependencies=cls._get_deps("update"))
+        async def change_lead_contact_state(
+            id: int,
+            payload: ChangeContactStateRequest = Body(...),
+            user_context = Depends(get_current_user_roles)
+        ):
+            return cls.service.change_contact_state(
+                obj_id=id,
+                new_contact_state_id=payload.new_contact_state_id,
+                notes=payload.notes,
+                user_context=user_context
+            )
+
 
         @router.patch("/bulk-assign", response_model=List[ResponseModelItem], dependencies=cls._get_deps("update"))
         async def bulk_assign_leads(

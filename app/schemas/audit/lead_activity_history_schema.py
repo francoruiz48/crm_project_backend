@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 from datetime import datetime
+from app.schemas.base_schema import UserSimpleResponse
 
 class LeadActivityHistoryResponse(BaseModel):
     id: int
@@ -9,6 +10,7 @@ class LeadActivityHistoryResponse(BaseModel):
     details: Optional[Dict[str, Any]]
     created_at: datetime
     created_by: Optional[int]
+    creator: Optional[UserSimpleResponse] = None
 
     class Config:
         from_attributes = True
