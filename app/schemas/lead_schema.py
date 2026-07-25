@@ -40,6 +40,10 @@ class LeadResponse(LeadBase, BaseResponse):
     updated_at: Optional[datetime] = None
     team: Optional[TeamResponse] = None
     assigned_to_user: Optional[UserSimpleResponse] = None
+    created_by: Optional[int] = None
+    updated_by: Optional[int] = None
+    creator: Optional[UserSimpleResponse] = None
+    updater: Optional[UserSimpleResponse] = None
 
 class LeadLiteResponse(LeadBase, BaseResponse):
     organization_id : int
@@ -56,5 +60,7 @@ class LeadDetailedResponse(LeadBase, BaseDetailedResponse):
     current_state: LeadStateDetailedResponse
     current_state_id: int
     contact_state: Optional[LeadContactStateDetailedResponse] = None
+    team: Optional[TeamResponse] = None
+    assigned_to_user: Optional[UserSimpleResponse] = None
 
 

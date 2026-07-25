@@ -749,7 +749,8 @@ class LeadService(BaseService):
         return cls.get_by_id(lead_id, detailed=True)
 
     @classmethod
-    def bulk_assign(cls, lead_ids: list[int], target_team_id: int = None, target_user_id: int = None, user_context: Optional[UserContext] = None):
+    def bulk_assign(cls, lead_ids: list[int], target_team_id: int = None, target_user_id: int = None,
+                    clear_team: bool = False, clear_user: bool = False, user_context: Optional[UserContext] = None):
         """
         Reasigna un lote de leads a un equipo o usuario específico.
         """
@@ -834,10 +835,16 @@ class LeadService(BaseService):
                 old_team = lead.team_id
                 old_user = lead.assigned_to_user_id
 
-                # Solo actualizamos si se envió un valor nuevo
-                if target_team_id is not None:
+                # Solo actualizamos si se envió un valor nuevo, o si se pidió explícitamente desasignar
+                # (clear_team/clear_user) — target_team_id/target_user_id en None por sí solo significa
+                # "no tocar este campo", no "vaciarlo".
+                if clear_team:
+                    lead.team_id = None
+                elif target_team_id is not None:
                     lead.team_id = target_team_id
-                if target_user_id is not None:
+                if clear_user:
+                    lead.assigned_to_user_id = None
+                elif target_user_id is not None:
                     lead.assigned_to_user_id = target_user_id
 
                 # 1. Timeline del Lead
@@ -870,8 +877,18 @@ class LeadService(BaseService):
                     user_id=updated_by
                 )
 
-            return leads
-            
+            # Hallazgo (bug reportado por el usuario): antes se devolvían los objetos `Lead` de
+            # SQLAlchemy tal cual, y FastAPI los convertía a `LeadResponse` recién al serializar la
+            # respuesta — momento en el que `UnitOfWork.__exit__` ya cerró la sesión (commit+close).
+            # Como `LeadResponse` incluye relaciones (`team`, `assigned_to_user`, `creator`,
+            # `updater`) que acá nunca se tocan directamente (solo se leen/escriben los IDs), quedaban
+            # sin cargar en el objeto — y SQLAlchemy no puede lazy-cargarlas en un objeto ya desconectado
+            # de la sesión (DetachedInstanceError). El cambio SÍ se guardaba en la base (por eso al
+            # refrescar la página aparecía bien), pero la respuesta HTTP fallaba con 500 igual.
+            # Se convierte a Pydantic acá, con la sesión todavía abierta, igual que hace
+            # `base_repository.py` en el resto de la app (ver `get_all`/`get_by_id`).
+            return [cls.repository.schema_out.model_validate(lead) for lead in leads]
+
         return cls._execute(action="Reasignación Masiva", func=do_bulk, success_msg="Leads reasignados con éxito.")
 
     @classmethod

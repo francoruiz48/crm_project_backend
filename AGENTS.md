@@ -215,3 +215,64 @@ Leer esta sección ANTES de escribir un test nuevo — para saber si va en un ar
 **Nota de seguridad/diseño:** esto es seguro porque `/auth/me` solo devuelve los propios permisos del usuario autenticado (no los de otro), y esos permisos ya eran calculables/consistentes con lo que el backend aplica en cada request vía `PermissionChecker` (`User.get_permissions(org_id)`, mismo criterio: `is_superuser` -> `["*"]`, si no, unión de permisos de los roles del usuario en esa organización).
 
 **Pendiente relacionado (para que quede registrado):** no se agregó eager loading (`joinedload`) de `organizations_access.roles.permissions` en la carga de `current_user`, así que esto puede generar N+1 queries livianas en `/auth/me`. No se optimizó en esta pasada porque el volumen de datos es chico (pocas orgs/roles/permisos por usuario); si se vuelve un problema de performance, es la primera optimización a hacer.
+
+### 9. Rename cosmético "Estado de Contacto" -> "Estado" en `SYSTEM_ENTITIES_REGISTRY` (pedido por el usuario 2026-07-25)
+
+**Contexto:** el usuario pidió (sesión de frontend, 2026-07-25) renombrar en toda la UI "Estado de Flujo" -> "Ciclo de Vida" y "Estado de Contacto" -> "Estado", con la instrucción explícita de no tocar el backend para evitar líos de renombrar archivos/modelos. Al revisar el selector de entidades de Auditoría del Sistema (`SystemAuditLogs.tsx`), se encontró que sus opciones NO están hardcodeadas en el frontend — se arman en vivo desde `getDictionaries(["entities", ...])`, que sirve `SYSTEM_ENTITIES_REGISTRY.<key>.name` tal cual. Ahí `lead_contact_state` seguía diciendo "Estado de Contacto". Se probó primero un override puramente visual en el frontend (mapa `ENTITY_LABEL_OVERRIDES` en `SystemAuditLogs.tsx`), pero el usuario prefirió cambiar el dato en origen ya que es solo un string de display, no un rename de archivo/modelo/tabla.
+
+**Cambio aplicado:** en `app/core/dictionaries.py`, `SYSTEM_ENTITIES_REGISTRY["lead_contact_state"]["name"]` pasó de `"Estado de Contacto"` a `"Estado"`. Sin cambios de modelo, tabla, columna ni migración — es solo el string de display usado por `/metadata/dictionaries` (entities) para: (a) el selector "Entidad" de `GET /audit-logs` en el frontend, y (b) cualquier otro lugar que lea ese diccionario para mostrar el nombre humano de la entidad.
+
+**Dejado sin tocar, a confirmar con el usuario:** en el mismo registro existen `lead_state` (`"name": "Estado de Lead"`) y `lead_state_transition` (`"name": "Transición de Estado"`) — frases distintas a las dos que pidió renombrar originalmente, no se tocaron. Tampoco se tocaron los strings internos `action="Crear Estado de Contacto"` / `action="Actualizar Estado de Contacto"` en `app/services/lead_contact_state_service.py` (usados solo como contexto de mensajes de error internos, no vienen del registro ni se mostraron como el problema reportado).
+
+**Verificación:** no se encontró ningún test en `tests/` que assertee el string literal `"Estado de Contacto"` (se grepeó todo `backend/`, solo aparece en `docs/estados_de_contacto.md`, `hallazgos_agente/estados_de_contacto.md` y los `action=` de arriba). No hace falta borrar/recrear la base (no es un cambio de esquema). Sin PostgreSQL en este sandbox (ver §4), no se pudo correr la suite — pendiente que el usuario confirme que nada depende de ese string exacto.
+
+**[Continuación 2026-07-25, misma sesión] `lead_state`/`lead_state_transition`/`lead_state_history` también renombrados.** El usuario explicó la relación entre `lead_flow` (ya conceptualmente "Ciclo de Vida" en el front), `lead_state` y `lead_state_transition`, y pidió nombres que los asocien al mismo "Ciclo de Vida" sin confundirse con `lead_contact_state` (ahora "Estado"). Esquema acordado con el usuario (confirmado explícitamente vía pregunta): usar **"Etapa"** en vez de "Estado" para todo lo que vive dentro de un ciclo de vida, dejando "Estado" exclusivo para `lead_contact_state`.
+
+Cambios en `SYSTEM_ENTITIES_REGISTRY` (`app/core/dictionaries.py`):
+- `lead_flow`: `"Flujo de Leads"` -> `"Ciclo de Vida"`
+- `lead_state`: `"Estado de Lead"` -> `"Etapa de Ciclo de Vida"`
+- `lead_state_transition`: `"Transición de Estado"` -> `"Transición de Etapa"`
+- `lead_state_history`: `"Historial de Estado"` -> `"Historial de Etapa"` (no estaba en la lista original del usuario, se sumó por ser directamente el historial de cambios de `lead_state` — mismo criterio, avisado en el chat, no confirmado con pregunta explícita porque es una consecuencia directa del esquema ya acordado)
+
+Mismo alcance que el cambio anterior: solo el string `"name"` de 4 entradas del registro, sin tocar modelos/tablas/columnas ni requerir migración. El usuario también pidió (y se confirmó) llevar el mismo vocabulario "Estado" -> "Etapa" al editor visual de flujos del frontend (`frontend/src/features/leadFlows/*`) — ver `frontend/src/logs/2026-07-25.md` para el detalle de esos archivos.
+
+### 10. `LeadResponse` ahora expone `creator`/`updater` (pedido por el usuario 2026-07-25)
+
+**Contexto:** en la lista de leads del frontend ya existían filtros/columnas nativas para `Fecha de creación`/`Fecha de actualización` (`created_at`/`updated_at`), pero faltaba el equivalente para "quién" creó/modificó el lead. El usuario pidió agregarlo.
+
+**Cambio aplicado:** en `app/schemas/lead_schema.py`, se agregaron a `LeadResponse` (el schema liviano que usa la lista, NO `LeadDetailedResponse`) los campos `created_by: Optional[int]`, `updated_by: Optional[int]`, `creator: Optional[UserSimpleResponse]`, `updater: Optional[UserSimpleResponse]` — mismo patrón exacto que los ya existentes `team`/`assigned_to_user` en ese mismo schema. No fue necesario tocar `app/models/lead.py` ni `base_model.py`: las relaciones SQLAlchemy `creator`/`updater` (sobre `created_by`/`updated_by`) ya existen genéricamente en `BaseModelDB` para todas las entidades, sin usar hasta ahora.
+
+**Nota de performance:** al igual que `team`/`assigned_to_user`, estas relaciones son lazy-load (sin `joinedload` explícito en `lead_repository.py`). Es el mismo comportamiento ya aceptado para esos dos campos — no se agregó eager loading nuevo, para no introducir un cambio de performance no pedido. Si en el futuro se nota lentitud en listados grandes, este es el lugar a revisar (agregar `joinedload(Lead.creator)`/`joinedload(Lead.updater)` junto a `team`/`assigned_to_user` en la query de listado).
+
+**Frontend:** ver `frontend/src/logs/2026-07-25.md` — se agregaron los campos nativos "Usuario Creador"/"Usuario Modificación" a filtros y columnas de la lista de leads, reutilizando el mismo selector de usuarios ya usado para "Asignado a".
+
+### 11. `LeadDetailedResponse` ahora también expone `team`/`assigned_to_user` (pedido por el usuario 2026-07-25)
+
+**Contexto:** el usuario pidió mostrar en el detalle del lead (no solo en la lista): equipo asignado, usuario asignado, usuario creador y usuario modificador. `creator`/`updater` ya venían gratis en `LeadDetailedResponse` (hereda de `BaseDetailedResponse`), pero `team`/`assigned_to_user` no estaban — había un comentario en el frontend (`LeadDetails.tsx`) que decía explícitamente "el backend todavía no expone assigned_to_user/team en el detalle del lead".
+
+**Cambio aplicado:** en `app/schemas/lead_schema.py`, se agregó a `LeadDetailedResponse`: `team: Optional[TeamResponse] = None` y `assigned_to_user: Optional[UserSimpleResponse] = None` — mismos campos y mismo tipo que ya existían en `LeadResponse` (§10), ahora también en el schema detallado. Sin cambios de modelo (las relaciones `team`/`assigned_to_user` ya existen en `app/models/lead.py`).
+
+**Frontend:** ver `frontend/src/logs/2026-07-25.md` — `LeadMetaInfo` (en `LeadDetails.tsx`) ahora resuelve los nombres en vez de mostrar la etiqueta vacía, y suma las filas "Creado por"/"Modificado por" con tooltip de email.
+
+### 12. `PATCH /leads/bulk-assign` ahora soporta desasignar (`clear_team`/`clear_user`) (pedido por el usuario 2026-07-25)
+
+**Contexto:** el usuario pidió poder editar equipo/usuario asignado desde el detalle del lead, con un selector. El único endpoint que puede tocar `team_id`/`assigned_to_user_id` es `PATCH /leads/bulk-assign` (`LeadUpdate`, usado por `PUT /leads/{id}`, no incluye esos campos). Ese endpoint ya usa `target_team_id`/`target_user_id = None` como sentinel de **"no tocar este campo"**, así que no había forma de mandar "vaciar la asignación" — necesario para que el selector del frontend pueda tener una opción "Sin asignar".
+
+**Permiso:** confirmado que `PATCH /leads/bulk-assign` ya requiere `lead:update` (`cls._get_deps("update")` en `lead_controller.py`, resuelve a `f"{table_name}:update"` = `lead:update`) — el mismo permiso que el resto de las acciones de edición del lead. No hizo falta crear un permiso nuevo, correspondía usar el existente.
+
+**Cambio aplicado:**
+- `app/schemas/team_member_schema.py`: `BulkAssignRequest` suma `clear_team: bool = False` y `clear_user: bool = False`.
+- `app/controllers/lead_controller.py` (`bulk_assign_leads`): la validación de "debe especificar al menos un destino" ahora también acepta `clear_team`/`clear_user`; se agregó validación de que no se pida asignar y desasignar el mismo campo a la vez (400 si `target_team_id` + `clear_team`, o `target_user_id` + `clear_user`).
+- `app/services/lead_service.py` (`bulk_assign`): nuevos parámetros `clear_team`/`clear_user`; si vienen en `True`, `lead.team_id`/`lead.assigned_to_user_id` pasan a `None` (tiene prioridad sobre `target_team_id`/`target_user_id`, que ya se validó que no vengan juntos). Sin cambios en la resolución de nombres para el timeline/auditoría (`teams_map.get(None)`/`users_map.get(None)` ya devuelven `None` correctamente).
+
+**Frontend:** ver `frontend/src/logs/2026-07-25.md` — nuevo `bulkAssignLeads` en `leadService.ts`, y selectores editables de Usuario/Equipo asignado en `LeadDetails.tsx` (`LeadMetaInfo`), con una opción "Sin asignar" que manda `clear_user`/`clear_team`.
+
+### 13. Bug: `PATCH /leads/bulk-assign` guardaba el cambio pero devolvía error 500 (reportado por el usuario 2026-07-25, al probar los selectores de §12)
+
+**Síntoma:** al reasignar usuario/equipo desde el frontend, aparecía un error, pero al refrescar la página el cambio SÍ estaba guardado.
+
+**Causa:** `lead_service.bulk_assign` (`do_bulk`) devolvía los objetos `Lead` de SQLAlchemy sin convertir, y `cls._execute` los retorna recién después de que `UnitOfWork.__exit__` ya hizo `commit()` + `close()` de la sesión. FastAPI intenta convertir esos objetos "crudos" a `LeadResponse` (`response_model`) en la capa de serialización, que corre DESPUÉS de que la sesión ya cerró. Como `LeadResponse` incluye relaciones (`team`, `assigned_to_user`, `creator`, `updater`) que `do_bulk` nunca accede directamente (solo lee/escribe los IDs `team_id`/`assigned_to_user_id`), esas relaciones seguían sin cargar en el objeto — y SQLAlchemy no puede lazy-cargar relaciones en un objeto ya desconectado de su sesión (`DetachedInstanceError`, que termina como 500 al llegar a FastAPI). El `commit()` ya había pasado, por eso el dato quedaba guardado igual.
+
+**Por qué no pasaba en otros endpoints:** `base_repository.py` (`get_all`, `get_by_id`, `create`, `update`) convierte a Pydantic (`schema_out.model_validate(obj)`) **dentro** del método de repositorio, mientras la sesión todavía está abierta — nunca dependen de que FastAPI haga la conversión automática después. `bulk_assign` era la excepción a ese patrón.
+
+**Fix aplicado:** en `app/services/lead_service.py`, `do_bulk` ahora retorna `[cls.repository.schema_out.model_validate(lead) for lead in leads]` en vez de `leads`, siguiendo el mismo patrón que `base_repository.py`. Sin cambios de modelo/schema.
