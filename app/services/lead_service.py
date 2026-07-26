@@ -223,6 +223,160 @@ class LeadService(BaseService):
         # 3. Si es texto, número, fecha, etc., devolver tal cual
         return raw_val
 
+    @classmethod
+    def _translate_native_value_for_history(cls, session, attr: str, raw_val):
+        """
+        Igual que `_translate_value_for_history` pero para los 4 campos nativos escribibles
+        (ver `app/core/native_lead_fields.py`), que no tienen un `LeadField` asociado del que
+        colgar la traducción. Resuelve el ID a un nombre legible para el timeline del lead.
+        """
+        if raw_val is None:
+            return ""
+        try:
+            if attr == "current_state_id":
+                from app.models.lead_state import LeadState
+                obj = session.query(LeadState).filter_by(id=raw_val).first()
+                return obj.name if obj else raw_val
+            if attr == "contact_state_id":
+                from app.models.lead_contact_state import LeadContactState
+                obj = session.query(LeadContactState).filter_by(id=raw_val).first()
+                return obj.name if obj else raw_val
+            if attr == "team_id":
+                from app.models.team import Team
+                obj = session.query(Team).filter_by(id=raw_val).first()
+                return obj.name if obj else raw_val
+            if attr == "assigned_to_user_id":
+                from app.models.security_models import User
+                obj = session.query(User).filter_by(id=raw_val).first()
+                return f"{obj.name} {obj.last_name}" if obj else raw_val
+        except Exception:
+            return raw_val
+        return raw_val
+
+    @classmethod
+    def _apply_native_automation_writeback(cls, uow, obj_id: int, native_ctx_before: dict, automation_audit: dict, user_context: Optional[UserContext] = None):
+        """
+        Dado el resultado de `AutomationEngine.run` (`automation_audit`, keyed por field_id) y el
+        contexto nativo previo a esa corrida (`native_ctx_before`, ver `build_native_context_from_lead`),
+        aplica sobre la fila real del lead los cambios de campos nativos ESCRIBIBLES (Etapa/Estado/
+        Equipo/Usuario asignado) que una automatización haya decidido, con el mismo chequeo liviano
+        de existencia/organización que ya se documentó en `native_lead_fields.py` (sin validar
+        transición de flujo permitida ni pertenencia a equipo -- a pedido explícito del usuario, una
+        automatización es un update crudo en la base de datos).
+
+        Extraído de `update()` para poder reusarlo desde cualquier otro método que persista un
+        cambio de campo nativo por fuera del PUT genérico (`change_state`, `change_contact_state`,
+        `bulk_assign`) -- antes esos métodos escribían directo con `repository.update`/`setattr` y
+        jamás corrían el motor de automatizaciones, por lo que una regla "Al actualizar registro"
+        nunca se disparaba si el cambio entraba por esas puertas (reportado por el usuario 2026-07-25).
+
+        Devuelve (changes, history_changes) -- dicts listos para mergear/loguear vía `_log_audit`/
+        `_log_activity`, vacíos si no hubo ningún cambio nativo escribible aplicable.
+        """
+        from app.core.native_lead_fields import NATIVE_LEAD_FIELDS, WRITABLE_NATIVE_FIELD_IDS
+
+        changed_nids = [nid for nid in WRITABLE_NATIVE_FIELD_IDS if nid in automation_audit]
+        changes = {}
+        history_changes = {}
+        if not changed_nids:
+            return changes, history_changes
+
+        lead_orm = uow.session.query(Lead).filter_by(id=obj_id).first()
+        if not lead_orm:
+            return changes, history_changes
+
+        native_updates = {}
+        for nid in changed_nids:
+            attr = NATIVE_LEAD_FIELDS[nid].attr
+            new_val = automation_audit[nid]["new_value"]
+            old_val = native_ctx_before.get(nid)
+            if new_val == old_val:
+                continue
+
+            if new_val is not None:
+                valid = True
+                if attr == "current_state_id":
+                    state_obj = cls.state_repository.get_by_id(uow.session, new_val, user_context=user_context)
+                    campaign_obj = cls.campaign_repository.get_by_id(uow.session, lead_orm.campaign_id, user_context=user_context)
+                    valid = bool(state_obj) and bool(campaign_obj) and state_obj.lead_flow_id == campaign_obj.lead_flow_id
+                elif attr == "contact_state_id":
+                    from app.models.lead_contact_state import LeadContactState as _LeadContactState
+                    valid = bool(uow.session.query(_LeadContactState).filter_by(
+                        id=new_val, organization_id=lead_orm.organization_id, active=True).first())
+                elif attr == "team_id":
+                    from app.models.team import Team as _Team
+                    valid = bool(uow.session.query(_Team).filter_by(
+                        id=new_val, organization_id=lead_orm.organization_id).first())
+                elif attr == "assigned_to_user_id":
+                    from app.models.security_models import UserOrganization as _UserOrganization
+                    valid = bool(uow.session.query(_UserOrganization).filter_by(
+                        user_id=new_val, organization_id=lead_orm.organization_id, active=True).first())
+                if not valid:
+                    continue
+
+            native_updates[attr] = new_val
+            field_label = NATIVE_LEAD_FIELDS[nid].name
+            change_key = f"native_{attr}"
+            changes[change_key] = {"field_name": field_label, "old_value": old_val, "new_value": new_val}
+            history_changes[change_key] = {
+                "field_name": field_label,
+                "old_value": cls._translate_native_value_for_history(uow.session, attr, old_val),
+                "new_value": cls._translate_native_value_for_history(uow.session, attr, new_val),
+                "source_rule": automation_audit[nid]["source_rule"],
+            }
+
+        if native_updates:
+            for attr, val in native_updates.items():
+                setattr(lead_orm, attr, val)
+
+        return changes, history_changes
+
+    @classmethod
+    def _run_native_change_automations(cls, uow, lead_orm, event: str, user_context: Optional[UserContext] = None):
+        """
+        Corre el motor de Automatizaciones de Campos a partir de un cambio de campo nativo que
+        NO pasó por `update()` (`change_state`, `change_contact_state`, `bulk_assign`: todos
+        escriben directo con `repository.update`/`setattr` y nunca invocaban el motor). Se llama
+        DESPUÉS de aplicar el cambio directo sobre `lead_orm` (mismo objeto/sesión), para que la
+        condición de la regla vea el valor nuevo como "estado actual" (ej. Estado=Rechazado ->
+        Etapa=No interesado se dispara al guardar el Estado, no antes).
+
+        `lead_orm` debe ser un objeto ORM real (no Pydantic) de la sesión activa, con `field_values`
+        accesible (se usa para incluir los campos custom en el contexto de evaluación de condiciones,
+        aunque acá no se estén editando).
+
+        Devuelve (changes, history_changes) iguales a `_apply_native_automation_writeback`, vacíos
+        si no hay ninguna regla aplicable para este evento/campaña.
+        """
+        from app.core.native_lead_fields import build_native_context_from_lead
+
+        db_values = {}
+        for v in (getattr(lead_orm, "field_values", None) or []):
+            val = getattr(v, "value", None)
+            if val is None:
+                if getattr(v, "nomenclator_items", None):
+                    val = [item.id for item in v.nomenclator_items]
+                elif getattr(v, "related_leads", None):
+                    val = [l.id for l in v.related_leads]
+                elif getattr(v, "nomenclator_item_id", None):
+                    val = v.nomenclator_item_id
+            db_values[v.field_id] = val
+
+        native_ctx_before = build_native_context_from_lead(lead_orm)
+        full_context = {**db_values, **native_ctx_before}
+
+        _, automation_audit = AutomationEngine.run(
+            session=uow.session,
+            campaign_id=lead_orm.campaign_id,
+            context_data=full_context,
+            event=event,
+        )
+
+        if not automation_audit:
+            return {}, {}
+
+        return cls._apply_native_automation_writeback(uow, lead_orm.id, native_ctx_before, automation_audit, user_context)
+
     # ---------------------------------------------------------
     # HELPER DE MÁSCARAS (Modificado para no lanzar excepción)
     # ---------------------------------------------------------
@@ -554,10 +708,18 @@ class LeadService(BaseService):
     # LÓGICA CENTRAL DE PREPARACIÓN
     # ---------------------------------------------------------
     @classmethod
-    def _prepare_creation_data(cls, uow, obj_in, files_map, created_by, campaign, is_simulation=False):
+    def _prepare_creation_data(cls, uow, obj_in, files_map, created_by, campaign, is_simulation=False, native_ctx: dict = None):
         """
         Ejecuta lógica. Retorna tuple. Si hay errores, lanza HTTPException con la lista.
         Recibe el objeto 'campaign' ya validado para evitar re-queries y errores semánticos.
+
+        native_ctx: valores de campos nativos (Etapa/Estado/Equipo/Usuario asignado, con los IDs
+        negativos de `app/core/native_lead_fields.py`) ya conocidos al momento de la creación
+        (estado inicial del flujo, team_id/assigned_to_user_id del request). Se mezclan en
+        `context_data` ANTES de correr el motor de automatizaciones para que una regla "Al crear
+        registro" pueda leerlos o sobreescribirlos -- el caller (`create`/`simulate_create`) es
+        responsable de tomar los valores resultantes de `context_data` (pueden haber sido
+        mutados) para armar el Lead final.
         """
         errors = [] # ACUMULADOR DE ERRORES
 
@@ -600,6 +762,12 @@ class LeadService(BaseService):
         # 4. Completar y Default
         context_data = cls._fill_missing_fields(context_data, current_campaign_defs)
         context_data = cls._apply_defaults(context_data, current_campaign_defs)
+
+        # 4bis. Campos nativos conocidos a esta altura (ver docstring) -- se mezclan recién acá,
+        # después de defaults/fill, para no interferir con esos pasos (que solo miran los ids
+        # positivos de current_campaign_defs).
+        if native_ctx:
+            context_data.update(native_ctx)
 
         # 5. INYECCIÓN DEL MOTOR DE AUTOMATIZACIÓN
         event = "ON_CREATE" if not is_simulation else "SIMULATION"
@@ -659,10 +827,9 @@ class LeadService(BaseService):
                 if not membership:
                     raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "assigned_to_user_id", "message": "El usuario no existe o no pertenece a esta organización."}])
 
-            # 3. Procesar campos y validaciones (recibe campaign para evitar re-queries)
-            clean_values, context_data, current_campaign_defs = cls._prepare_creation_data(uow, obj_in, files_map, created_by=created_by, campaign=campaign, is_simulation=False)
-
-            # 4. Validar flujo de estados
+            # 3. Validar flujo de estados (se mueve antes de _prepare_creation_data para poder
+            # ofrecerle a las automatizaciones "Al crear registro" el valor de Etapa/Estado ya
+            # calculado -- y permitir que una regla los sobreescriba en el mismo alta).
             initial_state = cls.state_repository.get_all(uow.session, user_context=user_context, lead_flow_id=campaign.lead_flow_id, is_initial=True)
             initial_state = initial_state[0] if initial_state else None
             if not initial_state:
@@ -678,17 +845,67 @@ class LeadService(BaseService):
                 active=True
             ).first()
 
-            # 5. Motor de enrutamiento (determina equipo automático)
-            # Inyectamos los campos nativos conocidos al momento de creación
-            # (lead_obj no existe aún, por eso se enriquece manualmente)
+            # 4. Campos nativos conocidos a esta altura (ver `native_lead_fields.py`), para que el
+            # motor de automatizaciones pueda leerlos/sobreescribirlos.
+            from app.core.native_lead_fields import NATIVE_LEAD_FIELDS_BY_ATTR
+            id_etapa = NATIVE_LEAD_FIELDS_BY_ATTR["current_state_id"].id
+            id_estado = NATIVE_LEAD_FIELDS_BY_ATTR["contact_state_id"].id
+            id_equipo = NATIVE_LEAD_FIELDS_BY_ATTR["team_id"].id
+            id_asignado = NATIVE_LEAD_FIELDS_BY_ATTR["assigned_to_user_id"].id
+            automation_native_ctx = {
+                id_etapa: initial_state.id,
+                id_estado: initial_contact_state.id if initial_contact_state else None,
+                id_equipo: obj_in.team_id,
+                id_asignado: obj_in.assigned_to_user_id,
+            }
+
+            # 5. Procesar campos y validaciones (recibe campaign para evitar re-queries)
+            clean_values, context_data, current_campaign_defs = cls._prepare_creation_data(
+                uow, obj_in, files_map, created_by=created_by, campaign=campaign, is_simulation=False,
+                native_ctx=automation_native_ctx,
+            )
+
+            # 6. Valores finales de los campos nativos, posiblemente sobreescritos por una
+            # automatización "Al crear registro". Se aplica acá un chequeo liviano de existencia
+            # (no de "transición permitida" -- a pedido explícito del usuario, una automatización
+            # escribe estos campos como un UPDATE directo) para no terminar con una FK rota si la
+            # regla apunta a un ID que no existe o no pertenece a esta organización/flujo.
+            final_current_state_id = context_data.get(id_etapa, initial_state.id)
+            if final_current_state_id != initial_state.id:
+                state_obj = cls.state_repository.get_by_id(uow.session, final_current_state_id, user_context=user_context)
+                if not state_obj or state_obj.lead_flow_id != campaign.lead_flow_id:
+                    final_current_state_id = initial_state.id
+
+            final_contact_state_id = context_data.get(id_estado, automation_native_ctx[id_estado])
+            if final_contact_state_id and final_contact_state_id != automation_native_ctx[id_estado]:
+                cs_obj = uow.session.query(LeadContactState).filter_by(id=final_contact_state_id, organization_id=campaign.organization_id, active=True).first()
+                if not cs_obj:
+                    final_contact_state_id = automation_native_ctx[id_estado]
+
+            final_team_id = context_data.get(id_equipo, obj_in.team_id)
+            if final_team_id and final_team_id != obj_in.team_id:
+                from app.models.team import Team as _Team
+                team_obj = uow.session.query(_Team).filter_by(id=final_team_id, organization_id=org_id).first()
+                if not team_obj:
+                    final_team_id = obj_in.team_id
+
+            final_assigned_user_id = context_data.get(id_asignado, obj_in.assigned_to_user_id)
+            if final_assigned_user_id and final_assigned_user_id != obj_in.assigned_to_user_id:
+                from app.models.security_models import UserOrganization as _UserOrganization
+                membership_obj = uow.session.query(_UserOrganization).filter_by(user_id=final_assigned_user_id, organization_id=org_id, active=True).first()
+                if not membership_obj:
+                    final_assigned_user_id = obj_in.assigned_to_user_id
+
+            # 7. Motor de enrutamiento (determina equipo automático) -- alimentado con los valores
+            # YA resueltos (posteriores a la automatización), no los originales del request.
             native_ctx: dict = {
-                "__native__current_state_id": initial_state.id,
+                "__native__current_state_id": final_current_state_id,
                 "__native__campaign_id":      campaign.id,
             }
-            if obj_in.assigned_to_user_id is not None:
-                native_ctx["__native__assigned_to_user_id"] = obj_in.assigned_to_user_id
-            if obj_in.team_id is not None:
-                native_ctx["__native__team_id"] = obj_in.team_id
+            if final_assigned_user_id is not None:
+                native_ctx["__native__assigned_to_user_id"] = final_assigned_user_id
+            if final_team_id is not None:
+                native_ctx["__native__team_id"] = final_team_id
 
             assigned_team_id = RoutingRuleEvaluatorService.evaluate(
                 session=uow.session,
@@ -706,13 +923,13 @@ class LeadService(BaseService):
                 StorageService.validate_file(avatar_file, ALLOWED_IMAGE_TYPES)
                 picture_url = StorageService.upload_file(avatar_file, folder="avatars")
 
-            # El routing engine tiene prioridad; si no asignó equipo, se usa el del frontend
+            # El routing engine tiene prioridad; si no asignó equipo, se usa el ya resuelto arriba
             lead_data = {
                 'campaign_id': obj_in.campaign_id,
-                'current_state_id': initial_state.id,
-                'contact_state_id': initial_contact_state.id if initial_contact_state else None,
-                'team_id': assigned_team_id if assigned_team_id is not None else obj_in.team_id,
-                'assigned_to_user_id': obj_in.assigned_to_user_id,
+                'current_state_id': final_current_state_id,
+                'contact_state_id': final_contact_state_id,
+                'team_id': assigned_team_id if assigned_team_id is not None else final_team_id,
+                'assigned_to_user_id': final_assigned_user_id,
                 'picture_url': picture_url
             }
 
@@ -731,8 +948,9 @@ class LeadService(BaseService):
             state_history_data = {
                 "lead_id": lead_id,
                 "from_state_id": None,
-                "to_state_id": initial_state.id,
-                "notes": "Ingreso al sistema"
+                "to_state_id": final_current_state_id,
+                "notes": "Ingreso al sistema" if final_current_state_id == initial_state.id
+                    else "Ingreso al sistema (Etapa ajustada por una automatización)"
             }
             cls.state_history_repository.create(uow.session, state_history_data, user_context=user_context)
 
@@ -847,6 +1065,14 @@ class LeadService(BaseService):
                 elif target_user_id is not None:
                     lead.assigned_to_user_id = target_user_id
 
+                # Motor de Automatizaciones de Campos: bulk-assign tampoco pasaba por update(),
+                # así que una regla "Al actualizar registro" que lea/escriba Equipo/Usuario
+                # asignado nunca se disparaba al reasignar desde acá. Se corre DESPUÉS de aplicar
+                # la reasignación, para que la condición de la regla vea el valor ya actualizado.
+                automation_changes, automation_history_changes = cls._run_native_change_automations(
+                    uow, lead, event="ON_UPDATE", user_context=user_context
+                )
+
                 # 1. Timeline del Lead
                 cls._log_activity(
                     session=uow.session,
@@ -866,16 +1092,30 @@ class LeadService(BaseService):
                 )
 
                 # 2. Auditoría Global del Sistema
+                assign_changes = {
+                    "team_id": {"old": old_team, "new": lead.team_id},
+                    "assigned_to_user_id": {"old": old_user, "new": lead.assigned_to_user_id}
+                }
+                assign_changes.update(automation_changes)
                 cls._log_audit(
                     session=uow.session,
                     obj=lead,
                     action=SystemAuditLogAction.UPDATED,
-                    changes={
-                        "team_id": {"old": old_team, "new": lead.team_id},
-                        "assigned_to_user_id": {"old": old_user, "new": lead.assigned_to_user_id}
-                    },
+                    changes=assign_changes,
                     user_id=updated_by
                 )
+
+                # 3. Si la regla disparada modificó otros campos nativos (ej. Etapa/Estado), se
+                # registra aparte en el timeline -- mismo activity_type que usa update() para
+                # cambios de campo que vienen de una automatización.
+                if automation_history_changes:
+                    cls._log_activity(
+                        session=uow.session,
+                        lead_id=lead.id,
+                        activity_type="FIELDS_UPDATED",
+                        details={"changes": automation_history_changes},
+                        user_id=updated_by
+                    )
 
             # Hallazgo (bug reportado por el usuario): antes se devolvían los objetos `Lead` de
             # SQLAlchemy tal cual, y FastAPI los convertía a `LeadResponse` recién al serializar la
@@ -947,6 +1187,15 @@ class LeadService(BaseService):
             # 3. Actualizar el estado actual del Lead
             cls.repository.update(uow.session, obj_id, {"current_state_id": new_state_id}, user_context=user_context)
 
+            # Motor de Automatizaciones de Campos: este selector dedicado no pasa por update(),
+            # así que sin esto una regla "Al actualizar registro" nunca se disparaba al cambiar
+            # Etapa acá (reportado por el usuario 2026-07-25). Se corre DESPUÉS de guardar, para
+            # que la condición de la regla vea la Etapa ya actualizada.
+            lead_orm = uow.session.query(Lead).filter_by(id=obj_id).first()
+            automation_changes, automation_history_changes = cls._run_native_change_automations(
+                uow, lead_orm, event="ON_UPDATE", user_context=user_context
+            )
+
             # 4. Inyectar el historial
             history_data = {
                 "lead_id": lead.id,
@@ -958,6 +1207,7 @@ class LeadService(BaseService):
 
             # Pasamos 'lead' y formateamos el old vs new
             diff_state = {"current_state_id": {"old": current_state_id, "new": new_state_id}}
+            diff_state.update(automation_changes)
             cls._log_audit(uow.session, lead, action=SystemAuditLogAction.UPDATED, changes=diff_state, user_id=user_context.user.id if user_context else None)
 
             # Registrar en la línea de tiempo visible del lead
@@ -982,6 +1232,18 @@ class LeadService(BaseService):
                 },
                 user_id=user_context.user.id if user_context else None
             )
+
+            # Si la regla disparada modificó otros campos nativos (ej. Equipo/Usuario asignado),
+            # se registra aparte en el timeline -- mismo activity_type que usa update() para
+            # cambios de campo que vienen de una automatización.
+            if automation_history_changes:
+                cls._log_activity(
+                    session=uow.session,
+                    lead_id=obj_id,
+                    activity_type="FIELDS_UPDATED",
+                    details={"changes": automation_history_changes},
+                    user_id=user_context.user.id if user_context else None
+                )
 
         # Devolvemos el Lead actualizado para el Frontend
         return cls.get_by_id(obj_id, detailed=True)
@@ -1028,9 +1290,20 @@ class LeadService(BaseService):
 
             cls.repository.update(uow.session, obj_id, {"contact_state_id": new_contact_state_id}, user_context=user_context)
 
+            # Motor de Automatizaciones de Campos: este selector dedicado no pasa por update(),
+            # así que sin esto una regla "Al actualizar registro" nunca se disparaba al cambiar
+            # Estado acá -- exactamente el caso reportado por el usuario 2026-07-25 (Estado=Rechazado
+            # -> Etapa=No interesado). Se corre DESPUÉS de guardar, para que la condición de la
+            # regla vea el Estado ya actualizado.
+            lead_orm = uow.session.query(Lead).filter_by(id=obj_id).first()
+            automation_changes, automation_history_changes = cls._run_native_change_automations(
+                uow, lead_orm, event="ON_UPDATE", user_context=user_context
+            )
+
             updated_by = user_context.user.id if user_context else None
 
             diff = {"contact_state_id": {"old": current_contact_state_id, "new": new_contact_state_id}}
+            diff.update(automation_changes)
             cls._log_audit(uow.session, lead, action=SystemAuditLogAction.UPDATED, changes=diff, user_id=updated_by)
 
             cls._log_activity(
@@ -1048,6 +1321,18 @@ class LeadService(BaseService):
                 },
                 user_id=updated_by
             )
+
+            # Si la regla disparada modificó otros campos nativos (ej. Etapa/Equipo/Usuario
+            # asignado), se registra aparte en el timeline -- mismo activity_type que usa update()
+            # para cambios de campo que vienen de una automatización.
+            if automation_history_changes:
+                cls._log_activity(
+                    session=uow.session,
+                    lead_id=obj_id,
+                    activity_type="FIELDS_UPDATED",
+                    details={"changes": automation_history_changes},
+                    user_id=updated_by
+                )
 
         # Devolvemos el Lead actualizado para el Frontend
         return cls.get_by_id(obj_id, detailed=True)
@@ -1216,6 +1501,12 @@ class LeadService(BaseService):
 
                 full_context = {**db_values, **incoming_data}
 
+                # Campos nativos (Etapa/Estado/Equipo/Usuario asignado/fechas/creador/modificador)
+                # disponibles para que una regla "Al actualizar registro" los lea o sobreescriba.
+                from app.core.native_lead_fields import build_native_context_from_lead
+                native_ctx_before = build_native_context_from_lead(current_lead)
+                full_context.update(native_ctx_before)
+
                 # INYECCIÓN DEL MOTOR DE AUTOMATIZACIÓN (ON_UPDATE)
                 full_context, automation_audit = AutomationEngine.run(
                     session=uow.session,
@@ -1290,6 +1581,17 @@ class LeadService(BaseService):
                             history_change_data["source_rule"] = automation_audit[fid]["source_rule"]
 
                         history_changes[fid] = history_change_data
+
+                # --- CAMPOS NATIVOS ESCRIBIBLES MODIFICADOS POR AUTOMATIZACIONES ---
+                # (Etapa/Estado/Equipo/Usuario asignado). Extraído a un helper compartido
+                # (`_apply_native_automation_writeback`) que también usan `change_state`,
+                # `change_contact_state` y `bulk_assign` -- ver ese método para el detalle de
+                # la validación liviana que reemplaza a "transición permitida"/"pertenece al equipo".
+                native_changes, native_history_changes = cls._apply_native_automation_writeback(
+                    uow, obj_id, native_ctx_before, automation_audit, user_context
+                )
+                changes.update(native_changes)
+                history_changes.update(native_history_changes)
 
                 # Persistencia
                 clean_values = cls._reconstruct_items_for_repo(incoming_data, current_campaign_defs)
