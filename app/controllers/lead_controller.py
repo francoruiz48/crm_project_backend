@@ -107,6 +107,7 @@ class LeadController(BaseController):
             detailed: bool = Query(False),
             only_active: bool = Query(True),
             campaign_id: Optional[str] = Query(None, description="Filtrar por UUID público de campaña"),
+            query: Optional[str] = Query(None, description="Buscar leads (texto libre)"),
             order_by: str = Query(None, description="Campo por el cual ordenar"),
             ascending: bool = Query(True, description="Orden ascendente (true) o descendente (false)")
         ):
@@ -120,7 +121,8 @@ class LeadController(BaseController):
                 order_by=order_by,
                 ascending=ascending,
                 only_active=only_active,
-                campaign_id=campaign_id
+                campaign_id=campaign_id,
+                query=query
             )
             
             return PaginatedResponse.create(

@@ -1947,7 +1947,7 @@ class LeadService(BaseService):
         return cls.get_by_id(obj_id, detailed=True)
 
     @classmethod
-    def search(cls, user_context: Optional[UserContext] = None, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, detailed: bool = False, search_req=None, order_by=None, ascending: bool = True, only_active: bool = True, campaign_id: Optional[int] = None):
+    def search(cls, user_context: Optional[UserContext] = None, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, detailed: bool = False, search_req=None, order_by=None, ascending: bool = True, only_active: bool = True, campaign_id: Optional[int] = None, query: Optional[str] = None):
         def do_search(uow):
             total, items = cls.repository.search(
                 session=uow.session, user_context=user_context,
@@ -1958,7 +1958,8 @@ class LeadService(BaseService):
                 order_by=order_by,
                 ascending=ascending,
                 only_active=only_active,
-                campaign_id=campaign_id
+                campaign_id=campaign_id,
+                query=query
             )
 
             accessible_campaign_ids = CampaignRepository.get_accessible_campaign_ids(uow.session, user_context)
