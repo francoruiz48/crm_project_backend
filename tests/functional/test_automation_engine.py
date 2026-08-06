@@ -879,6 +879,43 @@ def test_action_set_value_on_selector_field_via_public_uuid(api, automations_set
     assert _vals(res).get(s["f_lista_id"]) == [s["item_b_id"]]
 
 
+def test_native_field_condition_and_action_resolve_public_uuid(api, automations_setup):
+    """Regresión 2026-08-06 (reportado por el usuario, ver backend/AGENTS.md): mismo bug que
+    los dos tests de arriba (campos SELECTOR), pero para campos NATIVOS (Etapa/Estado/Equipo/
+    Asignado a). Una condición "Estado = X" nunca matcheaba porque RuleCondition.value llegaba
+    como public_uuid de LeadContactState (lo que manda ConditionRow.tsx via getNativeIdOptions)
+    pero nunca se resolvía a id interno antes de compararlo contra el contact_state_id real del
+    lead -- la regla completa nunca se disparaba. Mismo problema del lado de la acción: SET_VALUE
+    sobre Etapa (current_state_id) guardaba el public_uuid crudo de LeadState en vez de su id
+    interno."""
+    s = automations_setup
+
+    contact_states = api.client.get("/lead_contact_states/", headers=api.headers).json()["items"]
+    target_contact_state = next(cs for cs in contact_states if cs["name"] == "Rechazado")
+
+    flows = api.client.get("/lead_flows/", headers=api.headers).json()["items"]
+    flow_id = flows[0]["id"]
+    lead_states = api.client.get("/lead_states/", params={"lead_flow_id": flow_id}, headers=api.headers).json()["items"]
+    target_lead_state = next(ls for ls in lead_states if not ls["is_initial"])
+
+    # -1 = Estado (contact_state_id), -2 = Etapa (current_state_id) -- ver
+    # backend/app/core/native_lead_fields.py.
+    _rule(api, s["campaign_id"], "Regla Estado -> Etapa", "ON_UPDATE",
+          _cond(-1, "EQUALS", [target_contact_state["id"]]),
+          [{"type": "SET_VALUE", "target_field_id": -2, "value": target_lead_state["id"]}])
+
+    res = api.client.post(
+        f"/leads/{s['lead_id']}/change_contact_state",
+        json={"new_contact_state_id": target_contact_state["id"]},
+        headers=api.headers,
+    )
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["contact_state"]["id"] == target_contact_state["id"]
+    assert body["current_state"]["id"] == target_lead_state["id"]
+
+
 # =============================================================================
 # VULNERABILIDADES Y DEFENSAS
 # =============================================================================
