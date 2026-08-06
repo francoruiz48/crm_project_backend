@@ -169,8 +169,10 @@ class LeadRepository(BaseRepository):
         if only_active and hasattr(cls.model, "active"):
             query = query.filter(cls.model.active == True)
 
-        # Filtrar por campaña (igual que en get_all)
+        # Filtrar por campaña (igual que en get_all). campaign_id llega como public_uuid
+        # (el front ya no conoce el id interno) -- se resuelve antes de filtrar.
         if campaign_id is not None:
+            campaign_id = cls.resolve_fk_filter_value(session, "campaign_id", campaign_id)
             query = query.filter(cls.model.campaign_id == campaign_id)
 
         # ── Filtros nativos (columnas directas del modelo) — se aplican con AND ──
@@ -184,6 +186,14 @@ class LeadRepository(BaseRepository):
                 continue
             column = getattr(cls.model, f.field_id)
             val = f.value
+            # current_state_id/contact_state_id/team_id/assigned_to_user_id son FKs -- el
+            # valor llega como public_uuid desde el front. campaign_id/active/created_at/
+            # updated_at no son FKs (o son bool/fecha) y resolve_fk_filter_value los deja
+            # pasar sin tocar.
+            if f.operator == "in" and isinstance(val, list):
+                val = [cls.resolve_fk_filter_value(session, f.field_id, v) for v in val]
+            elif f.operator in ("eq", "neq"):
+                val = cls.resolve_fk_filter_value(session, f.field_id, val)
             if f.operator == "eq": query = query.filter(column == val)
             elif f.operator == "neq": query = query.filter(column != val)
             elif f.operator == "in" and isinstance(val, list): query = query.filter(column.in_(val))

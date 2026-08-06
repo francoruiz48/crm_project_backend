@@ -30,7 +30,7 @@ def get_all(
     page_size:   int           = Query(DEFAULT_PAGE_SIZE),
     only_active: bool          = True,
     detailed:    bool          = Query(False),
-    campaign_id: Optional[int] = Query(None),
+    campaign_id: Optional[str] = Query(None, description="Filtrar por UUID público de campaña"),
     user_context               = Depends(get_current_user_roles),
 ):
     kwargs = {}
@@ -50,7 +50,7 @@ def get_all(
 
 @router.get("/{obj_id}", response_model=ResponseModelItem)
 def get_one(
-    obj_id:      int,
+    obj_id:      str,
     detailed:    bool = Query(True),
     user_context      = Depends(get_current_user_roles),
 ):
@@ -71,7 +71,7 @@ def create(
 
 @router.put("/{obj_id}", response_model=LeadRoutingPolicyDetailedResponse)
 def update(
-    obj_id:      int,
+    obj_id:      str,
     obj_in:      LeadRoutingPolicyUpdate = Body(...),
     user_context                          = Depends(get_current_user_roles),
 ):
@@ -79,7 +79,7 @@ def update(
 
 
 @router.delete("/{obj_id}")
-def delete(obj_id: int, user_context=Depends(get_current_user_roles)):
+def delete(obj_id: str, user_context=Depends(get_current_user_roles)):
     """
     Elimina la política. La estrategia de borrado es HARD_DELETE_WITH_TOGGLE:
     esto es un borrado FÍSICO e IRREVERSIBLE. Para deshabilitar sin borrar,
@@ -89,14 +89,14 @@ def delete(obj_id: int, user_context=Depends(get_current_user_roles)):
 
 
 @router.put("/active/{obj_id}")
-def set_active(obj_id: int, user_context=Depends(get_current_user_roles)):
+def set_active(obj_id: str, user_context=Depends(get_current_user_roles)):
     """Reactiva (active=True) una política previamente deshabilitada."""
     LeadRoutingPolicyService.set_active(obj_id, user_context=user_context)
     return {"actived": True}
 
 
 @router.delete("/active/{obj_id}")
-def deactivate(obj_id: int, user_context=Depends(get_current_user_roles)):
+def deactivate(obj_id: str, user_context=Depends(get_current_user_roles)):
     """Desactiva (active=False) sin eliminar la política."""
     return LeadRoutingPolicyService.deactivate(obj_id, user_context=user_context)
 

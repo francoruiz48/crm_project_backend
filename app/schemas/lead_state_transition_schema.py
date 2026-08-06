@@ -10,11 +10,15 @@ class LeadStateTransitionBase(BaseModel):
     to_state_id: int = Field(gt=0)
 
 class LeadStateTransitionCreate(LeadStateTransitionBase, BaseCreate):
-    pass
+    # public_uuid de LeadFlow/LeadState (Fase 3). El Response sigue con los ints internos
+    # viejos (FKs embebidas, deliberadamente sin migrar -- ver backend/AGENTS.md §18).
+    lead_flow_id: str
+    from_state_id: str
+    to_state_id: str
 
 class LeadStateTransitionUpdate(BaseModel):
-    from_state_id: Optional[int] = Field(default=None, gt=0)
-    to_state_id: Optional[int] = Field(default=None, gt=0)
+    from_state_id: Optional[str] = None
+    to_state_id: Optional[str] = None
 
 class LeadStateTransitionResponse(LeadStateTransitionBase, BaseResponse):
     pass
@@ -24,9 +28,9 @@ class LeadStateTransitionDetailedResponse(LeadStateTransitionBase, BaseDetailedR
     to_state : LeadStateDetailedResponse
 
 class TransitionPair(BaseModel):
-    from_state_id: int = Field(gt=0)
-    to_state_id: int = Field(gt=0)
+    from_state_id: str
+    to_state_id: str
 
 class LeadStateTransitionBulkCreate(BaseModel):
-    lead_flow_id: int = Field(gt=0)
+    lead_flow_id: str
     transitions: List[TransitionPair] = Field(..., min_length=1)

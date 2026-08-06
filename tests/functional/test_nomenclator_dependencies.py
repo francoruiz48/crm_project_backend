@@ -25,11 +25,24 @@ import pytest
 from app.models.nomenclator import Nomenclator
 from app.models.nomenclator_item import NomenclatorItem
 from app.models.lead_field import LeadField
+from app.models.campaign import Campaign
+from app.models.lead_field_section import LeadFieldSection
 
 
 # =============================================================================
 # HELPERS LOCALES
 # =============================================================================
+
+def _resolve_internal_id(db_session, model, public_uuid_or_int):
+    """
+    initial_structure devuelve public_uuid para campaign_id/section_id (ver
+    backend/AGENTS.md §18-novies), pero este archivo construye filas LeadField directo en la DB,
+    que necesitan el id interno (columnas FK Integer reales).
+    """
+    if isinstance(public_uuid_or_int, int):
+        return public_uuid_or_int
+    return db_session.query(model.id).filter_by(public_uuid=public_uuid_or_int).scalar()
+
 
 def _make_nomenclator(db_session, name, org_id, parents=None):
     nom = Nomenclator(name=name, organization_id=org_id)
@@ -62,17 +75,17 @@ class TestNomenclatorMultipleParents:
 
         res = api.client.post(
             "/nomenclators/",
-            json={"name": "Ciudad Test", "parent_nomenclator_ids": [pais.id, region.id]},
+            json={"name": "Ciudad Test", "parent_nomenclator_ids": [pais.public_uuid, region.public_uuid]},
             headers=api.headers,
         )
         assert res.status_code == 200, res.text
         parent_ids = {p["id"] for p in res.json()["parent_nomenclators"]}
-        assert parent_ids == {pais.id, region.id}
+        assert parent_ids == {pais.public_uuid, region.public_uuid}
 
     def test_create_with_nonexistent_parent_fails(self, api, initial_structure):
         res = api.client.post(
             "/nomenclators/",
-            json={"name": "Catálogo Huérfano", "parent_nomenclator_ids": [999999]},
+            json={"name": "Catálogo Huérfano", "parent_nomenclator_ids": ["00000000-0000-0000-0000-000000000000"]},
             headers=api.headers,
         )
         assert res.status_code == 400, res.text
@@ -85,13 +98,13 @@ class TestNomenclatorMultipleParents:
         db_session.commit()
 
         res = api.client.put(
-            f"/nomenclators/{ciudad.id}",
-            json={"parent_nomenclator_ids": [region.id]},
+            f"/nomenclators/{ciudad.public_uuid}",
+            json={"parent_nomenclator_ids": [region.public_uuid]},
             headers=api.headers,
         )
         assert res.status_code == 200, res.text
         parent_ids = {p["id"] for p in res.json()["parent_nomenclators"]}
-        assert parent_ids == {region.id}
+        assert parent_ids == {region.public_uuid}
 
     def test_update_self_reference_fails(self, api, db_session, initial_structure):
         org_id = initial_structure["org_id"]
@@ -99,8 +112,8 @@ class TestNomenclatorMultipleParents:
         db_session.commit()
 
         res = api.client.put(
-            f"/nomenclators/{nom.id}",
-            json={"parent_nomenclator_ids": [nom.id]},
+            f"/nomenclators/{nom.public_uuid}",
+            json={"parent_nomenclator_ids": [nom.public_uuid]},
             headers=api.headers,
         )
         assert res.status_code == 400, res.text
@@ -114,8 +127,8 @@ class TestNomenclatorMultipleParents:
         db_session.commit()
 
         res = api.client.put(
-            f"/nomenclators/{a.id}",
-            json={"parent_nomenclator_ids": [b.id]},
+            f"/nomenclators/{a.public_uuid}",
+            json={"parent_nomenclator_ids": [b.public_uuid]},
             headers=api.headers,
         )
         assert res.status_code == 400, res.text
@@ -135,11 +148,11 @@ class TestNomenclatorItemMultipleParents:
 
         res = api.client.post(
             "/nomenclator_items/",
-            json={"value": "Buenos Aires", "nomenclator_id": ciudad_cat.id, "parent_item_ids": [arg.id]},
+            json={"value": "Buenos Aires", "nomenclator_id": ciudad_cat.public_uuid, "parent_item_ids": [arg.public_uuid]},
             headers=api.headers,
         )
         assert res.status_code == 200, res.text
-        assert [p["id"] for p in res.json()["parent_items"]] == [arg.id]
+        assert [p["id"] for p in res.json()["parent_items"]] == [arg.public_uuid]
 
     def test_create_item_with_parent_from_invalid_catalog_fails(self, api, db_session, initial_structure):
         """El catálogo 'Ciudad' NO declaró a 'Género' como padre válido —
@@ -153,7 +166,7 @@ class TestNomenclatorItemMultipleParents:
 
         res = api.client.post(
             "/nomenclator_items/",
-            json={"value": "Bahía Blanca", "nomenclator_id": ciudad_cat.id, "parent_item_ids": [masculino.id]},
+            json={"value": "Bahía Blanca", "nomenclator_id": ciudad_cat.public_uuid, "parent_item_ids": [masculino.public_uuid]},
             headers=api.headers,
         )
         assert res.status_code == 400, res.text
@@ -169,13 +182,13 @@ class TestNomenclatorItemMultipleParents:
         db_session.commit()
 
         res = api.client.put(
-            f"/nomenclator_items/{item.id}",
-            json={"parent_item_ids": [arg.id, pampa.id]},
+            f"/nomenclator_items/{item.public_uuid}",
+            json={"parent_item_ids": [arg.public_uuid, pampa.public_uuid]},
             headers=api.headers,
         )
         assert res.status_code == 200, res.text
         parent_ids = {p["id"] for p in res.json()["parent_items"]}
-        assert parent_ids == {arg.id, pampa.id}
+        assert parent_ids == {arg.public_uuid, pampa.public_uuid}
 
     def test_update_self_reference_fails(self, api, db_session, initial_structure):
         org_id = initial_structure["org_id"]
@@ -185,8 +198,8 @@ class TestNomenclatorItemMultipleParents:
         db_session.commit()
 
         res = api.client.put(
-            f"/nomenclator_items/{item.id}",
-            json={"parent_item_ids": [item.id]},
+            f"/nomenclator_items/{item.public_uuid}",
+            json={"parent_item_ids": [item.public_uuid]},
             headers=api.headers,
         )
         assert res.status_code == 400, res.text
@@ -210,13 +223,16 @@ class TestLeadFieldDependsOnField:
         ba = _make_item(db_session, ciudad_nom.id, "Buenos Aires Field", org_id, parents=[arg])
         db_session.commit()
 
+        camp_internal_id = _resolve_internal_id(db_session, Campaign, camp_id)
+        section_internal_id = _resolve_internal_id(db_session, LeadFieldSection, section_id)
+
         campo_pais = LeadField(
-            name="País", campaign_id=camp_id, field_type_code="SELECTOR", field_subtype_code="SELECTOR_SIMPLE",
-            nomenclator_id=pais_nom.id, lead_field_section_id=section_id, order=10, organization_id=org_id, active=True
+            name="País", campaign_id=camp_internal_id, field_type_code="SELECTOR", field_subtype_code="SELECTOR_SIMPLE",
+            nomenclator_id=pais_nom.id, lead_field_section_id=section_internal_id, order=10, organization_id=org_id, active=True
         )
         campo_texto = LeadField(
-            name="Comentario", campaign_id=camp_id, field_type_code="STRING",
-            lead_field_section_id=section_id, order=11, organization_id=org_id, active=True
+            name="Comentario", campaign_id=camp_internal_id, field_type_code="STRING",
+            lead_field_section_id=section_internal_id, order=11, organization_id=org_id, active=True
         )
         db_session.add_all([campo_pais, campo_texto])
         db_session.commit()
@@ -230,8 +246,8 @@ class TestLeadFieldDependsOnField:
     def test_create_field_depends_on_valid_parent_succeeds(self, api, geo_setup):
         res = api.create_lead_field(
             campaign_id=geo_setup["campaign_id"], name="Ciudad", field_type_code="SELECTOR",
-            subtype_code="SELECTOR_SIMPLE", nomenclator_id=geo_setup["ciudad_nom"].id,
-            depends_on_field_id=geo_setup["campo_pais"].id, expected_status=200,
+            subtype_code="SELECTOR_SIMPLE", nomenclator_id=geo_setup["ciudad_nom"].public_uuid,
+            depends_on_field_id=geo_setup["campo_pais"].public_uuid, expected_status=200,
         )
         assert res["depends_on_field_id"] == geo_setup["campo_pais"].id
 
@@ -241,8 +257,8 @@ class TestLeadFieldDependsOnField:
             json={
                 "campaign_id": geo_setup["campaign_id"], "name": "Ciudad Inválida",
                 "field_type_code": "SELECTOR", "field_subtype_code": "SELECTOR_SIMPLE",
-                "nomenclator_id": geo_setup["ciudad_nom"].id,
-                "depends_on_field_id": geo_setup["campo_texto"].id,
+                "nomenclator_id": geo_setup["ciudad_nom"].public_uuid,
+                "depends_on_field_id": geo_setup["campo_texto"].public_uuid,
             },
             headers=api.headers,
         )
@@ -254,8 +270,8 @@ class TestLeadFieldDependsOnField:
         camp_id = geo_setup["campaign_id"]
         section_id = geo_setup["section_id"]
         campo_genero = LeadField(
-            name="Género", campaign_id=camp_id, field_type_code="SELECTOR", field_subtype_code="SELECTOR_SIMPLE",
-            nomenclator_id=geo_setup["genero_nom"].id, lead_field_section_id=section_id, order=12,
+            name="Género", campaign_id=_resolve_internal_id(db_session, Campaign, camp_id), field_type_code="SELECTOR", field_subtype_code="SELECTOR_SIMPLE",
+            nomenclator_id=geo_setup["genero_nom"].id, lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id), order=12,
             organization_id=org_id, active=True
         )
         db_session.add(campo_genero)
@@ -266,8 +282,8 @@ class TestLeadFieldDependsOnField:
             json={
                 "campaign_id": camp_id, "name": "Ciudad Sin Consistencia",
                 "field_type_code": "SELECTOR", "field_subtype_code": "SELECTOR_SIMPLE",
-                "nomenclator_id": geo_setup["ciudad_nom"].id,
-                "depends_on_field_id": campo_genero.id,
+                "nomenclator_id": geo_setup["ciudad_nom"].public_uuid,
+                "depends_on_field_id": campo_genero.public_uuid,
             },
             headers=api.headers,
         )
@@ -276,7 +292,7 @@ class TestLeadFieldDependsOnField:
     def test_update_field_depends_on_self_fails(self, api, geo_setup):
         campo_ciudad = api.create_lead_field(
             campaign_id=geo_setup["campaign_id"], name="Ciudad Self", field_type_code="SELECTOR",
-            subtype_code="SELECTOR_SIMPLE", nomenclator_id=geo_setup["ciudad_nom"].id, expected_status=200,
+            subtype_code="SELECTOR_SIMPLE", nomenclator_id=geo_setup["ciudad_nom"].public_uuid, expected_status=200,
         )
         res = api.client.put(
             f"/lead_fields/{campo_ciudad['id']}",
@@ -289,15 +305,15 @@ class TestLeadFieldDependsOnField:
         """Ciudad depende de País. Intentar que País dependa de Ciudad formaría un ciclo."""
         api.create_lead_field(
             campaign_id=geo_setup["campaign_id"], name="Ciudad Cycle", field_type_code="SELECTOR",
-            subtype_code="SELECTOR_SIMPLE", nomenclator_id=geo_setup["ciudad_nom"].id,
-            depends_on_field_id=geo_setup["campo_pais"].id, expected_status=200,
+            subtype_code="SELECTOR_SIMPLE", nomenclator_id=geo_setup["ciudad_nom"].public_uuid,
+            depends_on_field_id=geo_setup["campo_pais"].public_uuid, expected_status=200,
         )
         # País depende de sí mismo indirectamente si apuntara a Ciudad -> pero
         # País no es de tipo nomenclador dependiente de Ciudad por catálogo,
         # así que directamente esperamos 400 (falla antes por consistencia o por ciclo).
         res = api.client.put(
-            f"/lead_fields/{geo_setup['campo_pais'].id}",
-            json={"depends_on_field_id": geo_setup["campo_pais"].id},
+            f"/lead_fields/{geo_setup['campo_pais'].public_uuid}",
+            json={"depends_on_field_id": geo_setup["campo_pais"].public_uuid},
             headers=api.headers,
         )
         assert res.status_code == 400, res.text
@@ -305,19 +321,19 @@ class TestLeadFieldDependsOnField:
     def test_delete_field_blocked_when_has_dependents(self, api, geo_setup):
         api.create_lead_field(
             campaign_id=geo_setup["campaign_id"], name="Ciudad Delete", field_type_code="SELECTOR",
-            subtype_code="SELECTOR_SIMPLE", nomenclator_id=geo_setup["ciudad_nom"].id,
-            depends_on_field_id=geo_setup["campo_pais"].id, expected_status=200,
+            subtype_code="SELECTOR_SIMPLE", nomenclator_id=geo_setup["ciudad_nom"].public_uuid,
+            depends_on_field_id=geo_setup["campo_pais"].public_uuid, expected_status=200,
         )
-        res = api.client.delete(f"/lead_fields/{geo_setup['campo_pais'].id}", headers=api.headers)
+        res = api.client.delete(f"/lead_fields/{geo_setup['campo_pais'].public_uuid}", headers=api.headers)
         assert res.status_code == 400, res.text
 
     def test_deactivate_field_blocked_when_has_dependents(self, api, geo_setup):
         api.create_lead_field(
             campaign_id=geo_setup["campaign_id"], name="Ciudad Deactivate", field_type_code="SELECTOR",
-            subtype_code="SELECTOR_SIMPLE", nomenclator_id=geo_setup["ciudad_nom"].id,
-            depends_on_field_id=geo_setup["campo_pais"].id, expected_status=200,
+            subtype_code="SELECTOR_SIMPLE", nomenclator_id=geo_setup["ciudad_nom"].public_uuid,
+            depends_on_field_id=geo_setup["campo_pais"].public_uuid, expected_status=200,
         )
-        res = api.client.delete(f"/lead_fields/active/{geo_setup['campo_pais'].id}", headers=api.headers)
+        res = api.client.delete(f"/lead_fields/active/{geo_setup['campo_pais'].public_uuid}", headers=api.headers)
         assert res.status_code == 400, res.text
 
 
@@ -340,16 +356,19 @@ class TestLeadDependentFieldValidation:
         sp = _make_item(db_session, ciudad_nom.id, "São Paulo Lead", org_id, parents=[brasil])
         db_session.commit()
 
+        camp_internal_id = _resolve_internal_id(db_session, Campaign, camp_id)
+        section_internal_id = _resolve_internal_id(db_session, LeadFieldSection, section_id)
+
         campo_pais = LeadField(
-            name="País Lead F", campaign_id=camp_id, field_type_code="SELECTOR", field_subtype_code="SELECTOR_MULTIPLE",
-            nomenclator_id=pais_nom.id, lead_field_section_id=section_id, order=20, organization_id=org_id, active=True
+            name="País Lead F", campaign_id=camp_internal_id, field_type_code="SELECTOR", field_subtype_code="SELECTOR_MULTIPLE",
+            nomenclator_id=pais_nom.id, lead_field_section_id=section_internal_id, order=20, organization_id=org_id, active=True
         )
         db_session.add(campo_pais)
         db_session.commit()
 
         campo_ciudad = LeadField(
-            name="Ciudad Lead F", campaign_id=camp_id, field_type_code="SELECTOR", field_subtype_code="SELECTOR_SIMPLE",
-            nomenclator_id=ciudad_nom.id, lead_field_section_id=section_id, order=21, organization_id=org_id,
+            name="Ciudad Lead F", campaign_id=camp_internal_id, field_type_code="SELECTOR", field_subtype_code="SELECTOR_SIMPLE",
+            nomenclator_id=ciudad_nom.id, lead_field_section_id=section_internal_id, order=21, organization_id=org_id,
             active=True, depends_on_field_id=campo_pais.id
         )
         db_session.add(campo_ciudad)
@@ -429,11 +448,32 @@ class TestNomenclatorItemParentFilter:
         sp = _make_item(db_session, ciudad_cat.id, "São Paulo Filter", org_id, parents=[brasil])
         db_session.commit()
 
+        # OJO: acá se manda .public_uuid (no .id) a propósito para ambos filtros -- es
+        # el valor real que manda el frontend (ver nomenclatorService.ts/LeadPartialUpdate.tsx),
+        # nunca el id interno. Con .id (int, de un objeto ORM creado directo en el test) el
+        # test pasaba de casualidad sin ejercitar el bug real encontrado 2026-08-04: antes,
+        # parent_item_id como uuid tiraba un 500 (ValueError sin capturar). Ver backend/AGENTS.md.
         res = api.client.get(
-            f"/nomenclator_items/?nomenclator_id={ciudad_cat.id}&parent_item_id={arg.id}",
+            f"/nomenclator_items/?nomenclator_id={ciudad_cat.public_uuid}&parent_item_id={arg.public_uuid}",
             headers=api.headers,
         )
         assert res.status_code == 200, res.text
         ids = {i["id"] for i in res.json()["items"]}
-        assert ids == {ba.id}
-        assert sp.id not in ids
+        assert ids == {ba.public_uuid}
+        assert sp.public_uuid not in ids
+
+    def test_filter_by_parent_item_id_returns_400_style_empty_for_unknown_uuid(self, api, db_session, initial_structure):
+        """Un parent_item_id con formato de uuid pero que no existe no debe romper con 500 --
+        debe resolver a 'ningún item.id interno matchea' y devolver una lista vacía, mismo
+        criterio que el resto de los filtros FK del sistema (resolve_fk_filter_value)."""
+        org_id = initial_structure["org_id"]
+        pais = _make_nomenclator(db_session, "País Filter 2", org_id)
+        ciudad_cat = _make_nomenclator(db_session, "Ciudad Filter 2", org_id, parents=[pais])
+        db_session.commit()
+
+        res = api.client.get(
+            f"/nomenclator_items/?nomenclator_id={ciudad_cat.public_uuid}&parent_item_id=00000000-0000-0000-0000-000000000000",
+            headers=api.headers,
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["items"] == []

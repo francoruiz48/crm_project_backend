@@ -37,11 +37,17 @@ class TeamService(BaseService):
  
             new_team = cls.repository.create(uow.session, data, user_context=user_context)
             uow.session.flush()
- 
+
+            # new_team.id es el public_uuid (repository.create() devuelve el schema Pydantic,
+            # no el ORM crudo) -- se resuelve acá al id interno antes de usarlo como FK real.
+            # Bug real encontrado 2026-07-28 (mismo patrón que organization_service.py y
+            # lead_service.py): rompía el alta automática del creador como MANAGER.
+            team_internal_id = cls.repository.get_internal_id_by_public_uuid(uow.session, new_team.id)
+
             # Agregar al creador como MANAGER automáticamente
             if user_context and user_context.user:
                 uow.session.add(TeamMember(
-                    team_id    = new_team.id,
+                    team_id    = team_internal_id,
                     user_id    = user_context.user.id,
                     role       = "MANAGER",
                     created_by = user_context.user.id,

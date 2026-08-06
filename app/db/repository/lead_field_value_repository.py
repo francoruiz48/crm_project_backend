@@ -25,15 +25,23 @@ class LeadFieldValueRepository(BaseRepository):
 
         # Usamos RETURNING id para obtener los IDs de los valores recién creados
         # Esto es vital para poder llenar la tabla intermedia después
+        # Bug real encontrado 2026-07-30: este INSERT crudo no incluía public_uuid.
+        # BaseModelDB.public_uuid tiene un default de Python (uuid.uuid4, ver base_model.py),
+        # no un server_default -- un INSERT ... SELECT crudo que bypassea el ORM nunca lo
+        # dispara, así que Postgres intentaba insertar NULL en una columna NOT NULL. Esto
+        # rompía con 500 (NotNullViolation) cualquier alta de campo nuevo en una campaña que
+        # ya tuviera al menos un lead. gen_random_uuid() está disponible en Postgres core
+        # desde la v13 (sin necesitar la extensión pgcrypto).
         stmt_values = text(f"""
-            INSERT INTO lead_field_value (lead_id, field_id, value, created_at, updated_at, active)
-            SELECT 
-                l.id, 
-                :field_id, 
-                {val_col}, 
-                NOW(), 
-                NOW(), 
-                true
+            INSERT INTO lead_field_value (lead_id, field_id, value, created_at, updated_at, active, public_uuid)
+            SELECT
+                l.id,
+                :field_id,
+                {val_col},
+                NOW(),
+                NOW(),
+                true,
+                gen_random_uuid()
             FROM lead l
             WHERE l.campaign_id = :campaign_id
             RETURNING id

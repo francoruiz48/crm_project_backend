@@ -2,6 +2,8 @@ from typing import Optional
 from fastapi import HTTPException, status
 from app.core.security import UserContext
 from app.db.repository.team_member_repository import TeamMemberRepository
+from app.db.repository.team_repository import TeamRepository
+from app.db.repository.security_repositories.user_repository import UserRepository
 from app.models.team import Team
 from app.models.team_member import TeamMember
 from app.services.base_service import BaseService
@@ -28,18 +30,23 @@ class TeamMemberService(BaseService):
         def do_create(uow):
             from app.core.context import TENANT_ORG_ID
             org_id     = TENANT_ORG_ID.get()
-            team_id    = obj_in.team_id
-            target_uid = obj_in.user_id
+            # obj_in.team_id/user_id llegan como public_uuid (Fase 3, ver backend/AGENTS.md
+            # §18); se resuelven acá antes de cualquier query cruda.
+            team_id    = TeamRepository.get_internal_id_by_public_uuid(uow.session, obj_in.team_id)
+            target_uid = UserRepository.get_internal_id_by_public_uuid(uow.session, obj_in.user_id)
             role       = obj_in.role
- 
-            team = uow.session.query(Team).filter_by(id=team_id).first()
+
+            team = uow.session.query(Team).filter_by(id=team_id).first() if team_id is not None else None
             if not team:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST,
-                    detail=[{"field": "team_id", "message": f"El equipo ID={team_id} no existe."}])
+                    detail=[{"field": "team_id", "message": f"El equipo ID={obj_in.team_id} no existe."}])
             if org_id and team.organization_id != org_id:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST,
                     detail=[{"field": "team_id", "message": "El equipo no pertenece a esta organización."}])
- 
+            if target_uid is None:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                    detail=[{"field": "user_id", "message": "El usuario no existe."}])
+
             if uow.session.query(TeamMember).filter_by(team_id=team_id, user_id=target_uid).first():
                 raise HTTPException(status.HTTP_400_BAD_REQUEST,
                     detail=[{"field": "user_id", "message": "El usuario ya pertenece a este equipo."}])
@@ -72,9 +79,14 @@ class TeamMemberService(BaseService):
         return cls._execute(action="Agregar Miembro al Equipo", func=do_create)
  
     @classmethod
-    def update(cls, obj_id: int, obj_in, user_context: Optional[UserContext] = None):
+    def update(cls, obj_id: str, obj_in, user_context: Optional[UserContext] = None):
         def do_update(uow):
-            member = uow.session.query(TeamMember).filter_by(id=obj_id).first()
+            # obj_id llega como public_uuid; se resuelve una vez al id interno.
+            internal_id = cls._resolve_id(uow.session, obj_id)
+            if internal_id is None:
+                cls._not_found(obj_id)
+
+            member = uow.session.query(TeamMember).filter_by(id=internal_id).first()
             if not member:
                 cls._not_found(obj_id)
             data     = obj_in.model_dump(exclude_unset=True)
@@ -88,12 +100,12 @@ class TeamMemberService(BaseService):
                         member.user_id == user_context.user.id and caller == "AGENT"):
                     raise HTTPException(status.HTTP_403_FORBIDDEN,
                         detail="Un AGENT no puede asignarse a sí mismo como MANAGER del equipo.")
- 
+
             changes = {k: {"old": getattr(member, k, None), "new": v}
                        for k, v in data.items()
                        if hasattr(member, k) and getattr(member, k) != v}
- 
-            updated = cls.repository.update(uow.session, obj_id, data, user_context=user_context)
+
+            updated = cls.repository.update(uow.session, internal_id, data, user_context=user_context)
             uow.session.flush()
             if changes:
                 cls._log_audit(uow.session, updated, action=SystemAuditLogAction.UPDATED, changes=changes,
@@ -103,9 +115,13 @@ class TeamMemberService(BaseService):
         return cls._execute(action="Actualizar Miembro", obj_id=obj_id, func=do_update)
 
     @classmethod
-    def delete(cls, obj_id: int, user_context: Optional[UserContext] = None, force: bool = False):
+    def delete(cls, obj_id: str, user_context: Optional[UserContext] = None, force: bool = False):
         def do_delete(uow):
-            member = uow.session.query(TeamMember).filter_by(id=obj_id).first()
+            internal_id = cls._resolve_id(uow.session, obj_id)
+            if internal_id is None:
+                cls._not_found(obj_id)
+
+            member = uow.session.query(TeamMember).filter_by(id=internal_id).first()
             if not member:
                 cls._not_found(obj_id)
 

@@ -131,6 +131,7 @@ def seed_admin_org(db):
         org = Organization(
             name="Panel Global",
             description="Organización interna del sistema.",
+            is_system=True,
         )
         db.add(org)
         db.flush()

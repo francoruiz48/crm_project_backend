@@ -1,6 +1,17 @@
 import pytest
 from app.models.lead_field import LeadField
+from app.models.campaign import Campaign
+from app.models.lead_field_section import LeadFieldSection
 from datetime import datetime, timedelta
+
+
+def _resolve_internal_id(db_session, model, public_uuid):
+    """
+    initial_structure devuelve public_uuid para campaign_id/section_id (Fase 3, ver
+    backend/AGENTS.md §18), pero este archivo también construye filas ORM (LeadField)
+    directo en la DB, que necesitan el id interno (columna FK Integer real).
+    """
+    return db_session.query(model.id).filter_by(public_uuid=public_uuid).scalar()
 
 # =============================================================================
 # HELPERS LOCALES PARA REDUCIR REPETICIÓN
@@ -215,17 +226,20 @@ def test_validation_rule_delete_rule(api, db_session, initial_structure):
     org_id = initial_structure["org_id"]
     section_id = initial_structure["section_id"]
     
-    f_edad = LeadField(name="Edad Regla", field_type_code="INT", campaign_id=camp_id, order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
+    f_edad = LeadField(name="Edad Regla", field_type_code="INT", campaign_id=_resolve_internal_id(db_session, Campaign, camp_id), order=1, lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id), organization_id=org_id, active=True)
     db_session.add(f_edad)
     db_session.commit()
 
-    payload_rule = {"field_id": f_edad.id, "template_code": "MIN_VALUE", "template_params": {"limit": 18}, "error_message": "Err"}
+    # ValidationRuleCreate.field_id es str (public_uuid, Fase 3) -- f_edad.id sería el id
+    # interno crudo de la fila ORM.
+    payload_rule = {"field_id": f_edad.public_uuid, "template_code": "MIN_VALUE", "template_params": {"limit": 18}, "error_message": "Err"}
     res_create = api.client.post("/validation_rules/", json=payload_rule, headers=api.headers)
     rule_id = res_create.json()["id"]
 
     api.client.delete(f"/validation_rules/{rule_id}", headers=api.headers)
 
-    # Ahora 10 pasa porque la regla está borrada
+    # Ahora 10 pasa porque la regla está borrada -- acá field_id sí acepta el id interno crudo
+    # (LeadFieldValueCreate.field_id es Union[int, str], ver backend/AGENTS.md).
     api.create_lead(campaign_id=camp_id, values=[{"field_id": f_edad.id, "value": "10"}], expected_status=200)
 
 def test_validation_rule_delete_rule_check_404(api, db_session, initial_structure):
@@ -233,11 +247,11 @@ def test_validation_rule_delete_rule_check_404(api, db_session, initial_structur
     org_id = initial_structure["org_id"]
     section_id = initial_structure["section_id"]
 
-    f_edad = LeadField(name="Edad Regla 404", field_type_code="INT", campaign_id=camp_id, order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
+    f_edad = LeadField(name="Edad Regla 404", field_type_code="INT", campaign_id=_resolve_internal_id(db_session, Campaign, camp_id), order=1, lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id), organization_id=org_id, active=True)
     db_session.add(f_edad)
     db_session.commit()
 
-    res_create = api.client.post("/validation_rules/", json={"field_id": f_edad.id, "template_code": "MIN_VALUE", "template_params": {"limit": 18}, "error_message": "Err"}, headers=api.headers)
+    res_create = api.client.post("/validation_rules/", json={"field_id": f_edad.public_uuid, "template_code": "MIN_VALUE", "template_params": {"limit": 18}, "error_message": "Err"}, headers=api.headers)
     rule_id = res_create.json()["id"]
 
     res_del = api.client.delete(f"/validation_rules/{rule_id}", headers=api.headers)
@@ -251,11 +265,11 @@ def test_create_manual_validation_rule_success(api, db_session, initial_structur
     org_id = initial_structure["org_id"]
     section_id = initial_structure["section_id"]
 
-    f_num = LeadField(name="Numero Par", field_type_code="INT", campaign_id=camp_id, order=2, lead_field_section_id=section_id, organization_id=org_id, active=True)
+    f_num = LeadField(name="Numero Par", field_type_code="INT", campaign_id=_resolve_internal_id(db_session, Campaign, camp_id), order=2, lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id), organization_id=org_id, active=True)
     db_session.add(f_num)
-    db_session.commit() 
+    db_session.commit()
 
-    payload_manual = {"field_id": f_num.id, "name": "Solo Pares", "expression": "MOD(value,2) = 0", "error_message": "Par"}
+    payload_manual = {"field_id": f_num.public_uuid, "name": "Solo Pares", "expression": "MOD(value,2) = 0", "error_message": "Par"}
     res = api.client.post("/validation_rules/", json=payload_manual, headers=api.headers)
     
     if res.status_code == 200:        

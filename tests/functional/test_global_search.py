@@ -57,11 +57,13 @@ class TestGlobalSearch:
 
         resp_nom = api.client.get("/search", params={"query": "Catálogo Búsqueda Test"}, headers=api.headers)
         assert resp_nom.status_code == 200, resp_nom.text
-        assert any(n["id"] == nom.id for n in resp_nom.json()["nomenclators"])
+        # nom/item son filas ORM crudas (construidas directo en la DB); "id" en la respuesta
+        # de la API es el public_uuid (Fase 3, ver backend/AGENTS.md §18), no el id interno.
+        assert any(n["id"] == nom.public_uuid for n in resp_nom.json()["nomenclators"])
 
         resp_item = api.client.get("/search", params={"query": "Valor Búsqueda Test"}, headers=api.headers)
         assert resp_item.status_code == 200, resp_item.text
-        assert any(i["id"] == item.id for i in resp_item.json()["nomenclator_items"])
+        assert any(i["id"] == item.public_uuid for i in resp_item.json()["nomenclator_items"])
 
     def test_search_respects_tenant_isolation(self, api, db_session, initial_structure):
         """Un item de nomenclador de OTRA organización no debe aparecer en la

@@ -20,6 +20,17 @@ from app.models.organization import Organization
 from tests.fixtures.user_fixtures import _make_user, _link_user_to_org, as_user
 
 
+def _resolve_internal_id(db_session, model, public_uuid_or_int):
+    """
+    initial_structure/api.create_campaign() devuelven public_uuid, pero algunos tests de este
+    archivo construyen filas ORM (Lead) directo en la DB, que necesitan el id interno (columnas
+    FK Integer reales).
+    """
+    if isinstance(public_uuid_or_int, int):
+        return public_uuid_or_int
+    return db_session.query(model.id).filter_by(public_uuid=public_uuid_or_int).scalar()
+
+
 # ======================================================================
 # FIXTURES LOCALES
 # ======================================================================
@@ -45,7 +56,9 @@ def second_org_flow(db_session):
     other_flow = LeadFlow(name="Flow Ajeno", organization_id=other_org.id)
     db_session.add(other_flow)
     db_session.commit()
-    return {"org_id": other_org.id, "flow_id": other_flow.id}
+    # flow_id se usa en bodies de la API (lead_flow_id de CampaignCreate/Update es str-only,
+    # ver campaign_schema.py) -- se devuelve el public_uuid, no el id interno.
+    return {"org_id": other_org.id, "flow_id": other_flow.public_uuid}
 
 
 # ======================================================================
@@ -61,8 +74,10 @@ def test_campaign_create_success(api, initial_structure):
 
     assert camp["id"] is not None
     assert camp["name"] == "Campaña Nueva"
-    assert camp["workspace_id"] == ws_id
-    assert camp["lead_flow_id"] == lf_id
+    # workspace_id/lead_flow_id son el id interno crudo, sin migrar (deuda documentada en
+    # AGENTS.md §18-bis) -- el uuid real se compara vía el objeto anidado.
+    assert camp["workspace"]["id"] == ws_id
+    assert camp["lead_flow"]["id"] == lf_id
 
     res_fields = api.client.get(f"/lead_fields/?campaign_id={camp['id']}", headers=api.headers)
     assert res_fields.json().get("items", []) == []
@@ -157,7 +172,7 @@ def test_campaign_create_invalid_workspace_returns_400(api, initial_structure):
 
     res = api.client.post("/campaigns/", json={
         "name": "Camp WS Inválido",
-        "workspace_id": 999999,
+        "workspace_id": "00000000-0000-0000-0000-000000000000",
         "lead_flow_id": lf_id,
         "is_public": True,
     }, headers=api.headers)
@@ -174,7 +189,7 @@ def test_campaign_create_invalid_workspace_without_lead_flow_no_crash(api):
     """
     res = api.client.post("/campaigns/", json={
         "name": "Camp Crash Test",
-        "workspace_id": 999999,
+        "workspace_id": "00000000-0000-0000-0000-000000000000",
         "is_public": True,
     }, headers=api.headers)
 
@@ -196,7 +211,7 @@ def test_campaign_create_without_lead_flow_uses_org_default(api, initial_structu
         "is_public": True,
     }, headers=api.headers)
     assert res.status_code == 200, res.text
-    assert res.json()["lead_flow_id"] == lf_id
+    assert res.json()["lead_flow"]["id"] == lf_id
 
 
 def test_campaign_create_lead_flow_from_another_org_fails(api, initial_structure, second_org_flow):
@@ -437,8 +452,10 @@ def test_campaign_update_lead_flow_with_leads_fails(api, db_session, initial_str
 
     camp = api.create_campaign(workspace_id=ws_id, name="Camp Con Leads", lead_flow_id=lf_id, expected_status=200)
 
-    # Insertar un lead directamente en BD (mínimo requerido: campaign_id + organization_id)
-    lead = Lead(campaign_id=camp["id"], organization_id=org_id)
+    # Insertar un lead directamente en BD (mínimo requerido: campaign_id + organization_id).
+    # camp["id"] es public_uuid -- se resuelve al id interno antes de usarlo en la FK cruda.
+    camp_internal_id = _resolve_internal_id(db_session, Campaign, camp["id"])
+    lead = Lead(campaign_id=camp_internal_id, organization_id=org_id)
     db_session.add(lead)
     db_session.flush()
 
@@ -446,7 +463,7 @@ def test_campaign_update_lead_flow_with_leads_fails(api, db_session, initial_str
     db_session.add(new_flow)
     db_session.commit()
 
-    res = api.client.put(f"/campaigns/{camp['id']}", json={"lead_flow_id": new_flow.id}, headers=api.headers)
+    res = api.client.put(f"/campaigns/{camp['id']}", json={"lead_flow_id": new_flow.public_uuid}, headers=api.headers)
 
     assert res.status_code == 400
     body = res.text.lower()
@@ -471,10 +488,10 @@ def test_campaign_update_lead_flow_without_leads_ok(api, db_session, initial_str
     db_session.add(state)
     db_session.commit()
 
-    res = api.client.put(f"/campaigns/{camp['id']}", json={"lead_flow_id": new_flow.id}, headers=api.headers)
+    res = api.client.put(f"/campaigns/{camp['id']}", json={"lead_flow_id": new_flow.public_uuid}, headers=api.headers)
 
     assert res.status_code == 200
-    assert res.json()["lead_flow_id"] == new_flow.id
+    assert res.json()["lead_flow"]["id"] == new_flow.public_uuid
 
 
 def test_campaign_update_lead_flow_from_another_org_fails(api, initial_structure, second_org_flow):
@@ -512,7 +529,7 @@ def test_campaign_filter_by_workspace_id(api, initial_structure):
     res = api.client.get(f"/campaigns/?workspace_id={ws1['id']}", headers=api.headers)
     assert res.status_code == 200
     items = res.json().get("items", [])
-    assert all(c["workspace_id"] == ws1["id"] for c in items)
+    assert all(c["workspace"]["id"] == ws1["id"] for c in items)
     assert any(c["name"] == "Camp WS1" for c in items)
     assert not any(c["name"] == "Camp WS2" for c in items)
 

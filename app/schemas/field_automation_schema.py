@@ -50,7 +50,13 @@ class ActionTypeEnum(str, Enum):
 # 2. ESQUEMAS DEL ARBOL JSONB
 # ==========================================
 class RuleCondition(BaseModel):
-    field_id: int
+    # Bug real encontrado 2026-07-30: field_id era `int` puro, pero desde Fase 3/4
+    # LeadField.id que devuelve la API (y el que manda el front) es un public_uuid --
+    # cualquier regla armada con field_ids reales rompía con 422 ("unable to parse
+    # string as an integer"). Mismo criterio ya usado en LeadFieldValueCreate.field_id:
+    # se acepta también el id interno como int-string (callers internos ya resueltos),
+    # FieldAutomationService resuelve el uuid real al id interno antes de persistir.
+    field_id: Union[int, str]
     operator: ConditionOperatorEnum
     value: Optional[Any] = None
 
@@ -62,10 +68,11 @@ RuleGroup.model_rebuild()
 
 class AutomationAction(BaseModel):
     type: ActionTypeEnum
-    target_field_id: int
+    # Mismo bug y mismo criterio que RuleCondition.field_id de arriba.
+    target_field_id: Union[int, str]
     value: Optional[Any] = Field(default=None)
-    source_field_id: Optional[int] = Field(default=None)
-    source_field_ids: Optional[List[int]] = Field(default=None)
+    source_field_id: Optional[Union[int, str]] = Field(default=None)
+    source_field_ids: Optional[List[Union[int, str]]] = Field(default=None)
 
 # ==========================================
 # 3. ESQUEMAS CRUD
@@ -77,7 +84,10 @@ class FieldAutomationBase(BaseModel):
     priority: Optional[int] = 1
 
 class FieldAutomationCreate(FieldAutomationBase):
-    campaign_id: int
+    # public_uuid de Campaign desde Fase 3 (el front ya no conoce el id interno). Se resuelve
+    # en FieldAutomationService.create (validación puntual) y de nuevo, genéricamente, en
+    # BaseRepository.create.
+    campaign_id: str
     conditions: RuleGroup
     actions: List[AutomationAction] = Field(min_length=1)
 

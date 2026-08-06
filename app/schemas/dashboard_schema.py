@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ── Org Dashboard ─────────────────────────────────────────────────────────
@@ -18,19 +18,30 @@ class LeadsByContactState(BaseModel):
     total: int
 
 class RecentActivity(BaseModel):
-    id: int
+    # Se construye a mano en dashboard_service.py (no via model_validate desde el
+    # ORM), así que ahí se pasa id=log.public_uuid directamente. El alias queda
+    # igual para soportar también una futura construcción desde el objeto ORM.
+    # entity_id ahora es el uuid real de la entidad auditada (log.entity_uuid),
+    # no el id interno -- mismo fix que system_audit_log_schema.py, ver
+    # backend/AGENTS.md §18-ter.
+    id: str = Field(validation_alias="public_uuid")
     action: str
     entity_type: str
-    entity_id: int
+    entity_id: str
     user_name: Optional[str] = None
     created_at: datetime
 
+    model_config = {"populate_by_name": True}
+
 class OrgUser(BaseModel):
-    id: int
+    # Idem RecentActivity: dashboard_service.py pasa id=u.public_uuid a mano.
+    id: str = Field(validation_alias="public_uuid")
     name: str
     last_name: Optional[str] = None
     email: str
     is_owner: bool
+
+    model_config = {"populate_by_name": True}
 
 class OrgDashboardResponse(BaseModel):
     total_leads: int
@@ -43,7 +54,10 @@ class OrgDashboardResponse(BaseModel):
 # ── Admin / Panel Global Dashboard ────────────────────────────────────────
 
 class OrgStats(BaseModel):
-    org_id: int
+    # org_id acá es el id de la propia organización de esta fila (no una FK a otra
+    # entidad), así que aplica el mismo criterio: se pasa org.public_uuid desde
+    # dashboard_service.py en vez del id interno.
+    org_id: str
     org_name: str
     total_users: int
     total_leads: int

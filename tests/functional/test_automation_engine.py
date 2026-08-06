@@ -1,6 +1,21 @@
 import pytest
 from datetime import datetime, timedelta
 from app.models.audit.lead_activity_history import LeadActivityHistory
+from app.models.lead import Lead
+from app.models.lead_field import LeadField
+
+
+def _internal_lead_id(db_session, lead_uuid):
+    """Resuelve el public_uuid de un lead a su id interno -- LeadActivityHistory.lead_id
+    es un FK int sin migrar (mismo patrón documentado en backend/AGENTS.md §18)."""
+    return db_session.query(Lead.id).filter_by(public_uuid=lead_uuid).scalar()
+
+
+def _internal_field_id(db_session, field_uuid):
+    """Resuelve el public_uuid de un LeadField a su id interno -- el diccionario "changes"
+    del audit log de FIELDS_UPDATED queda armado con el id interno crudo como key (nunca
+    migrado a uuid), a diferencia de los ids de campo que devuelve la API."""
+    return db_session.query(LeadField.id).filter_by(public_uuid=field_uuid).scalar()
 
 
 # =============================================================================
@@ -59,10 +74,16 @@ def automations_setup(api):
 def _vals(res):
     """Devuelve {field_id: value} del response de un lead.
     Para campos SELECTOR/LEAD (value=None), extrae los IDs de nomenclator_items.
+
+    Bug real encontrado 2026-07-30: fv["field_id"] es el id interno crudo (int, sin migrar --
+    ver LeadFieldValueResponse), pero los ids de campo que usa este archivo (s["f_condicion_id"],
+    etc.) son public_uuid (Fase 4). Hay que indexar por el objeto anidado fv["field"]["id"], que
+    sí es uuid.
     """
     result = {}
     for fv in res.json().get("field_values", []):
-        fid = fv["field_id"]
+        field = fv.get("field") or {}
+        fid = field.get("id")
         val = fv.get("value")
         if val is None:
             nom_items = fv.get("nomenclator_items", [])
@@ -152,11 +173,11 @@ def test_automation_leaves_audit_trace(api, automations_setup, db_session):
             [{"field_id": s["f_condicion_id"], "value": "Disparar"}], api.headers)
 
     historial = db_session.query(LeadActivityHistory).filter_by(
-        lead_id=s["lead_id"], activity_type="FIELDS_UPDATED"
+        lead_id=_internal_lead_id(db_session, s["lead_id"]), activity_type="FIELDS_UPDATED"
     ).all()
     assert len(historial) > 0
     details = historial[-1].details.get("changes", {})
-    str_id = str(s["f_resultado_id"])
+    str_id = str(_internal_field_id(db_session, s["f_resultado_id"]))
     assert str_id in details
     assert details[str_id]["new_value"] == "Trazable"
     assert details[str_id]["source_rule"] == "Regla Auditoria"
@@ -335,9 +356,9 @@ def test_multiple_automations_same_field_audit_chain(api, automations_setup, db_
             [{"field_id": s["f_condicion_id"], "value": "trigger"}], api.headers)
 
     historial = db_session.query(LeadActivityHistory).filter_by(
-        lead_id=s["lead_id"], activity_type="FIELDS_UPDATED"
+        lead_id=_internal_lead_id(db_session, s["lead_id"]), activity_type="FIELDS_UPDATED"
     ).all()
-    source_rule = historial[-1].details["changes"][str(s["f_resultado_id"])]["source_rule"]
+    source_rule = historial[-1].details["changes"][str(_internal_field_id(db_session, s["f_resultado_id"]))]["source_rule"]
     assert "Regla A" in source_rule and "Regla B" in source_rule and "->" in source_rule
 
 
@@ -818,6 +839,44 @@ def test_action_remove_from_list(api, automations_setup):
     assert isinstance(val, list)
     # item_b_id removido, quedan item_a_id e item_c_id
     assert sorted(val) == sorted([s["item_a_id"], s["item_c_id"]])
+
+
+def test_condition_on_selector_field_matches_via_public_uuid(api, automations_setup):
+    """Regresión 2026-08-01 (ver backend/AGENTS.md §47): una condición sobre un campo
+    SELECTOR nunca matcheaba porque RuleCondition.value llegaba como public_uuid de
+    NomenclatorItem (lo único que expone la API/el front, ConditionRow.tsx) pero nunca se
+    resolvía a id interno antes de compararlo contra LeadFieldValue (que sí guarda ids
+    internos). item_a_id acá es el public_uuid real, igual que lo manda el front."""
+    s = automations_setup
+    _update(api, s["lead_id"], s["campaign_id"],
+            [{"field_id": s["f_lista_id"], "value": [s["item_a_id"]]}], api.headers)
+
+    _rule(api, s["campaign_id"], "Regla Condicion Selector", "ON_UPDATE",
+          _cond(s["f_lista_id"], "CONTAINS", [s["item_a_id"]]),
+          [{"type": "SET_VALUE", "target_field_id": s["f_resultado_id"], "value": "Selector Matcheo"}])
+
+    res = _update(api, s["lead_id"], s["campaign_id"],
+                  [{"field_id": s["f_condicion_id"], "value": "trigger"}], api.headers)
+
+    assert res.status_code == 200
+    assert _vals(res).get(s["f_resultado_id"]) == "Selector Matcheo"
+
+
+def test_action_set_value_on_selector_field_via_public_uuid(api, automations_setup):
+    """Regresión 2026-08-01 (ver backend/AGENTS.md §47): SET_VALUE sobre un campo SELECTOR
+    nunca resolvía el public_uuid de NomenclatorItem a id interno (solo estaba resuelto para
+    APPEND_TO_LIST/REMOVE_FROM_LIST) -- guardaba el uuid crudo en LeadFieldValue.value,
+    inconsistente con el resto del sistema. item_b_id acá es el public_uuid real."""
+    s = automations_setup
+    _rule(api, s["campaign_id"], "Regla Set Value Selector", "ON_UPDATE",
+          _cond(s["f_condicion_id"], "EQUALS", ["set_selector"]),
+          [{"type": "SET_VALUE", "target_field_id": s["f_lista_id"], "value": [s["item_b_id"]]}])
+
+    res = _update(api, s["lead_id"], s["campaign_id"],
+                  [{"field_id": s["f_condicion_id"], "value": "set_selector"}], api.headers)
+
+    assert res.status_code == 200
+    assert _vals(res).get(s["f_lista_id"]) == [s["item_b_id"]]
 
 
 # =============================================================================

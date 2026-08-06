@@ -38,11 +38,16 @@ class LeadFlowService(BaseService):
         return cls._execute(action="Crear Flujo de Leads", func=do_create)
 
     @classmethod
-    def update(cls, obj_id: int, obj_in, user_context: Optional[UserContext] = None):
+    def update(cls, obj_id: str, obj_in, user_context: Optional[UserContext] = None):
         def do_update(uow):
             org_id = TENANT_ORG_ID.get()
+            # obj_id llega como public_uuid; se resuelve una vez al id interno.
+            internal_id = cls._resolve_id(uow.session, obj_id)
+            if internal_id is None:
+                cls._not_found(obj_id)
+
             # Hallazgo #25: query cruda sin filtro de tenant. get_by_id sí lo aplica.
-            current_obj = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
+            current_obj = cls.repository.get_by_id(uow.session, internal_id, user_context=user_context)
             if not current_obj:
                 cls._not_found(obj_id)
 
@@ -50,17 +55,17 @@ class LeadFlowService(BaseService):
             if obj_in.name and obj_in.name.lower() != current_obj.name.lower():
                 existing = uow.session.query(LeadFlow).filter(
                     LeadFlow.name.ilike(obj_in.name),
-                    LeadFlow.id != obj_id,
+                    LeadFlow.id != internal_id,
                     LeadFlow.organization_id == org_id,
                     LeadFlow.active.is_(True)
                 ).first()
                 if existing:
                     raise HTTPException(
-                        status.HTTP_400_BAD_REQUEST, 
+                        status.HTTP_400_BAD_REQUEST,
                         detail=[{"field": "name", "message": f"Ya existe un flujo de leads llamado '{obj_in.name}'."}]
                     )
 
-            updated_obj = cls.repository.update(uow.session, obj_id, obj_in, user_context=user_context)
+            updated_obj = cls.repository.update(uow.session, internal_id, obj_in, user_context=user_context)
             uow.session.flush()
             cls._log_audit(uow.session, updated_obj, action=SystemAuditLogAction.UPDATED, changes=obj_in.model_dump(exclude_unset=True), user_id=user_context.user.id if user_context and user_context.user else None)
             return updated_obj

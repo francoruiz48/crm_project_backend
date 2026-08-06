@@ -50,7 +50,7 @@ class TestGlobalNomenclatorProtection:
         try:
             resp = client.post(
                 "/nomenclator_items/",
-                json={"value": "Intento no autorizado", "nomenclator_id": nom.id},
+                json={"value": "Intento no autorizado", "nomenclator_id": nom.public_uuid},
                 headers={"X-Organization-Id": str(org_id)},
             )
             assert resp.status_code == 403
@@ -70,7 +70,7 @@ class TestGlobalNomenclatorProtection:
         _apply_user_overrides(app, admin_user, org_id)
         try:
             resp = client.put(
-                f"/nomenclator_items/{item.id}",
+                f"/nomenclator_items/{item.public_uuid}",
                 json={"value": "Valor Modificado"},
                 headers={"X-Organization-Id": str(org_id)},
             )
@@ -91,7 +91,7 @@ class TestGlobalNomenclatorProtection:
         _apply_user_overrides(app, admin_user, org_id)
         try:
             resp = client.delete(
-                f"/nomenclator_items/{item.id}",
+                f"/nomenclator_items/{item.public_uuid}",
                 headers={"X-Organization-Id": str(org_id)},
             )
             assert resp.status_code == 403
@@ -108,7 +108,7 @@ class TestGlobalNomenclatorProtection:
         # El fixture `client` ya actúa como superadmin por default (ver tests/fixtures/client.py).
         resp = client.post(
             "/nomenclator_items/",
-            json={"value": "Opción Nueva Global", "nomenclator_id": nom.id},
+            json={"value": "Opción Nueva Global", "nomenclator_id": nom.public_uuid},
             headers={"X-Organization-Id": str(org_id)},
         )
         assert resp.status_code == 200
@@ -128,14 +128,14 @@ class TestGlobalNomenclatorProtection:
         _, item = global_nomenclator
 
         resp_update = client.put(
-            f"/nomenclator_items/{item.id}",
+            f"/nomenclator_items/{item.public_uuid}",
             json={"value": "Valor Editado Por Superadmin"},
             headers={"X-Organization-Id": str(ADMIN_ORG_ID)},
         )
         assert resp_update.status_code == 200
 
         resp_delete = client.delete(
-            f"/nomenclator_items/{item.id}",
+            f"/nomenclator_items/{item.public_uuid}",
             headers={"X-Organization-Id": str(ADMIN_ORG_ID)},
         )
         assert resp_delete.status_code == 200
@@ -159,7 +159,7 @@ class TestGlobalNomenclatorProtection:
         try:
             resp = client.post(
                 "/nomenclator_items/",
-                json={"value": "Item Propio", "nomenclator_id": nom.id},
+                json={"value": "Item Propio", "nomenclator_id": nom.public_uuid},
                 headers={"X-Organization-Id": str(org_id)},
             )
             assert resp.status_code == 200

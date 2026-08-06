@@ -134,8 +134,13 @@ async def submit_public_form(uuid: str, request: Request, payload: Dict[str, Any
             lead_values.append(LeadFieldValueCreate(field_id=f.lead_field_id, value=f.hidden_value))
 
     # 6. Estructurar payload final e inyectar al Core
+    # LeadCreate.campaign_id es public_uuid desde Fase 3 (LeadService.create resuelve el id
+    # interno). `form` es el WebForm ORM crudo (WebFormService.get_public_form_by_uuid), así que
+    # form.campaign_id es el int interno -- hay que usar form.campaign.public_uuid, no el FK
+    # crudo. Sin esto, cualquier envío de formulario público rompía con 422 al construir
+    # LeadCreate (bug preexistente, no de esta sesión, ver backend/AGENTS.md §18-decies).
     lead_in = LeadCreate(
-        campaign_id=form.campaign_id,
+        campaign_id=form.campaign.public_uuid,
         values=lead_values
     )
 

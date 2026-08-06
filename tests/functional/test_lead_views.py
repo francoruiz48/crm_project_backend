@@ -132,7 +132,9 @@ class TestTeamLeadView:
 
         # Crear equipo y agregar member
         team = api.create_team("Equipo Vista Team")
-        api.add_team_member(team["id"], member.id, role="AGENT")
+        # member.id sería el id interno de la fila ORM cruda (_make_user construye el User
+        # directo en la DB) -- POST /team_members/ espera el public_uuid (Fase 3).
+        api.add_team_member(team["id"], member.public_uuid, role="AGENT")
 
         # Superadmin crea vista de tipo TEAM asignada a ese equipo
         view = _create_view(api.client, org_id, camp_id, "Vista Team", "TEAM", team_id=team["id"])

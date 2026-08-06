@@ -64,7 +64,11 @@ class RefreshRequest(BaseModel):
 
 class InviteRequest(BaseModel):
     email: EmailStr
-    organization_id: int
+    # public_uuid de Organization (Fase 3). AuthService.invite() lo resuelve al id interno
+    # -- bug real encontrado 2026-08-01: este campo seguía tipado `int` mientras el frontend
+    # (InviteDialog.tsx) ya mandaba `activeOrg.id` (public_uuid) desde la migración Fase 3,
+    # rompiendo /auth/invite con 422 para cualquier organización real. Ver AGENTS.md.
+    organization_id: str
     role_code: str = "agent"  # Rol a asignar al invitado (default: agent)
 
 

@@ -3,6 +3,8 @@ from app.models.lead import Lead
 from app.models.lead_field import LeadField
 from app.models.lead_flow import LeadFlow
 from app.models.lead_state import LeadState
+from app.models.campaign import Campaign
+from app.models.lead_field_section import LeadFieldSection
 
 
 # =============================================================================
@@ -16,6 +18,18 @@ def simulate(api, campaign_id, values):
         json={"campaign_id": campaign_id, "values": values},
         headers=api.headers,
     )
+
+
+def _resolve_internal_id(db_session, model, public_uuid_or_int):
+    """
+    initial_structure devuelve public_uuid para campaign_id/section_id/lead_flow_id (así
+    funcionan las llamadas a la API real, ver backend/AGENTS.md §18-novies), pero este archivo
+    también construye filas ORM (LeadField, Campaign) directo en la DB, que necesitan el id
+    interno (columnas FK Integer reales). Si ya viene un int, lo devuelve tal cual.
+    """
+    if isinstance(public_uuid_or_int, int):
+        return public_uuid_or_int
+    return db_session.query(model.id).filter_by(public_uuid=public_uuid_or_int).scalar()
 
 
 # =============================================================================
@@ -35,9 +49,9 @@ def test_simulate_response_structure(api, db_session, initial_structure):
     f = LeadField(
         name="Nombre",
         field_type_code="STRING",
-        campaign_id=camp_id,
+        campaign_id=_resolve_internal_id(db_session, Campaign, camp_id),
         order=1,
-        lead_field_section_id=section_id,
+        lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id),
         organization_id=org_id,
         active=True,
     )
@@ -60,8 +74,12 @@ def test_simulate_response_structure(api, db_session, initial_structure):
     assert "tags" in data
     assert "contact_state" in data  # puede ser None, pero debe estar
 
-    # La simulación no debe guardar en DB → id negativo o ficticio
-    assert data["id"] < 0
+    # La simulación no debe guardar en DB → id ficticio, no un public_uuid real.
+    # Bug real de producción encontrado 2026-08-01 (ver backend/AGENTS.md): LeadResponse.id
+    # es `str` desde la migración a public_uuid, pero simulate_create devolvía -1 (int) acá --
+    # rompía con ResponseValidationError en CUALQUIER llamada a /leads/simulate. Fix aplicado
+    # en lead_service.py: sentinel string fijo "simulated" (decisión confirmada con el usuario).
+    assert data["id"] == "simulated"
 
     # current_state debe tener los campos de LeadStateResponse
     cs = data["current_state"]
@@ -69,7 +87,10 @@ def test_simulate_response_structure(api, db_session, initial_structure):
         assert key in cs, f"Falta '{key}' en current_state"
 
     assert cs["is_initial"] is True
-    assert data["current_state_id"] == cs["id"]
+    # current_state_id (LeadResponse) sigue siendo el id interno crudo (FK embebida, Fase 4 no
+    # lo migró -- ver backend/AGENTS.md §18), mientras que current_state.id es el public_uuid
+    # del mismo estado (objeto anidado) -- se resuelve acá para poder compararlos.
+    assert data["current_state_id"] == _resolve_internal_id(db_session, LeadState, cs["id"])
     assert data["tags"] == []
 
 
@@ -88,9 +109,9 @@ def test_simulate_does_not_persist(api, db_session, initial_structure):
     f = LeadField(
         name="Email",
         field_type_code="STRING",
-        campaign_id=camp_id,
+        campaign_id=_resolve_internal_id(db_session, Campaign, camp_id),
         order=1,
-        lead_field_section_id=section_id,
+        lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id),
         organization_id=org_id,
         active=True,
     )
@@ -100,7 +121,7 @@ def test_simulate_does_not_persist(api, db_session, initial_structure):
     res = simulate(api, camp_id, [{"field_id": f.id, "value": "test@mail.com"}])
     assert res.status_code == 200
 
-    leads_en_db = db_session.query(Lead).filter_by(campaign_id=camp_id).count()
+    leads_en_db = db_session.query(Lead).filter_by(campaign_id=_resolve_internal_id(db_session, Campaign, camp_id)).count()
     assert leads_en_db == 0
 
 
@@ -120,10 +141,10 @@ def test_simulate_missing_required_field_returns_400(api, db_session, initial_st
     f_req = LeadField(
         name="DNI",
         field_type_code="STRING",
-        campaign_id=camp_id,
+        campaign_id=_resolve_internal_id(db_session, Campaign, camp_id),
         required=True,
         order=1,
-        lead_field_section_id=section_id,
+        lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id),
         organization_id=org_id,
         active=True,
     )
@@ -152,9 +173,9 @@ def test_simulate_invalid_type_returns_400(api, db_session, initial_structure):
     f_int = LeadField(
         name="Edad",
         field_type_code="INT",
-        campaign_id=camp_id,
+        campaign_id=_resolve_internal_id(db_session, Campaign, camp_id),
         order=1,
-        lead_field_section_id=section_id,
+        lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id),
         organization_id=org_id,
         active=True,
     )
@@ -223,18 +244,18 @@ def test_simulate_calculated_field_evaluated(api, db_session, initial_structure)
     f_precio = LeadField(
         name="Precio",
         field_type_code="NUMBER",
-        campaign_id=camp_id,
+        campaign_id=_resolve_internal_id(db_session, Campaign, camp_id),
         order=1,
-        lead_field_section_id=section_id,
+        lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id),
         organization_id=org_id,
         active=True,
     )
     f_cantidad = LeadField(
         name="Cantidad",
         field_type_code="INT",
-        campaign_id=camp_id,
+        campaign_id=_resolve_internal_id(db_session, Campaign, camp_id),
         order=2,
-        lead_field_section_id=section_id,
+        lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id),
         organization_id=org_id,
         active=True,
     )
@@ -245,9 +266,9 @@ def test_simulate_calculated_field_evaluated(api, db_session, initial_structure)
         name="Total",
         field_type_code="CALCULATED",
         calculation_expression="Precio * Cantidad",
-        campaign_id=camp_id,
+        campaign_id=_resolve_internal_id(db_session, Campaign, camp_id),
         order=3,
-        lead_field_section_id=section_id,
+        lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id),
         organization_id=org_id,
         active=True,
         required=False,
@@ -282,9 +303,9 @@ def test_simulate_unknown_field_id_returns_400(api, db_session, initial_structur
     f = LeadField(
         name="Nombre",
         field_type_code="STRING",
-        campaign_id=camp_id,
+        campaign_id=_resolve_internal_id(db_session, Campaign, camp_id),
         order=1,
-        lead_field_section_id=section_id,
+        lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id),
         organization_id=org_id,
         active=True,
     )
@@ -305,7 +326,7 @@ def test_simulate_campaign_without_initial_state_returns_400(api, db_session, in
     Si la campaña no tiene estado inicial configurado, simulate debe
     retornar 400 con mensaje claro, no un 500 por KeyError o AttributeError.
     """
-    from app.models.campaign import Campaign
+    from app.models.workspace import Workspace
 
     org_id = initial_structure["org_id"]
     section_id = initial_structure["section_id"]
@@ -318,7 +339,7 @@ def test_simulate_campaign_without_initial_state_returns_400(api, db_session, in
 
     camp_empty = Campaign(
         name="Campaña Sin Estado",
-        workspace_id=ws_id,
+        workspace_id=_resolve_internal_id(db_session, Workspace, ws_id),
         lead_flow_id=empty_flow.id,
         organization_id=org_id,
     )
@@ -330,14 +351,16 @@ def test_simulate_campaign_without_initial_state_returns_400(api, db_session, in
         field_type_code="STRING",
         campaign_id=camp_empty.id,
         order=1,
-        lead_field_section_id=section_id,
+        lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id),
         organization_id=org_id,
         active=True,
     )
     db_session.add(f)
     db_session.commit()
 
-    res = simulate(api, camp_empty.id, [{"field_id": f.id, "value": "Test"}])
+    # simulate() manda campaign_id al endpoint real (POST /leads/simulate), que espera
+    # public_uuid (Fase 3) -- camp_empty.id sería el id interno, no sirve acá.
+    res = simulate(api, camp_empty.public_uuid, [{"field_id": f.id, "value": "Test"}])
 
     assert res.status_code == 400
     assert res.status_code != 500
@@ -360,7 +383,7 @@ def test_simulate_current_state_matches_campaign_initial_state(api, db_session, 
     # Estado inicial de referencia en la DB
     initial_state = (
         db_session.query(LeadState)
-        .filter_by(lead_flow_id=lead_flow_id, is_initial=True)
+        .filter_by(lead_flow_id=_resolve_internal_id(db_session, LeadFlow, lead_flow_id), is_initial=True)
         .first()
     )
     assert initial_state is not None, "El fixture no tiene estado inicial"
@@ -368,9 +391,9 @@ def test_simulate_current_state_matches_campaign_initial_state(api, db_session, 
     f = LeadField(
         name="Apellido",
         field_type_code="STRING",
-        campaign_id=camp_id,
+        campaign_id=_resolve_internal_id(db_session, Campaign, camp_id),
         order=1,
-        lead_field_section_id=section_id,
+        lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id),
         organization_id=org_id,
         active=True,
     )
@@ -383,6 +406,9 @@ def test_simulate_current_state_matches_campaign_initial_state(api, db_session, 
     data = res.json()
 
     assert data["current_state_id"] == initial_state.id
-    assert data["current_state"]["id"] == initial_state.id
+    # current_state.id (objeto anidado) es el public_uuid del estado, no el id interno crudo de
+    # arriba -- initial_state acá es una fila ORM cruda (query directa), así que hace falta
+    # comparar contra initial_state.public_uuid, no initial_state.id.
+    assert data["current_state"]["id"] == initial_state.public_uuid
     assert data["current_state"]["name"] == initial_state.name
     assert data["current_state"]["is_initial"] is True
