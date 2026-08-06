@@ -278,19 +278,29 @@ class LeadController(BaseController):
             user_context = Depends(get_current_user_roles)
         ):
             """
-            Reasignación masiva de Leads a un Equipo y/o Usuario.
+            Reasignación masiva de Leads a un Equipo y/o Usuario. También permite desasignar
+            (clear_team/clear_user), ya que target_team_id/target_user_id en None solo significa
+            "no tocar este campo".
             """
-            # Validamos que al menos envíen un destino
-            if not payload.target_team_id and not payload.target_user_id:
+            # Validamos que al menos envíen un destino o pidan desasignar algo
+            if not payload.target_team_id and not payload.target_user_id and not payload.clear_team and not payload.clear_user:
                 raise HTTPException(
-                    status_code=400, 
-                    detail="Debe especificar al menos un equipo destino o un usuario destino."
+                    status_code=400,
+                    detail="Debe especificar al menos un equipo destino, un usuario destino, o desasignar alguno de los dos."
                 )
+
+            # No tiene sentido pedir "asignar a X" y "desasignar" del mismo campo a la vez
+            if payload.target_team_id and payload.clear_team:
+                raise HTTPException(status_code=400, detail="No se puede asignar y desasignar el equipo al mismo tiempo.")
+            if payload.target_user_id and payload.clear_user:
+                raise HTTPException(status_code=400, detail="No se puede asignar y desasignar el usuario al mismo tiempo.")
 
             return cls.service.bulk_assign(
                 lead_ids=payload.lead_ids,
                 target_team_id=payload.target_team_id,
                 target_user_id=payload.target_user_id,
+                clear_team=payload.clear_team,
+                clear_user=payload.clear_user,
                 user_context=user_context
             )
         

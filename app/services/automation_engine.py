@@ -7,6 +7,7 @@ from app.schemas.field_automation_schema import (
     ConditionOperatorEnum, ActionTypeEnum, AutomationAction
 )
 from app.core.constans import DATE_FORMAT, DATE_TIME_FORMAT
+from app.core.native_lead_fields import NATIVE_LEAD_FIELDS, WRITABLE_NATIVE_FIELD_IDS
 
 class AutomationEngine:
 
@@ -183,6 +184,13 @@ class AutomationEngine:
 
         for action in actions:
             target_id = action.target_field_id
+
+            # Campos nativos de solo lectura (Fecha de creación/actualización, Usuario
+            # Creador/Modificación): son hechos de auditoría, no algo que una automatización
+            # pueda "setear". Se ignora la acción en vez de fallar toda la regla.
+            if target_id in NATIVE_LEAD_FIELDS and target_id not in WRITABLE_NATIVE_FIELD_IDS:
+                continue
+
             old_value = context.get(target_id)
             new_value = None
 
