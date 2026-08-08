@@ -25,3 +25,7 @@ class BulkAssignRequest(BaseModel):
     lead_ids: List[int] = Field(..., min_length=1, description="Lista de IDs de leads a reasignar")
     target_team_id: Optional[int] = Field(None, gt=0)
     target_user_id: Optional[int] = Field(None, gt=0)
+    #target_team_id/target_user_id = None significa "no tocar este campo" (no "vaciarlo"), así que
+    #para poder desasignar (dejar el lead sin equipo/usuario) hacen falta estos dos flags aparte.
+    clear_team: bool = False
+    clear_user: bool = False

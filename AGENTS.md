@@ -215,3 +215,108 @@ Leer esta sección ANTES de escribir un test nuevo — para saber si va en un ar
 **Nota de seguridad/diseño:** esto es seguro porque `/auth/me` solo devuelve los propios permisos del usuario autenticado (no los de otro), y esos permisos ya eran calculables/consistentes con lo que el backend aplica en cada request vía `PermissionChecker` (`User.get_permissions(org_id)`, mismo criterio: `is_superuser` -> `["*"]`, si no, unión de permisos de los roles del usuario en esa organización).
 
 **Pendiente relacionado (para que quede registrado):** no se agregó eager loading (`joinedload`) de `organizations_access.roles.permissions` en la carga de `current_user`, así que esto puede generar N+1 queries livianas en `/auth/me`. No se optimizó en esta pasada porque el volumen de datos es chico (pocas orgs/roles/permisos por usuario); si se vuelve un problema de performance, es la primera optimización a hacer.
+
+### 9. Rename cosmético "Estado de Contacto" -> "Estado" en `SYSTEM_ENTITIES_REGISTRY` (pedido por el usuario 2026-07-25)
+
+**Contexto:** el usuario pidió (sesión de frontend, 2026-07-25) renombrar en toda la UI "Estado de Flujo" -> "Ciclo de Vida" y "Estado de Contacto" -> "Estado", con la instrucción explícita de no tocar el backend para evitar líos de renombrar archivos/modelos. Al revisar el selector de entidades de Auditoría del Sistema (`SystemAuditLogs.tsx`), se encontró que sus opciones NO están hardcodeadas en el frontend — se arman en vivo desde `getDictionaries(["entities", ...])`, que sirve `SYSTEM_ENTITIES_REGISTRY.<key>.name` tal cual. Ahí `lead_contact_state` seguía diciendo "Estado de Contacto". Se probó primero un override puramente visual en el frontend (mapa `ENTITY_LABEL_OVERRIDES` en `SystemAuditLogs.tsx`), pero el usuario prefirió cambiar el dato en origen ya que es solo un string de display, no un rename de archivo/modelo/tabla.
+
+**Cambio aplicado:** en `app/core/dictionaries.py`, `SYSTEM_ENTITIES_REGISTRY["lead_contact_state"]["name"]` pasó de `"Estado de Contacto"` a `"Estado"`. Sin cambios de modelo, tabla, columna ni migración — es solo el string de display usado por `/metadata/dictionaries` (entities) para: (a) el selector "Entidad" de `GET /audit-logs` en el frontend, y (b) cualquier otro lugar que lea ese diccionario para mostrar el nombre humano de la entidad.
+
+**Dejado sin tocar, a confirmar con el usuario:** en el mismo registro existen `lead_state` (`"name": "Estado de Lead"`) y `lead_state_transition` (`"name": "Transición de Estado"`) — frases distintas a las dos que pidió renombrar originalmente, no se tocaron. Tampoco se tocaron los strings internos `action="Crear Estado de Contacto"` / `action="Actualizar Estado de Contacto"` en `app/services/lead_contact_state_service.py` (usados solo como contexto de mensajes de error internos, no vienen del registro ni se mostraron como el problema reportado).
+
+**Verificación:** no se encontró ningún test en `tests/` que assertee el string literal `"Estado de Contacto"` (se grepeó todo `backend/`, solo aparece en `docs/estados_de_contacto.md`, `hallazgos_agente/estados_de_contacto.md` y los `action=` de arriba). No hace falta borrar/recrear la base (no es un cambio de esquema). Sin PostgreSQL en este sandbox (ver §4), no se pudo correr la suite — pendiente que el usuario confirme que nada depende de ese string exacto.
+
+**[Continuación 2026-07-25, misma sesión] `lead_state`/`lead_state_transition`/`lead_state_history` también renombrados.** El usuario explicó la relación entre `lead_flow` (ya conceptualmente "Ciclo de Vida" en el front), `lead_state` y `lead_state_transition`, y pidió nombres que los asocien al mismo "Ciclo de Vida" sin confundirse con `lead_contact_state` (ahora "Estado"). Esquema acordado con el usuario (confirmado explícitamente vía pregunta): usar **"Etapa"** en vez de "Estado" para todo lo que vive dentro de un ciclo de vida, dejando "Estado" exclusivo para `lead_contact_state`.
+
+Cambios en `SYSTEM_ENTITIES_REGISTRY` (`app/core/dictionaries.py`):
+- `lead_flow`: `"Flujo de Leads"` -> `"Ciclo de Vida"`
+- `lead_state`: `"Estado de Lead"` -> `"Etapa de Ciclo de Vida"`
+- `lead_state_transition`: `"Transición de Estado"` -> `"Transición de Etapa"`
+- `lead_state_history`: `"Historial de Estado"` -> `"Historial de Etapa"` (no estaba en la lista original del usuario, se sumó por ser directamente el historial de cambios de `lead_state` — mismo criterio, avisado en el chat, no confirmado con pregunta explícita porque es una consecuencia directa del esquema ya acordado)
+
+Mismo alcance que el cambio anterior: solo el string `"name"` de 4 entradas del registro, sin tocar modelos/tablas/columnas ni requerir migración. El usuario también pidió (y se confirmó) llevar el mismo vocabulario "Estado" -> "Etapa" al editor visual de flujos del frontend (`frontend/src/features/leadFlows/*`) — ver `frontend/src/logs/2026-07-25.md` para el detalle de esos archivos.
+
+### 10. `LeadResponse` ahora expone `creator`/`updater` (pedido por el usuario 2026-07-25)
+
+**Contexto:** en la lista de leads del frontend ya existían filtros/columnas nativas para `Fecha de creación`/`Fecha de actualización` (`created_at`/`updated_at`), pero faltaba el equivalente para "quién" creó/modificó el lead. El usuario pidió agregarlo.
+
+**Cambio aplicado:** en `app/schemas/lead_schema.py`, se agregaron a `LeadResponse` (el schema liviano que usa la lista, NO `LeadDetailedResponse`) los campos `created_by: Optional[int]`, `updated_by: Optional[int]`, `creator: Optional[UserSimpleResponse]`, `updater: Optional[UserSimpleResponse]` — mismo patrón exacto que los ya existentes `team`/`assigned_to_user` en ese mismo schema. No fue necesario tocar `app/models/lead.py` ni `base_model.py`: las relaciones SQLAlchemy `creator`/`updater` (sobre `created_by`/`updated_by`) ya existen genéricamente en `BaseModelDB` para todas las entidades, sin usar hasta ahora.
+
+**Nota de performance:** al igual que `team`/`assigned_to_user`, estas relaciones son lazy-load (sin `joinedload` explícito en `lead_repository.py`). Es el mismo comportamiento ya aceptado para esos dos campos — no se agregó eager loading nuevo, para no introducir un cambio de performance no pedido. Si en el futuro se nota lentitud en listados grandes, este es el lugar a revisar (agregar `joinedload(Lead.creator)`/`joinedload(Lead.updater)` junto a `team`/`assigned_to_user` en la query de listado).
+
+**Frontend:** ver `frontend/src/logs/2026-07-25.md` — se agregaron los campos nativos "Usuario Creador"/"Usuario Modificación" a filtros y columnas de la lista de leads, reutilizando el mismo selector de usuarios ya usado para "Asignado a".
+
+### 11. `LeadDetailedResponse` ahora también expone `team`/`assigned_to_user` (pedido por el usuario 2026-07-25)
+
+**Contexto:** el usuario pidió mostrar en el detalle del lead (no solo en la lista): equipo asignado, usuario asignado, usuario creador y usuario modificador. `creator`/`updater` ya venían gratis en `LeadDetailedResponse` (hereda de `BaseDetailedResponse`), pero `team`/`assigned_to_user` no estaban — había un comentario en el frontend (`LeadDetails.tsx`) que decía explícitamente "el backend todavía no expone assigned_to_user/team en el detalle del lead".
+
+**Cambio aplicado:** en `app/schemas/lead_schema.py`, se agregó a `LeadDetailedResponse`: `team: Optional[TeamResponse] = None` y `assigned_to_user: Optional[UserSimpleResponse] = None` — mismos campos y mismo tipo que ya existían en `LeadResponse` (§10), ahora también en el schema detallado. Sin cambios de modelo (las relaciones `team`/`assigned_to_user` ya existen en `app/models/lead.py`).
+
+**Frontend:** ver `frontend/src/logs/2026-07-25.md` — `LeadMetaInfo` (en `LeadDetails.tsx`) ahora resuelve los nombres en vez de mostrar la etiqueta vacía, y suma las filas "Creado por"/"Modificado por" con tooltip de email.
+
+### 12. `PATCH /leads/bulk-assign` ahora soporta desasignar (`clear_team`/`clear_user`) (pedido por el usuario 2026-07-25)
+
+**Contexto:** el usuario pidió poder editar equipo/usuario asignado desde el detalle del lead, con un selector. El único endpoint que puede tocar `team_id`/`assigned_to_user_id` es `PATCH /leads/bulk-assign` (`LeadUpdate`, usado por `PUT /leads/{id}`, no incluye esos campos). Ese endpoint ya usa `target_team_id`/`target_user_id = None` como sentinel de **"no tocar este campo"**, así que no había forma de mandar "vaciar la asignación" — necesario para que el selector del frontend pueda tener una opción "Sin asignar".
+
+**Permiso:** confirmado que `PATCH /leads/bulk-assign` ya requiere `lead:update` (`cls._get_deps("update")` en `lead_controller.py`, resuelve a `f"{table_name}:update"` = `lead:update`) — el mismo permiso que el resto de las acciones de edición del lead. No hizo falta crear un permiso nuevo, correspondía usar el existente.
+
+**Cambio aplicado:**
+- `app/schemas/team_member_schema.py`: `BulkAssignRequest` suma `clear_team: bool = False` y `clear_user: bool = False`.
+- `app/controllers/lead_controller.py` (`bulk_assign_leads`): la validación de "debe especificar al menos un destino" ahora también acepta `clear_team`/`clear_user`; se agregó validación de que no se pida asignar y desasignar el mismo campo a la vez (400 si `target_team_id` + `clear_team`, o `target_user_id` + `clear_user`).
+- `app/services/lead_service.py` (`bulk_assign`): nuevos parámetros `clear_team`/`clear_user`; si vienen en `True`, `lead.team_id`/`lead.assigned_to_user_id` pasan a `None` (tiene prioridad sobre `target_team_id`/`target_user_id`, que ya se validó que no vengan juntos). Sin cambios en la resolución de nombres para el timeline/auditoría (`teams_map.get(None)`/`users_map.get(None)` ya devuelven `None` correctamente).
+
+**Frontend:** ver `frontend/src/logs/2026-07-25.md` — nuevo `bulkAssignLeads` en `leadService.ts`, y selectores editables de Usuario/Equipo asignado en `LeadDetails.tsx` (`LeadMetaInfo`), con una opción "Sin asignar" que manda `clear_user`/`clear_team`.
+
+### 13. Bug: `PATCH /leads/bulk-assign` guardaba el cambio pero devolvía error 500 (reportado por el usuario 2026-07-25, al probar los selectores de §12)
+
+**Síntoma:** al reasignar usuario/equipo desde el frontend, aparecía un error, pero al refrescar la página el cambio SÍ estaba guardado.
+
+**Causa:** `lead_service.bulk_assign` (`do_bulk`) devolvía los objetos `Lead` de SQLAlchemy sin convertir, y `cls._execute` los retorna recién después de que `UnitOfWork.__exit__` ya hizo `commit()` + `close()` de la sesión. FastAPI intenta convertir esos objetos "crudos" a `LeadResponse` (`response_model`) en la capa de serialización, que corre DESPUÉS de que la sesión ya cerró. Como `LeadResponse` incluye relaciones (`team`, `assigned_to_user`, `creator`, `updater`) que `do_bulk` nunca accede directamente (solo lee/escribe los IDs `team_id`/`assigned_to_user_id`), esas relaciones seguían sin cargar en el objeto — y SQLAlchemy no puede lazy-cargar relaciones en un objeto ya desconectado de su sesión (`DetachedInstanceError`, que termina como 500 al llegar a FastAPI). El `commit()` ya había pasado, por eso el dato quedaba guardado igual.
+
+**Por qué no pasaba en otros endpoints:** `base_repository.py` (`get_all`, `get_by_id`, `create`, `update`) convierte a Pydantic (`schema_out.model_validate(obj)`) **dentro** del método de repositorio, mientras la sesión todavía está abierta — nunca dependen de que FastAPI haga la conversión automática después. `bulk_assign` era la excepción a ese patrón.
+
+**Fix aplicado:** en `app/services/lead_service.py`, `do_bulk` ahora retorna `[cls.repository.schema_out.model_validate(lead) for lead in leads]` en vez de `leads`, siguiendo el mismo patrón que `base_repository.py`. Sin cambios de modelo/schema.
+
+### 14. Campos nativos del lead usables en Automatizaciones de Campos (pedido por el usuario 2026-07-25)
+
+**Pedido:** poder referenciar en Automatizaciones de Campos (condiciones y acciones) no solo los `LeadField` custom (EAV), sino también atributos nativos del modelo `Lead`: Estado, Etapa, Equipo, Asignado a, Fecha de creación, Fecha de actualización, Usuario Creador, Usuario Modificación — los mismos 8 que ya existían como filtros/columnas de la lista de leads (`frontend/src/features/lead/nativeLeadFields.ts`).
+
+**Decisiones del usuario (confirmadas antes de implementar):**
+- Lectura y escritura para Estado/Etapa/Equipo/Asignado a. Solo lectura para los 4 campos de auditoría (fechas, creador, modificador) — no tiene sentido "setearlos" a mano.
+- **Para Etapa (`current_state_id`), las automatizaciones IGNORAN la validación de transiciones permitidas** (la que sí exige el endpoint `change_state`). Cita textual: *"las automatizaciones es como un update en la base de datos"*. Mismo criterio aplicado a Equipo/Usuario asignado: no se valida "pertenece al equipo" (la que sí exige `bulk-assign`). Solo queda un chequeo liviano de que el ID de destino exista y pertenezca a la organización/flujo correcto, para no dejar una FK rota.
+- Los selectores de valor en el frontend usan opciones reales (dropdown con nombres), no un ID a mano.
+
+**Cómo funciona (importante para no romperlo en cambios futuros):**
+- `RuleCondition.field_id` / `AutomationAction.target_field_id` ya eran `int` sin restricción (`gt=0`) — los IDs negativos funcionan sin tocar schemas de automatización.
+- Nuevo registro `app/core/native_lead_fields.py`: mapea id negativo ↔ atributo real del modelo `Lead` (`NATIVE_LEAD_FIELDS`, `NATIVE_LEAD_FIELDS_BY_ATTR`, `WRITABLE_NATIVE_FIELD_IDS`). **Los IDs deben coincidir exactamente con `frontend/src/features/lead/nativeLeadFields.ts`** — no hay generación automática, es sincronización manual. Si se agrega un campo nativo nuevo, hay que replicarlo en los dos lados con el mismo ID.
+- `app/services/automation_engine.py::_apply_actions`: un guard ignora (no falla la regla, solo salta esa acción) si `target_field_id` es un nativo de solo lectura. El resto del motor (`_evaluate_condition`/`_evaluate_group`) no necesitó cambios — ya operaba de forma genérica sobre el dict `context_data` por id.
+- `app/services/lead_service.py`:
+  - `create()`: se adelantó la resolución de `initial_state`/`initial_contact_state` a ANTES de correr el motor de automatizaciones (antes corría después, y una regla "Al crear registro" no podía leer/sobreescribir Etapa/Estado). Se pasa un `native_ctx` a `_prepare_creation_data` con los valores nativos conocidos a esa altura. Después de correr el motor, se recalculan `final_current_state_id`/`final_contact_state_id`/`final_team_id`/`final_assigned_user_id` a partir del contexto post-automatización (con el chequeo liviano de existencia, sin validar transición/pertenencia a equipo), y esos valores (no los originales del request) son los que alimentan el motor de enrutamiento y el `lead_data` final.
+  - `update()`: se inyecta `build_native_context_from_lead(current_lead)` en `full_context` antes de correr el motor (`ON_UPDATE`). Después de calcular `changes`/`history_changes` de los campos custom, se llama a `_apply_native_automation_writeback(uow, obj_id, native_ctx_before, automation_audit, user_context)` (ver §15 — extraído a un helper compartido) para validar existencia/organización y aplicar `setattr` directo sobre la fila `Lead`. Los cambios nativos quedan en `changes`/`history_changes` (con key `f"native_{attr}"`) para auditoría y timeline, usando `_translate_native_value_for_history` (resuelve IDs de Etapa/Estado/Equipo/Usuario a nombres legibles).
+  - **Limitación conocida, no atacada en este cambio:** en `update()`, el motor de automatizaciones (y por lo tanto la lectura/escritura de nativos) solo corre si `obj_in.values is not None` — si un request solo trae, por ejemplo, un cambio de campos nativos sin ningún campo custom, no dispara. Es una restricción arquitectónica preexistente. Sigue sin atacarse (`update()` es el PUT genérico de campos custom; el caso de "solo cambiar un nativo" pasa en la práctica por los métodos dedicados de §15, no por acá).
+
+**Frontend:** `nativeLeadFields.ts` suma `WRITABLE_NATIVE_KEYS` y el tipo `NativeFieldOptions`. `AutomationPage.tsx` prepende los 8 nativos a la lista de campos y trae las opciones reales (estados de contacto, etapas del flujo de la campaña, equipos, usuarios) para los selectores. `ConditionRow.tsx`/`ActionRow.tsx` suman un tipo de valor `NATIVE_ID` (selector con esas opciones); `ActionRow.tsx` además excluye los 4 nativos de solo lectura de `allowedTargetFields` (defensa en profundidad, ya que el guard real está en el backend). Detalle completo de los 7 archivos tocados en `frontend/src/logs/2026-07-25.md`.
+
+**No probado end-to-end:** este sandbox no tiene PostgreSQL, así que el flujo completo de `create()`/`update()`/motor de automatizaciones con campos nativos no se pudo correr. Se hizo una revisión de código línea por línea del diff, pero falta la prueba manual real — avisar al usuario.
+
+### 15. Bug: las automatizaciones no se disparaban al cambiar Estado/Etapa/Equipo/Usuario asignado desde sus selectores dedicados (reportado por el usuario 2026-07-25, al probar §14)
+
+**Síntoma:** el usuario armó una regla "cuando Estado = Rechazado, entonces Etapa = No interesado" y no se disparaba nunca al cambiar el Estado desde el selector del detalle del lead.
+
+**Causa:** el trabajo de §14 conectó el motor de automatizaciones (`AutomationEngine.run`) a los campos nativos SOLO dentro de `create()` y `update()` (el PUT genérico `/leads/{id}`). Pero cambiar Estado, Etapa, Equipo o Usuario asignado desde la UI del detalle del lead **no pasa por `update()`** — usa 4 métodos completamente aparte que escriben directo (`repository.update`/`setattr`) y nunca invocaban el motor:
+- `change_state()` (Etapa, vía el popover de cambio de etapa) — valida transición de flujo, pero jamás corría automatizaciones.
+- `change_contact_state()` (Estado) — sin transiciones restringidas, tampoco corría automatizaciones. **Este es el caso exacto que reportó el usuario.**
+- `bulk_assign()` (Equipo/Usuario asignado, usado también por los selectores de §12) — tampoco.
+
+Es decir, el motor de automatizaciones solo se disparaba al crear un lead o al editar campos custom (`PUT /leads/{id}` con `values`) — nunca al cambiar un campo nativo desde su selector dedicado, que es la forma normal en que un usuario cambia esos 4 campos día a día.
+
+**Fix aplicado — 2 helpers nuevos + wiring en los 3 métodos, todo en `app/services/lead_service.py`:**
+- `_apply_native_automation_writeback(uow, obj_id, native_ctx_before, automation_audit, user_context)`: la validación liviana de existencia/organización + `setattr` sobre la fila real, extraída tal cual del bloque que antes vivía inline dentro de `update()` (§14), ahora reutilizable. `update()` fue refactorizado para llamarlo en vez de tener el bloque duplicado.
+- `_run_native_change_automations(uow, lead_orm, event, user_context)`: arma el contexto (campos custom actuales del lead + los 8 nativos actuales vía `build_native_context_from_lead`), corre `AutomationEngine.run(event=...)`, y si hubo cambios aplicables llama al helper anterior. Devuelve `(changes, history_changes)` listos para loguear.
+- **Wiring:** `change_state`, `change_contact_state` y `bulk_assign` (dentro del loop por lead) ahora llaman a `_run_native_change_automations` justo DESPUÉS de aplicar su cambio directo (para que la condición de la regla vea el valor ya actualizado, no el anterior), y mergean el resultado en su propio log de auditoría (`changes`) y agregan una entrada `FIELDS_UPDATED` aparte en el timeline si hubo `history_changes` (mismo patrón que ya usaba `update()` para cambios disparados por una automatización).
+
+**Limitación conocida, no atacada:** si una automatización dispara un cambio en el MISMO campo por el que se disparó (ej. una regla "al actualizar Etapa" que a su vez cambia Etapa), `change_state` no recalcula el registro de `LeadStateHistory` con el valor final post-automatización — ese historial sigue registrando la transición pedida originalmente, no el override en cadena. Es un caso de uso muy particular (regla auto-referencial sobre el mismo campo); se prefirió no darle más vueltas para no meter riesgo extra en un fix ya grande. Si aparece en la práctica, avisar.
+
+**Performance:** en `bulk_assign`, correr `_run_native_change_automations` dentro del loop por lead implica una corrida completa del motor por lead (igual que ya pasa en `create()`), más un lazy-load de `field_values` por lead si no venía precargado — con el límite existente de 200 leads por request no debería ser un problema, pero si en el futuro se sube ese límite conviene revisar.
+
+**No probado end-to-end** (misma limitación de sandbox sin PostgreSQL de siempre). Avisar al usuario que pruebe: cambiar Estado a "Rechazado" desde el selector del detalle del lead debería ahora sí disparar la regla y cambiar la Etapa a "No interesado".
