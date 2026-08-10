@@ -48,9 +48,9 @@ class BaseController:
 
         from pydantic import BaseModel
             
-        # Esquema para recibir el arreglo
+        # Esquema para recibir el arreglo (UUIDs públicos, no el id interno)
         class BulkIdsRequest(BaseModel):
-            ids: list[int]
+            ids: list[str]
 
         # ---------------------------------------------------------
         # GET ALL
@@ -75,10 +75,12 @@ class BaseController:
                 creator_email: str = Query(None, description="Filtrar por email del creador"),
                 updater_name: str = Query(None, description="Filtrar por nombre del actualizador"),
                 updater_email: str = Query(None, description="Filtrar por email del actualizador"),
+                creator_search: str = Query(None, description="Busca (OR) por nombre, apellido o email del creador"),
+                updater_search: str = Query(None, description="Busca (OR) por nombre, apellido o email del actualizador"),
                 user_context = Depends(get_current_user_roles)
             ):
                 # Definimos los parámetros reservados que no deben tratarse como filtros de columna
-                reserved_params = {"page", "page_size", "only_active", "detailed", "search", "search_fields", "order_by", "ascending", "start_date", "end_date", "date_field", "creator_name", "creator_email", "updater_name", "updater_email"}
+                reserved_params = {"page", "page_size", "only_active", "detailed", "search", "search_fields", "order_by", "ascending", "start_date", "end_date", "date_field", "creator_name", "creator_email", "updater_name", "updater_email", "creator_search", "updater_search"}
 
                 # Convertimos el string "field1,field2" en una lista ["field1", "field2"]
                 search_fields = [f.strip() for f in search_fields.split(",")] if search_fields else None
@@ -107,6 +109,8 @@ class BaseController:
                     creator_email=creator_email,
                     updater_name=updater_name,
                     updater_email=updater_email,
+                    creator_search=creator_search,
+                    updater_search=updater_search,
                     **dynamic_filters
                 )
 
@@ -126,15 +130,15 @@ class BaseController:
                 return cls.service.create(obj_in, user_context=user_context)
 
         if "PUT" in cls.enabled_methods:
-            @router.put("/{obj_id}", response_model=ResponseModelItem, 
+            @router.put("/{obj_id}", response_model=ResponseModelItem,
                 dependencies=cls._get_deps("update"))
-            def update(obj_id: int, obj_in: cls.schema_update = Body(...),
+            def update(obj_id: str, obj_in: cls.schema_update = Body(...),
                        user_context = Depends(get_current_user_roles)):
                 return cls.service.update(obj_id, obj_in, user_context=user_context)
 
         if "DELETE" in cls.enabled_methods:
             @router.delete("/{obj_id}", dependencies=cls._get_deps("delete"))
-            def delete(obj_id: int, force: bool = Query(False, description="Hard delete forzado (solo estrategias C y E)"), user_context = Depends(get_current_user_roles)):
+            def delete(obj_id: str, force: bool = Query(False, description="Hard delete forzado (solo estrategias C y E)"), user_context = Depends(get_current_user_roles)):
                 return cls.service.delete(obj_id, user_context=user_context, force=force)
             
         if "DELETE" in cls.enabled_methods:                
@@ -148,7 +152,7 @@ class BaseController:
 
         if "ACTIVE" in cls.enabled_methods:
             @router.put("/active/{obj_id}", dependencies=cls._get_deps("active"))
-            def set_active(obj_id: int, user_context = Depends(get_current_user_roles)):
+            def set_active(obj_id: str, user_context = Depends(get_current_user_roles)):
                 cls.service.set_active(obj_id, user_context=user_context)
                 return {"actived": True}
             
@@ -161,15 +165,15 @@ class BaseController:
 
         if "DEACTIVATE" in cls.enabled_methods:
             @router.delete("/active/{obj_id}", dependencies=cls._get_deps("delete"))
-            def deactivate(obj_id: int, user_context = Depends(get_current_user_roles)):
+            def deactivate(obj_id: str, user_context = Depends(get_current_user_roles)):
                 """Desactiva (active=False) sin eliminar el registro."""
                 return cls.service.deactivate(obj_id, user_context=user_context)
-            
+
         if "GET_ONE" in cls.enabled_methods:
-            @router.get("/{obj_id}", 
-                response_model=ResponseModelItem, 
+            @router.get("/{obj_id}",
+                response_model=ResponseModelItem,
                 dependencies=cls._get_deps("read"))
-            def get_one(obj_id: int, detailed: bool = Query(False), user_context = Depends(get_current_user_roles)):
+            def get_one(obj_id: str, detailed: bool = Query(False), user_context = Depends(get_current_user_roles)):
                 # El repositorio ya devuelve un objeto Pydantic (Detail o Simple)
                 obj = cls.service.get_by_id(obj_id, detailed=detailed, user_context=user_context)
                 

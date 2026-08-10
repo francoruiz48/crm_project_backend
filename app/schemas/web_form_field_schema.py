@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Union
 from pydantic import BaseModel, Field
 from app.schemas.base_schema import BaseCreate, BaseResponse
 from app.schemas.lead_field_schema import LeadFieldLiteResponse
@@ -12,7 +12,11 @@ class WebFormFieldBase(BaseModel):
     hidden_value: Optional[str] = Field(default=None, max_length=500, description="Si tiene valor, se oculta en el front y se manda este string")
 
 class WebFormFieldCreate(WebFormFieldBase, BaseCreate):
-    pass
+    # Override: a diferencia de WebFormFieldBase.lead_field_id (int, lo que sigue esperando el
+    # Response), acá acepta también el public_uuid del LeadField (Fase 3, nunca migrado en este
+    # módulo -- ver backend/AGENTS.md §18-undecies). Se resuelve en
+    # WebFormService._resolve_lead_field_ids antes de tocar la base de datos.
+    lead_field_id: Union[int, str] = Field(description="public_uuid (o, para callers internos, id interno) del LeadField real en el CRM")
 
 class WebFormFieldUpdate(BaseModel):
     order: Optional[int] = Field(default=None, gt=0)

@@ -6,6 +6,11 @@ Tests de autenticación y autorización:
   - Invite + Accept-invite
   - Límite de 1 organización por usuario
   - Restricciones de acceso en endpoints de usuarios
+  - Hallazgo #12: rate limiting en /auth/login y /auth/register
+  - Hallazgo #13: normalización de email (.strip().lower()) en Login/Register/UpdateMe
+  - Hallazgo #14: PUT /auth/me valida formato (EmailStr) y unicidad de email
+  - Hallazgo #11: get_client_ip (X-Forwarded-For/X-Real-IP) como fuente de IP
+    real detrás de un proxy, usada por el rate limiter de /auth/*
 """
 import pytest
 from app.core.constans import ADMIN_ORG_ID
@@ -13,11 +18,23 @@ from app.core.security import hash_password, _get_current_user, get_current_user
 from app.models.security_models import User, UserOrganization
 from app.models.organization import Organization
 from tests.fixtures.user_fixtures import _make_user, _link_user_to_org
+from app.controllers.security_controllers.auth_controller import limiter as auth_limiter
 
 
 # ---------------------------------------------------------------------------
 # Fixtures auxiliares
 # ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _reset_auth_rate_limiter():
+    """El Limiter de /auth/login y /auth/register (hallazgo #12) vive a nivel de
+    módulo y sus contadores persisten mientras dure el proceso de test. Casi todos
+    los tests de este archivo llaman a /auth/login y/o /auth/register (directo o
+    vía `registered_user`) — sin este reset se irían pisando la cuota de '10/minute'
+    entre sí y tests sin relación con rate limiting empezarían a fallar con 429."""
+    auth_limiter.reset()
+    yield
+
 
 @pytest.fixture
 def plain_client(db_session):
@@ -60,6 +77,38 @@ def registered_user(plain_client):
         "access_token": tokens["access_token"],
         "refresh_token": tokens["refresh_token"],
     }
+
+
+# ---------------------------------------------------------------------------
+# GET_CLIENT_IP (hallazgo #11)
+# ---------------------------------------------------------------------------
+
+class TestGetClientIp:
+    """get_client_ip (app/core/security.py) es la única fuente de verdad para
+    resolver la IP real de un visitante detrás de un proxy — la usan el rate
+    limiter de /auth/* y de /public/forms/*/submit, y el `remoteip` de CAPTCHA."""
+
+    @staticmethod
+    def _make_request(headers: dict, client_host: str = "127.0.0.1"):
+        from starlette.requests import Request
+        raw_headers = [(k.lower().encode(), v.encode()) for k, v in headers.items()]
+        scope = {"type": "http", "headers": raw_headers, "client": (client_host, 12345)}
+        return Request(scope)
+
+    def test_prefers_x_forwarded_for_first_ip(self):
+        from app.core.security import get_client_ip
+        req = self._make_request({"x-forwarded-for": "203.0.113.1, 10.0.0.1"}, client_host="10.0.0.1")
+        assert get_client_ip(req) == "203.0.113.1"
+
+    def test_falls_back_to_x_real_ip_without_forwarded_for(self):
+        from app.core.security import get_client_ip
+        req = self._make_request({"x-real-ip": "203.0.113.2"}, client_host="10.0.0.1")
+        assert get_client_ip(req) == "203.0.113.2"
+
+    def test_falls_back_to_request_client_host_without_proxy_headers(self):
+        from app.core.security import get_client_ip
+        req = self._make_request({}, client_host="198.51.100.9")
+        assert get_client_ip(req) == "198.51.100.9"
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +172,33 @@ class TestRegister:
             "password": "Fuerte1234",
         })
         assert resp.status_code == 200
+
+    def test_register_normalizes_email_to_lowercase(self, plain_client, db_session):
+        """Hallazgo #13: el email se guarda normalizado (.strip().lower()),
+        sin importar cómo lo mande el cliente."""
+        resp = plain_client.post("/auth/register", json={
+            "name": "Mayus",
+            "last_name": "Culas",
+            "email": "  Mayusculas@Test.COM  ",
+            "password": "Password123",
+        })
+        assert resp.status_code == 200, resp.text
+
+        user = db_session.query(User).filter_by(email="mayusculas@test.com").first()
+        assert user is not None, "El email debería haberse guardado normalizado a minúsculas."
+
+    def test_register_rejects_duplicate_email_different_case(self, plain_client):
+        """Hallazgo #13: dos registros con el mismo email en distinta
+        capitalización deben tratarse como el mismo email (400 duplicado)."""
+        plain_client.post("/auth/register", json={
+            "name": "Original", "last_name": "Test",
+            "email": "CaseTest@Empresa.com", "password": "Password123",
+        })
+        resp = plain_client.post("/auth/register", json={
+            "name": "Duplicado", "last_name": "Test",
+            "email": "casetest@empresa.com", "password": "Password123",
+        })
+        assert resp.status_code == 400
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +265,90 @@ class TestLogin:
         })
         assert resp.status_code == 401
 
+    def test_login_with_different_case_succeeds_after_register(self, plain_client):
+        """Hallazgo #13: registrarse con una capitalización y loguearse con otra
+        debe funcionar, porque ambos extremos normalizan antes de comparar."""
+        resp_register = plain_client.post("/auth/register", json={
+            "name": "Case", "last_name": "Login",
+            "email": "CaseLogin@Test.com", "password": "Password123",
+        })
+        assert resp_register.status_code == 200, resp_register.text
+
+        resp_login = plain_client.post("/auth/login", json={
+            "email": "caselogin@test.com",
+            "password": "Password123",
+        })
+        assert resp_login.status_code == 200, resp_login.text
+
+
+# ---------------------------------------------------------------------------
+# RATE LIMITING (hallazgo #12) — /auth/login y /auth/register, 10/minuto por IP
+# ---------------------------------------------------------------------------
+
+class TestAuthRateLimiting:
+    def test_login_rate_limited_after_ten_per_minute(self, plain_client):
+        """Al 11vo intento de login en la misma ventana, debe cortar con 429
+        en vez de seguir evaluando credenciales (fuerza bruta sin freno,
+        hallazgo #12)."""
+        statuses = []
+        for _ in range(11):
+            resp = plain_client.post("/auth/login", json={
+                "email": "no-existe-rate-limit@test.com",
+                "password": "cualquiera",
+            })
+            statuses.append(resp.status_code)
+
+        assert 429 in statuses, f"Se esperaba al menos un 429 entre los 11 intentos, se obtuvo: {statuses}"
+        # Antes de agotar la cuota, el intento debe fallar por credenciales (401),
+        # no por otro motivo distinto al rate limit.
+        assert all(s in (401, 429) for s in statuses)
+
+    def test_register_rate_limited_after_ten_per_minute(self, plain_client):
+        """Al 11vo intento de registro en la misma ventana, debe cortar con 429
+        (protección contra spam de creación de cuentas, hallazgo #12)."""
+        statuses = []
+        for i in range(11):
+            resp = plain_client.post("/auth/register", json={
+                "name": "Rate",
+                "last_name": "Limit",
+                "email": f"rate_limit_{i}@test.com",
+                "password": "Password123",
+            })
+            statuses.append(resp.status_code)
+
+        assert 429 in statuses, f"Se esperaba al menos un 429 entre los 11 intentos, se obtuvo: {statuses}"
+        # Antes de agotar la cuota, cada registro con email distinto debe dar 200.
+        assert all(s in (200, 429) for s in statuses)
+
+    def test_rate_limit_uses_x_forwarded_for_not_shared_across_visitors(self, plain_client):
+        """Hallazgo #11: el rate limit debe basarse en X-Forwarded-For (IP real del
+        visitante detrás de un proxy), no en request.client.host — que sería la
+        misma para todos los visitantes si hay un proxy delante (como el
+        TestClient, que siempre pega desde la misma conexión)."""
+        headers_visitor_a = {"X-Forwarded-For": "203.0.113.10"}
+        headers_visitor_b = {"X-Forwarded-For": "203.0.113.20"}
+
+        # Agotar la cuota del visitante A.
+        statuses_a = []
+        for _ in range(11):
+            resp = plain_client.post(
+                "/auth/login",
+                json={"email": "no-existe-rate-limit-a@test.com", "password": "cualquiera"},
+                headers=headers_visitor_a,
+            )
+            statuses_a.append(resp.status_code)
+        assert 429 in statuses_a, f"Se esperaba al menos un 429 para el visitante A, se obtuvo: {statuses_a}"
+
+        # El visitante B, con IP distinta, no debería estar bloqueado todavía.
+        resp_b = plain_client.post(
+            "/auth/login",
+            json={"email": "no-existe-rate-limit-b@test.com", "password": "cualquiera"},
+            headers=headers_visitor_b,
+        )
+        assert resp_b.status_code == 401, (
+            f"Esperaba 401 (IP distinta, cuota propia) pero recibió {resp_b.status_code}: {resp_b.text}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # REFRESH
@@ -242,6 +402,63 @@ class TestLogout:
 
 
 # ---------------------------------------------------------------------------
+# PUT /auth/me — hallazgos #13 (normalización) y #14 (formato + unicidad de email)
+# ---------------------------------------------------------------------------
+
+class TestUpdateMe:
+    def test_update_me_rejects_email_taken_by_another_user(self, plain_client, registered_user):
+        """Hallazgo #14: antes esto terminaba en un 500 (IntegrityError sin
+        capturar, User.email es unique) en vez de un 400 prolijo. registered_user
+        es el PRIMER usuario; acá probamos que un SEGUNDO usuario no pueda
+        apropiarse de su email vía PUT /auth/me."""
+        plain_client.post("/auth/register", json={
+            "name": "Segundo", "last_name": "Usuario",
+            "email": "segundo@security.com", "password": "Password123",
+        })
+        resp_login_segundo = plain_client.post("/auth/login", json={
+            "email": "segundo@security.com", "password": "Password123",
+        })
+        segundo_token = resp_login_segundo.json()["access_token"]
+
+        resp = plain_client.put(
+            "/auth/me",
+            json={"email": registered_user["email"]},
+            headers={"Authorization": f"Bearer {segundo_token}"},
+        )
+        assert resp.status_code == 400, resp.text
+
+    def test_update_me_rejects_invalid_email_format(self, plain_client, registered_user):
+        """Hallazgo #14: UserUpdate.email pasó de str suelto a EmailStr."""
+        resp = plain_client.put(
+            "/auth/me",
+            json={"email": "no-es-un-email"},
+            headers={"Authorization": f"Bearer {registered_user['access_token']}"},
+        )
+        assert resp.status_code == 422
+
+    def test_update_me_normalizes_new_email(self, plain_client, registered_user, db_session):
+        """Hallazgo #13 aplicado también acá: el nuevo email se guarda en minúsculas."""
+        resp = plain_client.put(
+            "/auth/me",
+            json={"email": "NuevoEmail@Test.COM"},
+            headers={"Authorization": f"Bearer {registered_user['access_token']}"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["email"] == "nuevoemail@test.com"
+
+    def test_update_me_allows_resubmitting_own_email_different_case(self, plain_client, registered_user):
+        """No debe dispararse el chequeo de unicidad contra uno mismo cuando el
+        'nuevo' email es, normalizado, el mismo que ya tenía."""
+        own_email_shouting = registered_user["email"].upper()
+        resp = plain_client.put(
+            "/auth/me",
+            json={"email": own_email_shouting},
+            headers={"Authorization": f"Bearer {registered_user['access_token']}"},
+        )
+        assert resp.status_code == 200, resp.text
+
+
+# ---------------------------------------------------------------------------
 # INVITE + ACCEPT INVITE
 # ---------------------------------------------------------------------------
 
@@ -285,9 +502,11 @@ class TestInvite:
         access_token = resp_login.json()["access_token"]
 
         # 3. Invitar a un email nuevo (X-Organization-Id requerido por PermissionChecker)
+        # organization_id en el body es str (public_uuid, Fase 3) desde 2026-08-01 -- ver
+        # AGENTS.md. org.id acá es el id interno de la fila ORM cruda, no sirve para el body.
         resp_invite = plain_client.post(
             "/auth/invite",
-            json={"email": "invited@test.com", "organization_id": org.id},
+            json={"email": "invited@test.com", "organization_id": org.public_uuid},
             headers={
                 "Authorization": f"Bearer {access_token}",
                 "X-Organization-Id": str(org.id),
@@ -353,7 +572,7 @@ class TestInvite:
 
         resp_invite = plain_client.post(
             "/auth/invite",
-            json={"email": "yaexisto@test.com", "organization_id": org.id},
+            json={"email": "yaexisto@test.com", "organization_id": org.public_uuid},
             headers={
                 "Authorization": f"Bearer {owner_token}",
                 "X-Organization-Id": str(org.id),
@@ -417,7 +636,7 @@ class TestInvite:
 
         resp_invite = plain_client.post(
             "/auth/invite",
-            json={"email": "destinatario@test.com", "organization_id": org.id},
+            json={"email": "destinatario@test.com", "organization_id": org.public_uuid},
             headers={
                 "Authorization": f"Bearer {owner_token}",
                 "X-Organization-Id": str(org.id),
@@ -611,7 +830,9 @@ class TestUserEndpoints:
 
         _apply_user_overrides(app, user, initial_structure["org_id"])
         try:
-            resp = client.put(f"/users/{user.id}",
+            # user.id sería el id interno crudo de la fila ORM (_make_user construye el User
+            # directo en la DB) -- PUT /users/{id} espera el public_uuid (Fase 2/3).
+            resp = client.put(f"/users/{user.public_uuid}",
                               json={"name": "Nuevo Nombre"},
                               headers={"X-Organization-Id": str(initial_structure["org_id"])})
             assert resp.status_code == 200
@@ -633,7 +854,7 @@ class TestUserEndpoints:
         # User A intenta editar a User B
         _apply_user_overrides(app, user_a, initial_structure["org_id"])
         try:
-            resp = client.put(f"/users/{user_b.id}",
+            resp = client.put(f"/users/{user_b.public_uuid}",
                               json={"name": "Hackeado"},
                               headers={"X-Organization-Id": str(initial_structure["org_id"])})
             assert resp.status_code == 403
@@ -651,7 +872,7 @@ class TestUserEndpoints:
 
         _apply_user_overrides(app, superadmin)
         try:
-            resp = client.put(f"/users/{target.id}",
+            resp = client.put(f"/users/{target.public_uuid}",
                               json={"name": "Actualizado por Admin"},
                               headers={"X-Organization-Id": str(initial_structure["org_id"])})
             assert resp.status_code == 200

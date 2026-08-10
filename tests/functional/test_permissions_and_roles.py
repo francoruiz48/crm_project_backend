@@ -26,6 +26,33 @@ from tests.fixtures.user_fixtures import (
     _make_user,
     _remove_user_overrides,
 )
+from app.controllers.security_controllers.auth_controller import limiter as auth_limiter
+
+
+def _resolve_internal_id(db_session, model, public_uuid_or_int):
+    """
+    Algunos endpoints (POST /organizations/) devuelven public_uuid, pero este archivo hace
+    queries ORM directas después (Role/UserOrganization.filter_by(organization_id=...)) contra
+    columnas FK Integer reales.
+    """
+    if isinstance(public_uuid_or_int, int):
+        return public_uuid_or_int
+    return db_session.query(model.id).filter_by(public_uuid=public_uuid_or_int).scalar()
+
+
+# ---------------------------------------------------------------------------
+# Fixtures auxiliares
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _reset_auth_rate_limiter():
+    """Este archivo llama a /auth/login y /auth/register varias veces (helper
+    `_login`, flujos de invite). El Limiter de esos endpoints (hallazgo #12,
+    10/minuto) vive a nivel de módulo y persiste entre tests — sin este reset,
+    corre el riesgo de acumularse junto con otros tests del archivo y disparar
+    un 429 inesperado. Ver el mismo patrón en test_security_auth.py."""
+    auth_limiter.reset()
+    yield
 
 
 # ---------------------------------------------------------------------------
@@ -193,9 +220,10 @@ class TestRoleCloning:
             _remove_user_overrides(app)
 
         db_session.expire_all()
-        admin_role = db_session.query(Role).filter_by(code="admin", organization_id=org_id).first()
-        agent_role = db_session.query(Role).filter_by(code="agent", organization_id=org_id).first()
-        viewer_role = db_session.query(Role).filter_by(code="viewer", organization_id=org_id).first()
+        org_internal_id = _resolve_internal_id(db_session, Organization, org_id)
+        admin_role = db_session.query(Role).filter_by(code="admin", organization_id=org_internal_id).first()
+        agent_role = db_session.query(Role).filter_by(code="agent", organization_id=org_internal_id).first()
+        viewer_role = db_session.query(Role).filter_by(code="viewer", organization_id=org_internal_id).first()
 
         assert admin_role is not None, "El rol admin no fue clonado para la nueva org"
         assert agent_role is not None, "El rol agent no fue clonado para la nueva org"
@@ -221,8 +249,9 @@ class TestRoleCloning:
             _remove_user_overrides(app)
 
         db_session.expire_all()
+        org_internal_id = _resolve_internal_id(db_session, Organization, org_id)
         membership = db_session.query(UserOrganization).filter_by(
-            user_id=creator.id, organization_id=org_id
+            user_id=creator.id, organization_id=org_internal_id
         ).first()
         assert membership is not None
         assert membership.is_owner is True
@@ -258,7 +287,7 @@ class TestUserInvitePermission:
 
         resp = plain_client.post(
             "/auth/invite",
-            json={"email": "nuevo@test.com", "organization_id": org.id, "role_code": "agent"},
+            json={"email": "nuevo@test.com", "organization_id": org.public_uuid, "role_code": "agent"},
             headers={
                 "Authorization": f"Bearer {token}",
                 "X-Organization-Id": str(org.id),
@@ -289,7 +318,7 @@ class TestUserInvitePermission:
 
         resp = plain_client.post(
             "/auth/invite",
-            json={"email": "nuevo@test.com", "organization_id": org.id},
+            json={"email": "nuevo@test.com", "organization_id": org.public_uuid},
             headers={
                 "Authorization": f"Bearer {token}",
                 "X-Organization-Id": str(org.id),
@@ -319,7 +348,7 @@ class TestUserInvitePermission:
 
         resp = plain_client.post(
             "/auth/invite",
-            json={"email": "nuevo@test.com", "organization_id": org.id, "role_code": "rol_inexistente"},
+            json={"email": "nuevo@test.com", "organization_id": org.public_uuid, "role_code": "rol_inexistente"},
             headers={
                 "Authorization": f"Bearer {token}",
                 "X-Organization-Id": str(org.id),
@@ -350,7 +379,7 @@ class TestUserInvitePermission:
         # Invitar con role_code="agent"
         resp_invite = plain_client.post(
             "/auth/invite",
-            json={"email": "invitee_role@test.com", "organization_id": org.id, "role_code": "agent"},
+            json={"email": "invitee_role@test.com", "organization_id": org.public_uuid, "role_code": "agent"},
             headers={
                 "Authorization": f"Bearer {token}",
                 "X-Organization-Id": str(org.id),
@@ -409,7 +438,7 @@ class TestUserInvitePermission:
         # Invitar sin especificar role_code (usa default="agent")
         resp_invite = plain_client.post(
             "/auth/invite",
-            json={"email": "default_invitee@test.com", "organization_id": org.id},
+            json={"email": "default_invitee@test.com", "organization_id": org.public_uuid},
             headers={
                 "Authorization": f"Bearer {token}",
                 "X-Organization-Id": str(org.id),
@@ -521,7 +550,7 @@ class TestUserViewAllPermission:
         _apply_user_overrides(app, admin_user, org_id)
         try:
             resp = client.get(
-                f"/users/{target.id}",
+                f"/users/{target.public_uuid}",
                 headers={"X-Organization-Id": str(org_id)},
             )
             assert resp.status_code == 200
@@ -644,7 +673,7 @@ class TestLeadVisibility:
             assert resp.status_code == 200
             data = resp.json()
             ids = [item["id"] for item in data.get("items", data)]
-            assert lead_priv.id in ids
+            assert lead_priv.public_uuid in ids
         finally:
             _remove_user_overrides(app)
 
@@ -671,7 +700,7 @@ class TestLeadVisibility:
             assert resp.status_code == 200
             data = resp.json()
             ids = [item["id"] for item in data.get("items", data)]
-            assert lead_pub.id in ids
+            assert lead_pub.public_uuid in ids
         finally:
             _remove_user_overrides(app)
 
@@ -700,7 +729,7 @@ class TestLeadVisibility:
             data = resp.json()
             ids = [item["id"] for item in data.get("items", data)]
             # El lead no debería aparecer (campaña privada, no es del agent)
-            assert lead_priv.id not in ids
+            assert lead_priv.public_uuid not in ids
         finally:
             _remove_user_overrides(app)
 
@@ -727,7 +756,7 @@ class TestLeadVisibility:
             assert resp.status_code == 200
             data = resp.json()
             ids = [item["id"] for item in data.get("items", data)]
-            assert my_lead.id in ids
+            assert my_lead.public_uuid in ids
         finally:
             _remove_user_overrides(app)
 
@@ -751,7 +780,7 @@ class TestLeadVisibility:
             assert resp.status_code == 200
             data = resp.json()
             ids = [item["id"] for item in data.get("items", data)]
-            assert lead_priv.id in ids
+            assert lead_priv.public_uuid in ids
         finally:
             _remove_user_overrides(app)
 
@@ -778,6 +807,6 @@ class TestLeadVisibility:
             assert resp.status_code == 200
             data = resp.json()
             ids = [item["id"] for item in data.get("items", data)]
-            assert lead_priv.id in ids
+            assert lead_priv.public_uuid in ids
         finally:
             _remove_user_overrides(app)

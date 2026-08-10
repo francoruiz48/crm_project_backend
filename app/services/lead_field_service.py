@@ -1,7 +1,9 @@
 from typing import Optional
+import unicodedata
 from fastapi import HTTPException, status
 from app.models.lead_field_section import LeadFieldSection
 from app.models.nomenclator import Nomenclator
+from app.db.unit_of_work import UnitOfWork
 from app.services.base_service import BaseService
 from app.core.templates.field_templates import STANDARD_FIELD_TEMPLATES
 from app.services.nomenclator_service import NomenclatorService
@@ -15,6 +17,7 @@ from app.models.lead_field_value import LeadFieldValue
 from app.core.error_messages import SUCCESS_UPDATE
 from app.models.lead_field import LeadField
 from app.db.repository.campaign_repository import CampaignRepository
+from app.db.repository.nomenclator_repository import NomenclatorRepository
 from app.core.templates.field_rules_map import DEFAULT_SUBTYPE_RULES, DEFAULT_TYPE_RULES,STANDARD_INPUT_MASKS, DEFAULT_TYPE_MASKS, DEFAULT_SUBTYPE_MASKS
 from sqlalchemy.orm import selectinload
 from app.models.lead import Lead
@@ -25,6 +28,19 @@ from app.core.security import UserContext
 from app.schemas.lead_field_schema import LeadFieldOrderList
 from app.core.context import TENANT_ORG_ID
 from app.db.repository.lead_field_section_repository import LeadFieldSectionRepository
+
+# Auto-asignación "inteligente" de title_order/subtitle_order al crear un campo (ver
+# LeadFieldService._maybe_auto_assign_order y sus dos wrappers). Match EXACTO de nombre (con
+# sinónimos, incluyendo variantes en inglés), sin importar mayúsculas/tildes — a propósito no es
+# un "contains", para no matchear de más (ej. "Nombre de la empresa" no dispara nada).
+AUTO_TITLE_ORDER_NAMES = {
+    "nombre": 1, "nombres": 1, "name": 1, "first name": 1, "firstname": 1,
+    "apellido": 2, "apellidos": 2, "lastname": 2, "last name": 2, "surname": 2,
+}
+AUTO_SUBTITLE_ORDER_NAMES = {
+    "cargo": 1, "puesto": 1, "position": 1, "job title": 1, "jobtitle": 1,
+    "empresa": 2, "compañía": 2, "company": 2, "organización": 2,
+}
 
 class LeadFieldService(BaseService):
     repository = LeadFieldRepository
@@ -37,40 +53,114 @@ class LeadFieldService(BaseService):
     # =========================================================================
 
     @classmethod
+    def _normalize_field_name(cls, name: str) -> str:
+        """Minúsculas y sin tildes, para matchear nombres de campo sin importar cómo se hayan tipeado."""
+        return "".join(
+            c for c in unicodedata.normalize("NFD", name.strip().lower())
+            if unicodedata.category(c) != "Mn"
+        )
+
+    @classmethod
+    def _maybe_auto_assign_order(cls, session, campaign_id: int, name: Optional[str], data: dict,
+                                  data_key: str, model_column, synonym_map: dict):
+        """
+        Helper genérico detrás de _maybe_auto_assign_title_order/_maybe_auto_assign_subtitle_order.
+        Si el usuario no especificó `data_key` (title_order/subtitle_order) a mano, y el nombre
+        del campo matchea EXACTO (sin importar mayúsculas/tildes) con algún sinónimo del mapa, se
+        autoasigna el slot correspondiente — pero SOLO si ESE slot puntual todavía no está ocupado
+        por otro campo activo, para no pisar nunca una configuración manual ya hecha. El chequeo
+        es por slot, no por campaña completa: así "Nombre"/"Apellido" (o "Cargo"/"Empresa") se
+        pueden ir creando en pasos separados, el caso más común, sin que el primero bloquee al
+        segundo. Solo aplica al crear el campo, no si luego se lo renombra.
+        """
+        if data.get(data_key) is not None or not name:
+            return
+
+        auto_order = synonym_map.get(cls._normalize_field_name(name))
+        if auto_order is None:
+            return
+
+        slot_taken = session.query(LeadField.id).filter(
+            LeadField.campaign_id == campaign_id,
+            model_column == auto_order,
+            LeadField.active == True
+        ).first() is not None
+
+        if not slot_taken:
+            data[data_key] = auto_order
+
+    @classmethod
+    def _maybe_auto_assign_title_order(cls, session, campaign_id: int, name: Optional[str], data: dict):
+        cls._maybe_auto_assign_order(session, campaign_id, name, data, "title_order", LeadField.title_order, AUTO_TITLE_ORDER_NAMES)
+
+    @classmethod
+    def _maybe_auto_assign_subtitle_order(cls, session, campaign_id: int, name: Optional[str], data: dict):
+        cls._maybe_auto_assign_order(session, campaign_id, name, data, "subtitle_order", LeadField.subtitle_order, AUTO_SUBTITLE_ORDER_NAMES)
+
+    @classmethod
     def _check_name_uniqueness(cls, session, campaign_id: int, name: str, errors: list, exclude_id: int = None):
         """
         Verifica duplicados de nombre. Agrega error a la lista si falla.
+
+        Bug real encontrado 2026-08-01 (código frágil, sin impacto real hasta ahora -- ver
+        backend/AGENTS.md §52): antes usaba `cls.repository.get_all()`, que devuelve schemas
+        Pydantic (`.id` = public_uuid, Fase 3), y comparaba ese `.id` contra `exclude_id` (id
+        interno, int) -- una comparación string-vs-int que siempre da True, así que la
+        exclusión del propio campo nunca funcionaba de verdad. No se notaba porque los dos
+        call sites que pasan `exclude_id` (update() y set_active()) tienen una guarda previa
+        que hace que el campo propio nunca pueda aparecer en `existing` para empezar. Se pasa
+        a una query directa al ORM (mismo patrón que tag_service.py/lead_flow_service.py) para
+        que la exclusión compare ids reales contra ids reales.
         """
         if not name: return
-        existing = cls.repository.get_all(session=session, only_active=True, detailed=False, campaign_id=campaign_id, name=name)
-        
-        if existing:
-            if exclude_id is None or existing[0].id != exclude_id:
-                errors.append({"field": "name", "message": "Ya existe un campo activo con este nombre en la campaña."})
+        query = session.query(LeadField).filter(
+            LeadField.campaign_id == campaign_id,
+            LeadField.name == name,
+            LeadField.active == True,
+        )
+        if exclude_id is not None:
+            query = query.filter(LeadField.id != exclude_id)
+        if query.first():
+            errors.append({"field": "name", "message": "Ya existe un campo activo con este nombre en la campaña."})
 
     @classmethod
     def _check_order_uniqueness(cls, session, campaign_id: int, order: int, errors: list, exclude_id: int = None):
         """
         Verifica colisión de orden. Agrega error a la lista si falla.
+
+        Mismo bug y mismo fix que _check_name_uniqueness (ver comentario ahí, backend/AGENTS.md §52).
         """
         if order is None: return
-        collision = cls.repository.get_all(session=session, only_active=True, detailed=False, campaign_id=campaign_id, order=order)
-        
+        query = session.query(LeadField).filter(
+            LeadField.campaign_id == campaign_id,
+            LeadField.order == order,
+            LeadField.active == True,
+        )
+        if exclude_id is not None:
+            query = query.filter(LeadField.id != exclude_id)
+        collision = query.first()
         if collision:
-            if exclude_id is None or collision[0].id != exclude_id:
-                errors.append({"field": "order", "message": f"El orden {order} ya está ocupado por el campo '{collision[0].name}'."})
+            errors.append({"field": "order", "message": f"El orden {order} ya está ocupado por el campo '{collision.name}'."})
 
     @classmethod
-    def _check_historic_constraints(cls, session, field: LeadField, new_required: bool, new_primary: bool, errors: list):
+    def _check_historic_constraints(cls, session, field, field_internal_id: int, new_required: bool, new_primary: bool, errors: list):
         """
         Valida integridad histórica. Agrega errores a la lista.
+
+        Bug real encontrado 2026-07-30: `field` es el resultado de `cls.repository.get_by_id()`,
+        que devuelve el schema Pydantic (no el ORM) -- su `.id` es el public_uuid (Fase 3), no
+        el id interno. La query de abajo comparaba `LeadFieldValue.field_id` (columna Integer)
+        contra ese uuid, rompiendo con un DataError de Postgres en CUALQUIER intento de marcar
+        un campo como requerido (quedaba enmascarado como un 400 genérico con detail en texto
+        plano, en vez del formato estructurado de `errors`). Se agrega `field_internal_id`
+        explícito (el caller ya lo tiene resuelto) en vez de confiar en `field.id`.
         """
         # A. Validación de REQUIRED retroactivo
         if new_required is True and not field.required:
             has_nulls = session.query(LeadFieldValue).join(
                 Lead, LeadFieldValue.lead_id == Lead.id
             ).filter(
-                LeadFieldValue.field_id == field.id,
+                LeadFieldValue.field_id == field_internal_id,
                 Lead.active == True,
                 (LeadFieldValue.value == None) | (LeadFieldValue.value == "")
             ).first()
@@ -85,6 +175,68 @@ class LeadFieldService(BaseService):
                 errors.append({"field": "is_primary", "message": "No se puede marcar como 'Primary' porque ya existen Leads en esta campaña."})
 
     # =========================================================================
+    # HELPERS: NOMENCLADORES DEPENDIENTES (ver docs/nomencladores.md)
+    # =========================================================================
+
+    @classmethod
+    def _validate_depends_on_field(
+        cls, session, campaign_id: int, own_nomenclator_id: Optional[int], own_field_type_code: Optional[str],
+        depends_on_field_id: int, errors: list, exclude_field_id: int = None
+    ):
+        """Valida que depends_on_field_id sea un campo válido para que ESTE
+        campo dependa de él: ambos deben ser de tipo nomenclador, de la misma
+        campaña, y el catálogo del campo padre tiene que estar declarado como
+        padre válido del catálogo de este campo (Nomenclator.parent_nomenclators).
+        No hace chequeo de ciclos acá — eso lo maneja el caller, que sabe si
+        hace falta (solo en update, un campo nuevo no puede formar ciclos)."""
+        if not own_nomenclator_id or own_field_type_code not in NOMENCLATOR_FIELD_TYPES:
+            errors.append({"field": "depends_on_field_id", "message": "Solo un campo de tipo nomenclador (SELECTOR/CHECKBOX) puede depender de otro campo."})
+            return None
+
+        if exclude_field_id is not None and depends_on_field_id == exclude_field_id:
+            errors.append({"field": "depends_on_field_id", "message": "Un campo no puede depender de sí mismo."})
+            return None
+
+        parent_field = session.query(LeadField).filter_by(id=depends_on_field_id).first()
+        if not parent_field:
+            errors.append({"field": "depends_on_field_id", "message": "El campo del que depende no existe."})
+            return None
+        if parent_field.campaign_id != campaign_id:
+            errors.append({"field": "depends_on_field_id", "message": "El campo del que depende debe ser de la misma campaña."})
+            return None
+        if not parent_field.nomenclator_id:
+            errors.append({"field": "depends_on_field_id", "message": "El campo del que depende también debe ser de tipo nomenclador."})
+            return None
+
+        own_nomenclator = session.query(Nomenclator).filter_by(id=own_nomenclator_id).first()
+        allowed_parent_nomenclator_ids = {n.id for n in own_nomenclator.parent_nomenclators} if own_nomenclator else set()
+        if parent_field.nomenclator_id not in allowed_parent_nomenclator_ids:
+            errors.append({
+                "field": "depends_on_field_id",
+                "message": "El catálogo del campo del que depende no está declarado como padre válido del catálogo de este campo. Agregalo primero a los padres del catálogo."
+            })
+            return None
+
+        return parent_field
+
+    @classmethod
+    def _would_create_field_dependency_cycle(cls, session, node_id: int, candidate_parent_id: int) -> bool:
+        """Recorre depends_on_field_id hacia arriba desde candidate_parent_id;
+        si en algún punto se llega de nuevo a node_id, asignarlo como padre
+        formaría un ciclo (permite cadenas de más de un nivel, ej. A->B->C)."""
+        current_id = candidate_parent_id
+        visited = set()
+        while current_id is not None:
+            if current_id == node_id:
+                return True
+            if current_id in visited:
+                break
+            visited.add(current_id)
+            current = session.query(LeadField).filter_by(id=current_id).first()
+            current_id = current.depends_on_field_id if current else None
+        return False
+
+    # =========================================================================
     # CREATE
     # =========================================================================
 
@@ -95,37 +247,47 @@ class LeadFieldService(BaseService):
         org_id = user_context.organization_id if user_context else TENANT_ORG_ID.get()
 
         # --- 1. VALIDACIÓN DE CONTEXTO (Bloqueante) ---
-        campaign_id = data.get("campaign_id")
-        if not campaign_id:
+        # Todas las FKs de este método llegan como public_uuid (Fase 3, ver backend/AGENTS.md
+        # §18); se resuelven a id interno acá, una por una, antes de cualquier uso.
+        campaign_uuid = data.get("campaign_id")
+        if not campaign_uuid:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "campaign_id", "message": "El ID de campaña es obligatorio."}])
 
-        campaign = cls.campaign_repository.get_by_id(session, campaign_id, user_context=user_context)
+        campaign_id = cls.campaign_repository.get_internal_id_by_public_uuid(session, campaign_uuid)
+        campaign = cls.campaign_repository.get_by_id(session, campaign_id, user_context=user_context) if campaign_id is not None else None
         if not campaign:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "campaign_id", "message": f"La campaña {campaign_id} no existe o no tiene acceso."}])
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "campaign_id", "message": f"La campaña {campaign_uuid} no existe o no tiene acceso."}])
+        data["campaign_id"] = campaign_id
 
         # --- 2. EXTRACCIÓN DE DATOS ---
         template_code = data.get("field_template_code")
         mask_template_code = data.pop("mask_template_code", None)
         field_type_code = data.get("field_type_code")
         subtype_code = data.get("field_subtype_code")
-        nomenclator_id = data.get("nomenclator_id")
+        nomenclator_uuid = data.get("nomenclator_id")
+        nomenclator_id = NomenclatorRepository.get_internal_id_by_public_uuid(session, nomenclator_uuid) if nomenclator_uuid else None
+        if nomenclator_uuid and nomenclator_id is not None:
+            data["nomenclator_id"] = nomenclator_id
         calc_expr = data.get("calculation_expression")
         name = data.get("name")
         current_mask = data.get("input_mask")
-        section_id = data.get("lead_field_section_id")
+        section_uuid = data.get("lead_field_section_id")
 
         # --- Validar Sección ---
-        if section_id:
-            section = cls.section_repository.get_by_id(session, section_id, user_context=user_context)
+        if section_uuid:
+            section_id = LeadFieldSectionRepository.get_internal_id_by_public_uuid(session, section_uuid)
+            section = cls.section_repository.get_by_id(session, section_id, user_context=user_context) if section_id is not None else None
             if not section:
                 errors.append({"field": "lead_field_section_id", "message": "La sección no existe o no pertenece a su empresa."})
+            else:
+                data["lead_field_section_id"] = section_id
         else:
             # Buscamos la sección más antigua (ID más bajo) de la organización
             section = session.query(LeadFieldSection).filter(
                 LeadFieldSection.organization_id == org_id,
                 LeadFieldSection.active == True
             ).order_by(LeadFieldSection.id.asc()).first()
-            
+
             if section:
                 # ¡IMPORTANTE! Actualizamos el payload para que se guarde este ID
                 data["lead_field_section_id"] = section.id
@@ -134,11 +296,14 @@ class LeadFieldService(BaseService):
                 errors.append({"field": "lead_field_section_id", "message": "Su organización no tiene una sección por defecto configurada."})
 
         # --- Validar Campaña Relacionada ---
-        rel_campaign_id = data.get("related_campaign_id")
-        if rel_campaign_id:
-            rel_campaign = cls.campaign_repository.get_by_id(session, rel_campaign_id, user_context=user_context)
+        rel_campaign_uuid = data.get("related_campaign_id")
+        rel_campaign_id = cls.campaign_repository.get_internal_id_by_public_uuid(session, rel_campaign_uuid) if rel_campaign_uuid else None
+        if rel_campaign_uuid:
+            rel_campaign = cls.campaign_repository.get_by_id(session, rel_campaign_id, user_context=user_context) if rel_campaign_id is not None else None
             if not rel_campaign:
                 errors.append({"field": "related_campaign_id", "message": "La campaña relacionada no existe o no tiene acceso a ella."})
+            else:
+                data["related_campaign_id"] = rel_campaign_id
 
         # --- 3. LÓGICA DE TEMPLATE ---
         rules_to_create = []
@@ -159,8 +324,8 @@ class LeadFieldService(BaseService):
                     data["input_mask"] = template.input_mask
                     current_mask = template.input_mask
 
-        elif nomenclator_id:
-            nomenclator = cls.nomenclatorService.repository.get_by_id(session, nomenclator_id, user_context=user_context)
+        elif nomenclator_uuid:
+            nomenclator = cls.nomenclatorService.repository.get_by_id(session, nomenclator_id, user_context=user_context) if nomenclator_id is not None else None
             if not nomenclator:
                 errors.append({"field": "nomenclator_id", "message": f"El Nomenclador no existe o no tienes acceso."})
             elif not name:
@@ -207,7 +372,18 @@ class LeadFieldService(BaseService):
 
         if nomenclator_id and field_type_code not in NOMENCLATOR_FIELD_TYPES:
             errors.append({"field": "field_type_code", "message": f"Para usar un nomenclador, el tipo debe ser uno de {NOMENCLATOR_FIELD_TYPES}."})
-        
+
+        # Feature de nomencladores dependientes: no hace falta chequeo de ciclo
+        # acá — un campo recién creado todavía no es ancestro de nada.
+        # depends_on_field_id llega como public_uuid de LeadField; se resuelve acá. Si no
+        # resuelve, se pasa None y _validate_depends_on_field ya reporta "no existe" solo
+        # (su propio session.query(...).filter_by(id=None) no encuentra nada).
+        depends_on_field_uuid = data.get("depends_on_field_id")
+        depends_on_field_id = cls.repository.get_internal_id_by_public_uuid(session, depends_on_field_uuid) if depends_on_field_uuid else None
+        if depends_on_field_uuid:
+            data["depends_on_field_id"] = depends_on_field_id
+            cls._validate_depends_on_field(session, campaign_id, nomenclator_id, field_type_code, depends_on_field_id, errors)
+
         if field_type_code == "LEAD" and not rel_campaign_id:
             errors.append({"field": "related_campaign_id", "message": "Requerido para campos tipo LEAD."})
         elif rel_campaign_id and field_type_code != "LEAD":
@@ -233,6 +409,8 @@ class LeadFieldService(BaseService):
             errors.append({"field": "name", "message": "El nombre del campo es obligatorio."})
         else:
             cls._check_name_uniqueness(session, campaign_id, name, errors=errors)
+            cls._maybe_auto_assign_title_order(session, campaign_id, name, data)
+            cls._maybe_auto_assign_subtitle_order(session, campaign_id, name, data)
 
         has_existing_leads = LeadRepository.has_leads_in_campaign(session, campaign_id)
         if has_existing_leads:
@@ -267,12 +445,19 @@ class LeadFieldService(BaseService):
             new_field = cls.repository.create(session, data)
             session.flush()
 
+            # new_field.id es el public_uuid (repository.create() devuelve el schema Pydantic,
+            # no el ORM crudo) -- se resuelve acá al id interno antes de usarlo como FK real.
+            # Bug real encontrado 2026-07-28 (mismo patrón que organization_service.py,
+            # lead_service.py y team_service.py): rompía el backfill de LeadFieldValue y la
+            # creación de reglas de validación de plantilla al dar de alta un campo nuevo.
+            new_field_internal_id = cls.repository.get_internal_id_by_public_uuid(session, new_field.id)
+
             if has_existing_leads:
                 is_nomenclator = nomenclator_id is not None
                 LeadFieldValueRepository.initialize_values_for_new_field(
                     session=session,
                     campaign_id=campaign_id,
-                    new_field_id=new_field.id,
+                    new_field_id=new_field_internal_id,
                     default_value=new_field.default_value,
                     is_nomenclator=is_nomenclator
                 )
@@ -280,7 +465,7 @@ class LeadFieldService(BaseService):
             #Reglas de template
             for rule_cfg in rules_to_create:
                 rule_payload = rule_cfg.copy()
-                rule_payload["field_id"] = new_field.id
+                rule_payload["field_id"] = new_field_internal_id
                 ValidationRuleService.create_within_session(
                     session=session, 
                     obj_data=rule_payload,
@@ -295,7 +480,7 @@ class LeadFieldService(BaseService):
                 
                 for rule_cfg in implicit_rules:
                     rule_payload = rule_cfg.copy()
-                    rule_payload["field_id"] = new_field.id
+                    rule_payload["field_id"] = new_field_internal_id
                     origin = subtype_code if rule_cfg in DEFAULT_SUBTYPE_RULES.get(subtype_code, []) else field_type_code
                     rule_payload["name"] = f"Auto-Rule ({origin})" 
                     
@@ -330,10 +515,16 @@ class LeadFieldService(BaseService):
     # =========================================================================
 
     @classmethod
-    def update(cls, obj_id: int, obj_in, user_context: Optional[UserContext] = None):
+    def update(cls, obj_id: str, obj_in, user_context: Optional[UserContext] = None):
         def do_update(uow):
             errors = []
-            current_field = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context, detailed=False)
+            # obj_id llega como public_uuid; se resuelve una única vez al id interno,
+            # que es lo que siguen esperando cls.repository y los helpers _check_*/_validate_*.
+            internal_id = cls._resolve_id(uow.session, obj_id)
+            if internal_id is None:
+                cls._not_found(obj_id)
+
+            current_field = cls.repository.get_by_id(uow.session, internal_id, user_context=user_context, detailed=False)
             if not current_field: cls._not_found(obj_id)
 
             data = obj_in.model_dump(exclude_unset=True)
@@ -341,12 +532,12 @@ class LeadFieldService(BaseService):
             # 1. Validar Unicidad de Nombre
             new_name = data.get("name")
             if new_name and new_name != current_field.name:
-                cls._check_name_uniqueness(uow.session, current_field.campaign_id, new_name, errors, exclude_id=obj_id)
+                cls._check_name_uniqueness(uow.session, current_field.campaign_id, new_name, errors, exclude_id=internal_id)
 
             # 2. Validar Unicidad de Orden
             new_order = data.get("order")
             if new_order is not None and new_order != current_field.order:
-                cls._check_order_uniqueness(uow.session, current_field.campaign_id, new_order, errors, exclude_id=obj_id)
+                cls._check_order_uniqueness(uow.session, current_field.campaign_id, new_order, errors, exclude_id=internal_id)
 
             # 3. Validar Restricciones Históricas
             new_required = data.get("required")
@@ -354,17 +545,24 @@ class LeadFieldService(BaseService):
             if (new_required is not None) or (new_primary is not None):
                 check_req = new_required if new_required is not None else current_field.required
                 check_pri = new_primary if new_primary is not None else current_field.is_primary
-                cls._check_historic_constraints(uow.session, current_field, check_req, check_pri, errors)
+                cls._check_historic_constraints(uow.session, current_field, internal_id, check_req, check_pri, errors)
 
             # --- 4. NUEVA SEGURIDAD: Validar Sección si cambia ---
+            # data["lead_field_section_id"] llega como public_uuid de LeadFieldSection (Fase 3,
+            # ver backend/AGENTS.md §18); current_field.lead_field_section.id YA es ese mismo
+            # uuid (objeto anidado del Response), así que la comparación de arriba es válida
+            # directamente. La query de abajo sí necesita el id interno resuelto.
             if "lead_field_section_id" in data and data["lead_field_section_id"] != current_field.lead_field_section.id:
                 org_id = user_context.organization_id if user_context else TENANT_ORG_ID.get()
+                new_section_id = LeadFieldSectionRepository.get_internal_id_by_public_uuid(uow.session, data["lead_field_section_id"])
                 section = uow.session.query(LeadFieldSection).filter(
-                    LeadFieldSection.id == data["lead_field_section_id"],
+                    LeadFieldSection.id == new_section_id,
                     LeadFieldSection.organization_id == org_id
-                ).first()
+                ).first() if new_section_id is not None else None
                 if not section:
                     errors.append({"field": "lead_field_section_id", "message": "La sección no existe o no pertenece a su empresa."})
+                else:
+                    data["lead_field_section_id"] = new_section_id
 
             # 4b. Validar restricciones de campo CALCULATED
             if current_field.field_type_code == "CALCULATED":
@@ -399,6 +597,22 @@ class LeadFieldService(BaseService):
                     errors.append({"field": "default_value", "message": f"El campo tipo '{field_type_code}' no acepta valor por defecto. Los valores seleccionables se gestionan desde el nomenclador."})
                     data.pop("default_value", None)
 
+            # 7. Feature de nomencladores dependientes (ver docs/nomencladores.md).
+            # No mandar el campo = no tocar. Mandar null = desvincular (no
+            # necesita validación). Mandar un id = validar + chequear ciclo.
+            if "depends_on_field_id" in data and data["depends_on_field_id"] is not None:
+                # data["depends_on_field_id"] llega como public_uuid de LeadField; se resuelve
+                # acá porque los helpers de ciclo/validación esperan el id interno.
+                new_depends_on = cls.repository.get_internal_id_by_public_uuid(uow.session, data["depends_on_field_id"])
+                data["depends_on_field_id"] = new_depends_on
+                if new_depends_on is not None and cls._would_create_field_dependency_cycle(uow.session, internal_id, new_depends_on):
+                    errors.append({"field": "depends_on_field_id", "message": "Esa dependencia formaría un ciclo entre campos."})
+                else:
+                    cls._validate_depends_on_field(
+                        uow.session, current_field.campaign_id, current_field.nomenclator_id,
+                        current_field.field_type_code, new_depends_on, errors, exclude_field_id=internal_id
+                    )
+
             # --- CHECK FINAL ---
             if errors:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
@@ -419,7 +633,7 @@ class LeadFieldService(BaseService):
                     if old_val != new_val:
                         changes[key] = {"old": old_val, "new": new_val}
 
-            updated_field = cls.repository.update(uow.session, obj_id, data, user_context=user_context)
+            updated_field = cls.repository.update(uow.session, internal_id, data, user_context=user_context)
             uow.session.flush() 
 
             if expression_changed:
@@ -437,35 +651,79 @@ class LeadFieldService(BaseService):
         )
 
     # =========================================================================
+    # DELETE / DEACTIVATE — bloqueo si hay campos dependientes
+    # =========================================================================
+    # Feature de nomencladores dependientes (ver docs/nomencladores.md):
+    # decisión del usuario, no se puede borrar ni desactivar un campo mientras
+    # otro campo activo tenga depends_on_field_id apuntando a él — quedaría
+    # una dependencia colgando de un campo inexistente/inactivo. Mismo patrón
+    # de UnitOfWork + super() que CampaignService (hallazgo #19).
+
+    @classmethod
+    def _assert_no_active_dependents(cls, obj_id: str, user_context: Optional[UserContext], action_label: str):
+        with UnitOfWork() as uow:
+            internal_id = cls._resolve_id(uow.session, obj_id)
+            if internal_id is None:
+                cls._not_found(obj_id)
+            current_field = cls.repository.get_by_id(uow.session, internal_id, user_context=user_context)
+            if not current_field:
+                cls._not_found(obj_id)
+            db_field = uow.session.query(LeadField).filter_by(id=internal_id).first()
+            dependents = [f.name for f in db_field.dependent_fields if f.active] if db_field else []
+            if dependents:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    detail=[{
+                        "field": "general",
+                        "message": f"No se puede {action_label} este campo: dependen de él los campos {', '.join(dependents)}. Desvincúlelos primero."
+                    }]
+                )
+
+    @classmethod
+    def delete(cls, obj_id: str, user_context: Optional[UserContext] = None, force: bool = False):
+        cls._assert_no_active_dependents(obj_id, user_context, "eliminar")
+        return super().delete(obj_id, user_context=user_context, force=force)
+
+    @classmethod
+    def deactivate(cls, obj_id: str, user_context: Optional[UserContext] = None):
+        cls._assert_no_active_dependents(obj_id, user_context, "desactivar")
+        return super().deactivate(obj_id, user_context=user_context)
+
+    # =========================================================================
     # SET ACTIVE (Reactivar)
     # =========================================================================
 
     @classmethod
-    def set_active(cls, field_id: int, user_context: Optional[UserContext] = None):
+    def set_active(cls, field_id: str, user_context: Optional[UserContext] = None):
         def do_reactivate(uow):
             errors = []
-            
-            # --- 1. SEGURIDAD: Usamos el repositorio para validar acceso (Devuelve Pydantic) ---
-            secure_check = cls.repository.get_by_id(uow.session, field_id, user_context=user_context, detailed=False)
-            if not secure_check: 
+
+            # field_id llega como public_uuid; se resuelve una vez al id interno.
+            internal_id = cls._resolve_id(uow.session, field_id)
+            if internal_id is None:
                 cls._not_found(field_id)
-                
+
+            # --- 1. SEGURIDAD: Usamos el repositorio para validar acceso (Devuelve Pydantic) ---
+            secure_check = cls.repository.get_by_id(uow.session, internal_id, user_context=user_context, detailed=False)
+            if not secure_check:
+                cls._not_found(field_id)
+
             if secure_check.active:
                 return secure_check
 
             # --- 2. ORM: Buscamos la instancia real de SQLAlchemy para poder modificarla ---
             from app.models.lead_field import LeadField
-            field_db = uow.session.query(LeadField).filter_by(id=field_id).first()
+            field_db = uow.session.query(LeadField).filter_by(id=internal_id).first()
 
             # 3. Validar Nombre
-            cls._check_name_uniqueness(uow.session, field_db.campaign_id, field_db.name, errors, exclude_id=field_id)
+            cls._check_name_uniqueness(uow.session, field_db.campaign_id, field_db.name, errors, exclude_id=internal_id)
             if errors:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
 
             # 4. Validar Orden (Auto-Fix)
             order_errors = []
-            cls._check_order_uniqueness(uow.session, field_db.campaign_id, field_db.order, order_errors, exclude_id=field_id)
-            
+            cls._check_order_uniqueness(uow.session, field_db.campaign_id, field_db.order, order_errors, exclude_id=internal_id)
+
             if order_errors:
                 max_order = cls.repository.get_max_order(uow.session, field_db.campaign_id)
                 field_db.order = max_order + 1
@@ -473,21 +731,21 @@ class LeadFieldService(BaseService):
             was_active = field_db.active
             field_db.updated_by = user_context.user.id if user_context and user_context.user else None
             field_db.active = True
-            
+
             # No hace falta uow.session.add() porque field_db ya está vinculado a la sesión
             uow.session.flush()
 
             if not was_active:
                 cls._log_audit(
-                    uow.session, 
-                    field_db, 
-                    action=SystemAuditLogAction.ACTIVATED, 
-                    changes={"active": {"old": False, "new": True}}, 
+                    uow.session,
+                    field_db,
+                    action=SystemAuditLogAction.ACTIVATED,
+                    changes={"active": {"old": False, "new": True}},
                     user_id=user_context.user.id if user_context and user_context.user else None
                 )
 
             # Retornamos el objeto ya formateado limpiamente por el repositorio
-            return cls.repository.get_by_id(uow.session, field_id, user_context=user_context, detailed=True)
+            return cls.repository.get_by_id(uow.session, internal_id, user_context=user_context, detailed=True)
 
         return cls._execute(
             action="Activando Campo",
@@ -574,10 +832,12 @@ class LeadFieldService(BaseService):
     @classmethod
     def reorder(cls, obj_in: LeadFieldOrderList, user_context: Optional[UserContext] = None):
         def do_reorder(uow):
-            campaign_id = obj_in.campaign_id
-            
+            # obj_in.campaign_id llega como public_uuid (Fase 3, ver backend/AGENTS.md §18);
+            # se resuelve acá porque las queries de abajo son crudas.
+            campaign_id = cls.campaign_repository.get_internal_id_by_public_uuid(uow.session, obj_in.campaign_id)
+
             # 1. Validar campaña y acceso
-            campaign = cls.campaign_repository.get_by_id(uow.session, campaign_id, user_context=user_context)
+            campaign = cls.campaign_repository.get_by_id(uow.session, campaign_id, user_context=user_context) if campaign_id is not None else None
             if not campaign:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"field": "campaign_id", "message": "Campaña no encontrada o sin acceso."})
 
@@ -589,11 +849,22 @@ class LeadFieldService(BaseService):
             )
             # Aplicamos el filtro de seguridad del repositorio manualmente si es necesario
             db_fields = cls.repository.apply_security_filter(uow.session, db_fields, user_context).all()
-            
+
             db_fields_map = {f.id: f for f in db_fields}
-            
-            # 3. Mapeo de lo que viene del request
-            incoming_orders = {item.field_id: item.order for item in obj_in.orders}
+
+            # 3. Mapeo de lo que viene del request. item.field_id llega como public_uuid de
+            # LeadField; se resuelve contra los propios db_fields de esta campaña (evita que
+            # un uuid válido pero de otra campaña cuele silenciosamente).
+            uuid_to_field_id = {f.public_uuid: f.id for f in db_fields}
+            incoming_orders = {}
+            for item in obj_in.orders:
+                resolved_id = uuid_to_field_id.get(item.field_id)
+                if resolved_id is None:
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST,
+                        detail={"field": "field_id", "message": f"El campo {item.field_id} no pertenece a esta campaña o no está activo."}
+                    )
+                incoming_orders[resolved_id] = item.order
 
             # 4. VALIDACIÓN DE INTEGRIDAD: Universo completo
             # Verificamos colisiones entre los que cambian y los que se quedan quietos

@@ -38,20 +38,26 @@ class TagService(BaseService):
         return cls._execute(action="Crear Etiqueta", func=do_create)
 
     @classmethod
-    def update(cls, obj_id: int, obj_in, user_context: Optional[UserContext] = None):
+    def update(cls, obj_id: str, obj_in, user_context: Optional[UserContext] = None):
         def do_update(uow):
-            current_obj = uow.session.query(Tag).filter_by(id=obj_id).first()
+            # obj_id llega como public_uuid; se resuelve una vez al id interno.
+            internal_id = cls._resolve_id(uow.session, obj_id)
+            if internal_id is None:
+                cls._not_found(obj_id)
+
+            # Hallazgo #25: query cruda sin filtro de tenant. get_by_id sí lo aplica.
+            current_obj = cls.repository.get_by_id(uow.session, internal_id, user_context=user_context)
             if not current_obj:
                 cls._not_found(obj_id)
 
             org_id = user_context.organization_id if user_context and user_context.organization_id else TENANT_ORG_ID.get()
-            
+
             # Validación: Nombre único por organización (solo si se envía nombre y es distinto al actual)
             if obj_in.name is not None and obj_in.name.lower() != (current_obj.name or "").lower():
                 existing = uow.session.query(Tag).filter(
                     Tag.name.ilike(obj_in.name),
                     Tag.organization_id == org_id,
-                    Tag.id != obj_id
+                    Tag.id != internal_id
                 ).first()
                 if existing:
                     raise HTTPException(
@@ -59,7 +65,7 @@ class TagService(BaseService):
                         detail=[{"field": "name", "message": f"Ya existe una etiqueta llamada '{obj_in.name}'."}]
                     )
 
-            updated_obj = cls.repository.update(uow.session, obj_id, obj_in, user_context=user_context)
+            updated_obj = cls.repository.update(uow.session, internal_id, obj_in, user_context=user_context)
             uow.session.flush()
             
             user_id = user_context.user.id if user_context and getattr(user_context, 'user', None) else None

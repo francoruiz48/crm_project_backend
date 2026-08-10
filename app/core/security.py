@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.context import TENANT_ORG_ID
 from app.db.session import get_db
+from app.models.organization import Organization
 from app.models.security_models import User, UserOrganization
 
 # ---------------------------------------------------------------------------
@@ -26,6 +27,51 @@ def hash_password(plain_password: str) -> str:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
+
+
+# ---------------------------------------------------------------------------
+# Normalización de email
+# ---------------------------------------------------------------------------
+# Hallazgo #13 (ronda de bug-hunting 2026-07-10): el email no se normalizaba
+# antes de guardarlo/compararlo (registro y login usaban el string tal cual
+# vino en el request) — dos registros con el mismo email en distinta
+# capitalización (Test@x.com / test@x.com) se trataban como cuentas distintas,
+# y loguearse con otra capitalización que la usada al registrarse fallaba.
+# Única fuente de verdad: la usan LoginRequest/RegisterRequest/UserUpdate.
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+# ---------------------------------------------------------------------------
+# IP real del visitante detrás de un proxy (hallazgo #11, 2026-07-11)
+# ---------------------------------------------------------------------------
+# request.client.host es la IP del último "hop" TCP. Si el backend corre
+# detrás de un proxy/load balancer (nginx, ALB, Cloudflare, el proxy que arma
+# docker-compose, etc.), esa IP es la del proxy, no la del visitante real —
+# todos los visitantes terminan compartiendo la misma IP a ojos del backend.
+# Decisión del usuario (2026-07-11): la infraestructura de producción todavía
+# no está definida, pero se asume que va a haber un proxy delante (es lo más
+# probable) y se prioriza X-Forwarded-For / X-Real-IP, con fallback a
+# request.client.host por si el proxy no los setea. Única fuente de verdad:
+# la usan tanto el rate limiter como el `remoteip` que se le manda al
+# proveedor de CAPTCHA (ambos en web_form_public_controller.py) — si cambia
+# la infraestructura real, alcanza con tocar esta función.
+#
+# Nota de seguridad: X-Forwarded-For puede ser falsificado por un cliente
+# malicioso si no hay un proxy de confianza que lo sobreescriba (o si hay
+# varios proxies encadenados y no se sabe cuántos son de confianza). Mientras
+# no se confirme la infraestructura real, esto es una mejora sobre el estado
+# actual (todos comparten la misma IP), no una garantía anti-spoofing.
+def get_client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        # El primer valor de la lista es el IP original del cliente; los
+        # proxies subsiguientes van agregando el suyo a la derecha.
+        return forwarded_for.split(",")[0].strip()
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+    return request.client.host if request.client else "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -150,11 +196,42 @@ class UserContext:
     permissions: list = field(default_factory=list)
 
 
+def _resolve_org_id(db_session: Session, raw_value: Optional[str]) -> Optional[int]:
+    """
+    Resuelve el valor crudo del header 'X-Organization-Id' al id interno (int).
+
+    Bug real encontrado 2026-07-30: el header se declaraba `Optional[int]`, pero
+    el frontend manda `org.id`, que desde la migración Fase 3 de
+    `OrganizationResponse` es el `public_uuid` de la organización (no el id
+    interno) -- excepto para la organización sintética "Panel Global"
+    (SUPERUSER, id=1 literal en el frontend), que coincidía con ADMIN_ORG_ID y
+    por eso nunca se notó en uso manual. FastAPI rechazaba con 422 cualquier
+    otro valor (un uuid no parsea como int), rompiendo TODOS los requests de
+    un usuario real que no esté parado en esa org especial. Acá aceptamos
+    ambos formatos: si es numérico, se usa tal cual (compat hacia atrás /
+    SUPERUSER); si no, se resuelve por `Organization.public_uuid`. Si no
+    matchea nada, devuelve None (mismo comportamiento que header ausente).
+    """
+    if raw_value is None:
+        return None
+    raw_value = raw_value.strip()
+    if not raw_value:
+        return None
+    if raw_value.lstrip("-").isdigit():
+        return int(raw_value)
+
+    row = db_session.query(Organization.id).filter(
+        Organization.public_uuid == raw_value
+    ).first()
+    return row[0] if row else None
+
+
 def get_current_user_roles(
     current_user: User = Depends(_get_current_user),
     db_session: Session = Depends(get_db),
-    x_organization_id: Optional[int] = Header(default=None, alias="X-Organization-Id"),
+    x_organization_id_raw: Optional[str] = Header(default=None, alias="X-Organization-Id"),
 ) -> UserContext:
+    x_organization_id = _resolve_org_id(db_session, x_organization_id_raw)
     if x_organization_id is not None:
         TENANT_ORG_ID.set(x_organization_id)
 
@@ -194,8 +271,11 @@ class PermissionChecker:
     async def __call__(
         self,
         user: User = Depends(_get_current_user),
-        x_organization_id: Optional[int] = Header(default=None, alias="X-Organization-Id"),
+        db_session: Session = Depends(get_db),
+        x_organization_id_raw: Optional[str] = Header(default=None, alias="X-Organization-Id"),
     ):
+        x_organization_id = _resolve_org_id(db_session, x_organization_id_raw)
+
         # El header es obligatorio para TODOS (incluido superadmin) para garantizar
         # el aislamiento de contexto. Sin org_id no hay contexto de operación válido.
         if not x_organization_id:

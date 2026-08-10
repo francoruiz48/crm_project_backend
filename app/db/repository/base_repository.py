@@ -253,11 +253,19 @@ class BaseRepository:
         creator_email = kwargs.pop('creator_email', None)
         updater_name = kwargs.pop('updater_name', None)
         updater_email = kwargs.pop('updater_email', None)
+        # Filtro combinado: busca con OR entre nombre, apellido, email y "nombre apellido"
+        # concatenado, en vez de exigir que el mismo texto matchee un único campo (como
+        # pasaba con creator_name/creator_email por separado, que además se combinaban con
+        # AND). Pensado para pantallas de auditoría, donde el usuario puede no acordarse si
+        # buscaba por nombre, apellido o email — o el nombre pudo haber cambiado desde que
+        # se generó el registro.
+        creator_search = kwargs.pop('creator_search', None)
+        updater_search = kwargs.pop('updater_search', None)
 
-        if creator_name or creator_email:
+        if creator_name or creator_email or creator_search:
             # Importación local para evitar dependencias circulares en la inicialización
-            from app.models.security_models import User 
-            
+            from app.models.security_models import User
+
             # Hacemos un OUTER JOIN con la tabla de usuarios
             query = query.outerjoin(User, cls.model.created_by == User.id)
 
@@ -265,16 +273,34 @@ class BaseRepository:
                 query = query.filter(User.name.ilike(f"%{creator_name}%"))
             if creator_email:
                 query = query.filter(User.email.ilike(f"%{creator_email}%"))
+            if creator_search:
+                like = f"%{creator_search}%"
+                full_name = func.concat(User.name, ' ', User.last_name)
+                query = query.filter(or_(
+                    User.name.ilike(like),
+                    User.last_name.ilike(like),
+                    User.email.ilike(like),
+                    full_name.ilike(like)
+                ))
 
-        if updater_name or updater_email:
-            from app.models.security_models import User 
-            
+        if updater_name or updater_email or updater_search:
+            from app.models.security_models import User
+
             query = query.outerjoin(User, cls.model.updated_by == User.id)
 
             if updater_name:
                 query = query.filter(User.name.ilike(f"%{updater_name}%"))
             if updater_email:
                 query = query.filter(User.email.ilike(f"%{updater_email}%"))
+            if updater_search:
+                like = f"%{updater_search}%"
+                full_name = func.concat(User.name, ' ', User.last_name)
+                query = query.filter(or_(
+                    User.name.ilike(like),
+                    User.last_name.ilike(like),
+                    User.email.ilike(like),
+                    full_name.ilike(like)
+                ))
 
         for key, value in kwargs.items():
             if value is None:
@@ -291,7 +317,11 @@ class BaseRepository:
             
             # Comportamiento normal (Igualdad exacta)
             elif hasattr(cls.model, key):
-                query = query.filter(getattr(cls.model, key) == value)
+                # Si `key` es una FK real (ej. campaign_id) y `value` viene como public_uuid
+                # (el front ya no conoce el id interno), se resuelve acá antes de filtrar.
+                # Ver resolve_fk_filter_value más abajo para el detalle.
+                resolved_value = cls.resolve_fk_filter_value(session, key, value)
+                query = query.filter(getattr(cls.model, key) == resolved_value)
 
         # Lógica para Búsqueda Global (OR)
         if search_query and search_fields:
@@ -333,11 +363,120 @@ class BaseRepository:
             return total, items
         return items
 
+    # ----------------- Resolución de ID público (UUID) -----------------
+    # El front solo conoce `public_uuid`; el resto de este archivo (y de los ~120
+    # usos internos en los services, que resuelven FKs entre entidades) sigue
+    # trabajando 100% con el `id` interno (int). Estos dos métodos son el único
+    # punto de traducción UUID -> int, pensados para usarse en el borde de la API
+    # (BaseService), nunca dentro de la lógica de negocio interna.
+    @classmethod
+    def get_internal_id_by_public_uuid(cls, session, public_uuid: str) -> Optional[int]:
+        """Resuelve un public_uuid al id interno. None si no existe ninguna fila con ese UUID."""
+        row = session.query(cls.model.id).filter(cls.model.public_uuid == public_uuid).first()
+        return row[0] if row else None
+
+    @classmethod
+    def get_internal_ids_by_public_uuids(cls, session, public_uuids: list) -> Dict[str, int]:
+        """Versión bulk: {public_uuid: id_interno} solo para los que existen."""
+        if not public_uuids:
+            return {}
+        rows = session.query(cls.model.public_uuid, cls.model.id).filter(cls.model.public_uuid.in_(public_uuids)).all()
+        return {row[0]: row[1] for row in rows}
+
+    # ----------------- Resolución de FKs embebidas en filtros (Fase 3, parte de Fase 4 adelantada) -----------------
+    # El front ahora solo conoce public_uuid, así que un filtro tipo ?campaign_id=<uuid>
+    # (usado en GET_ALL de cualquier módulo, ej. GET /lead_fields?campaign_id=...) llega
+    # con un UUID en vez del id interno que espera la columna FK real. Este helper genérico
+    # resuelve cualquier columna FK por convención de SQLAlchemy (mira las foreign_keys
+    # reales de la columna, no un mapa hardcodeado por nombre), sin necesidad de listar
+    # a mano qué modelo referencia cada `*_id`. Se usa en get_all() de acá abajo, y lo pueden
+    # llamar directo los repos con filtros custom (ej. LeadRepository.search()).
+    _MISSING_FK_SENTINEL = -1  # id interno que nunca va a existir -> el filtro no matchea nada
+
+    @classmethod
+    def resolve_fk_filter_value(cls, session, column_name: str, value):
+        """
+        Si `value` ya es un id interno (int, o string numérica), lo devuelve tal cual.
+        Si es un string no-numérico (asumimos public_uuid) y `column_name` es una FK real
+        de cls.model, resuelve al id interno de la tabla referenciada. Si no se encuentra
+        la fila, devuelve un sentinel que no matchea nada (en vez de dejar pasar el UUID
+        crudo, que rompería con un error de tipo en la query SQL).
+        """
+        if value is None or isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.lstrip("-").isdigit():
+            return int(value)
+        if not isinstance(value, str):
+            return value
+
+        if not hasattr(cls.model, column_name):
+            return value
+
+        try:
+            column = getattr(cls.model, column_name).property.columns[0]
+        except Exception:
+            return value
+
+        if not column.foreign_keys:
+            return value
+
+        target_table = next(iter(column.foreign_keys)).column.table
+
+        from app.db.base_sql import Base
+        target_model = next(
+            (m.class_ for m in Base.registry.mappers if m.class_.__tablename__ == target_table.name),
+            None
+        )
+        if target_model is None or not hasattr(target_model, "public_uuid"):
+            return value
+
+        row = session.query(target_model.id).filter(target_model.public_uuid == value).first()
+        return row[0] if row else cls._MISSING_FK_SENTINEL
+
+    @classmethod
+    def _resolve_fk_payload_fields(cls, session, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Resuelve FKs embebidas en un payload de create/update (ej. campaign_id, team_id)
+        de public_uuid a id interno, reusando resolve_fk_filter_value. Se llama desde
+        create()/update() de acá abajo, sobre el dict ya normalizado (_normalize_data).
+
+        A diferencia de los filtros de get_all, acá NO usamos el sentinel silencioso
+        (-1) si el UUID no existe: dejamos pasar el valor original para que la FK real
+        de Postgres lo rechace en el INSERT/UPDATE con un mensaje claro vía
+        _handle_integrity_error, en vez de persistir -1 silenciosamente.
+
+        OJO: esto solo alcanza a columnas FK reales de cls.model. Varios servicios con
+        create()/update() propios (Lead, FieldAutomation, etc.) validan estos campos
+        ANTES de llegar acá (ej. comparando obj_data.campaign_id contra Campaign.id a
+        mano) y necesitan su propio fix -- ver backend/AGENTS.md para el catálogo de
+        pendientes.
+        """
+        resolved = dict(data)
+        for key, value in data.items():
+            if value is None or not hasattr(cls.model, key):
+                continue
+            new_value = cls.resolve_fk_filter_value(session, key, value)
+            if new_value == cls._MISSING_FK_SENTINEL:
+                continue
+            resolved[key] = new_value
+        return resolved
+
     @classmethod
     def get_by_id(cls, session, obj_id: int, user_context: Optional[UserContext] = None, only_active: bool = False, detailed: bool = False):
         """
-        Trae un objeto por id. 
+        Trae un objeto por id.
         Si detailed=True, carga relaciones y usa schema_out_detail.
+
+        HISTORIAL: hasta 2026-07-28 este método ignoraba `detailed` para elegir el schema
+        -- siempre devolvía schema_out_detail (solo el eager-load de relaciones estaba
+        condicionado). Rompió puntualmente 3 call sites que leían `.creator`/`.updater`
+        pasando detailed=False (o sin pasar nada, el default), porque ese acceso solo
+        funcionaba DE CASUALIDAD gracias al bug (ver backend/AGENTS.md §18-bis/§18-ter).
+        Al arreglarlo acá para que de verdad respete `detailed` (mismo criterio que
+        _execute_read_query, usado por get_all), esos 3 call sites se actualizaron para
+        pasar detailed=True explícito (campaign_service.py, lead_comment_service.py,
+        lead_view_service.py) -- auditado el resto de los ~50 call sites de get_by_id en
+        app/services sin encontrar otro caso que dependiera del bug (ver AGENTS.md).
         """
         try:
 
@@ -349,7 +488,7 @@ class BaseRepository:
 
             if detailed and cls.relationships:
                 query = cls._apply_relationships(query)
-            
+
             if only_active and hasattr(cls.model, "active"):
                 query = query.filter(cls.model.active.is_(True))
 
@@ -358,7 +497,12 @@ class BaseRepository:
             if not obj:
                 return None
 
-            return cls.schema_out_detail.model_validate(obj)
+            selected_schema = (
+                cls.schema_out_detail
+                if detailed and cls.schema_out_detail
+                else cls.schema_out
+            )
+            return selected_schema.model_validate(obj) if selected_schema else obj
 
         except Exception as e:
             raise AppException(detail=ERROR_DATABASE.format(error=str(e)))
@@ -377,12 +521,13 @@ class BaseRepository:
                 is_owner = user_context.is_owner
 
             data = cls._normalize_data(obj_data)
-            
+            data = cls._resolve_fk_payload_fields(session, data)
+
             if hasattr(cls.model, "organization_id"):
                 org_id = user_context.organization_id if user_context else TENANT_ORG_ID.get()
                 if org_id is not None:
                     data["organization_id"] = org_id
-            
+
             if created_by is not None and hasattr(cls.model, "created_by"):
                 data["created_by"] = created_by
 
@@ -414,6 +559,7 @@ class BaseRepository:
                 is_owner = user_context.is_owner
 
             data = cls._normalize_data(obj_data)
+            data = cls._resolve_fk_payload_fields(session, data)
             query = session.query(cls.model).filter(cls.model.id == obj_id)
             # PASAMOS FALSE: Para asegurar que no pueda editar un registro global (NULL)
             query = cls._apply_tenant_filter(query, is_read_operation=False)
@@ -639,6 +785,14 @@ class BaseRepository:
         Elimina masivamente un listado de IDs.
         Aplica la misma lógica de Soft Delete que la eliminación individual en caso de fallo.
         """
+        # Hallazgo (2026-07-11): a diferencia de delete() (single), este método no
+        # chequeaba delete_strategy == PROTECTED antes de hacer session.delete(obj)
+        # más abajo — permitía bypasear por completo la protección vía el endpoint
+        # masivo. Ver AGENTS.md / hallazgos_agente/organizaciones.md (hallazgo #15,
+        # el caso concreto detectado fue POST /organizations/bulk-delete).
+        if cls.delete_strategy == DeleteStrategy.PROTECTED:
+            return {"deleted": [], "disabled": [], "failed": list(obj_ids)}
+
         updated_by = None
         if user_context is not None and user_context.user is not None:
             updated_by = user_context.user.id

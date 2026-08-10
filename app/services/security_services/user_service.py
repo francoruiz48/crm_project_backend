@@ -22,13 +22,25 @@ class UserService(BaseService):
         )
 
     @classmethod
-    def update(cls, obj_id: int, obj_data, user_context: UserContext = None):
-        cls._assert_can_modify(obj_id, user_context)
+    def update(cls, obj_id: str, obj_data, user_context: UserContext = None):
+        # obj_id llega como public_uuid del front -- lo resolvemos al id interno para
+        # poder compararlo contra user_context.user.id (que sigue siendo int internamente).
+        from app.db.unit_of_work import UnitOfWork
+        with UnitOfWork() as uow:
+            internal_id = cls._resolve_id(uow.session, obj_id)
+        if internal_id is None:
+            cls._not_found(obj_id)
+        cls._assert_can_modify(internal_id, user_context)
         return super().update(obj_id, obj_data, user_context=user_context)
 
     @classmethod
-    def delete(cls, obj_id: int, user_context: UserContext = None, force: bool = False):
-        cls._assert_can_modify(obj_id, user_context)
+    def delete(cls, obj_id: str, user_context: UserContext = None, force: bool = False):
+        from app.db.unit_of_work import UnitOfWork
+        with UnitOfWork() as uow:
+            internal_id = cls._resolve_id(uow.session, obj_id)
+        if internal_id is None:
+            cls._not_found(obj_id)
+        cls._assert_can_modify(internal_id, user_context)
         return super().delete(obj_id, user_context=user_context)
 
     @classmethod
@@ -66,9 +78,12 @@ class UserService(BaseService):
             if user_context and user_context.is_superuser:
                 has_permission = True
             elif user_context and user_context.is_owner:
-                # Verificamos si es owner en LA MISMA organización donde quiere promover a otro
-                from app.core.context import TENANT_ORG_ID
-                if TENANT_ORG_ID.get() == organization_id:
+                # Verificamos si es owner en LA MISMA organización donde quiere promover a otro.
+                # Usamos user_context.organization_id (viaja explícito en el objeto UserContext,
+                # lo llena get_current_user_roles desde el mismo header X-Organization-Id) en vez
+                # de TENANT_ORG_ID.get() — mismo valor en la práctica, pero no depende de una
+                # contextvar global implícita.
+                if user_context.organization_id == organization_id:
                     has_permission = True
 
             if not has_permission:

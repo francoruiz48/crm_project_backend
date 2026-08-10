@@ -2,9 +2,9 @@ from fastapi import APIRouter, Request, HTTPException, status
 from typing import Dict, Any
 import httpx
 from slowapi import Limiter
-from slowapi.util import get_remote_address
 from app.core.config import settings
 from app.core.context import TENANT_ORG_ID
+from app.core.security import get_client_ip
 from app.services.web_form_service import WebFormService
 from app.services.lead_service import LeadService
 from app.schemas.web_form_schema import WebFormPublicResponse
@@ -14,7 +14,11 @@ from app.schemas.lead_field_value_schema import LeadFieldValueCreate
 router = APIRouter(prefix="/public/forms", tags=["Public Web Forms"])
 
 # Instanciamos el mismo limitador para usarlo en el decorador
-limiter = Limiter(key_func=get_remote_address)
+# Hallazgo #11: key_func usa get_client_ip (X-Forwarded-For/X-Real-IP con
+# fallback a request.client.host) en vez de get_remote_address de slowapi
+# (que solo lee request.client.host) — necesario si hay un proxy delante,
+# ver app/core/security.py para el detalle.
+limiter = Limiter(key_func=get_client_ip)
 
 # Nombre del campo falso (Honeypot). El frontend debe incluirlo en el HTML pero oculto con CSS.
 HONEYPOT_FIELD_NAME = "website_url_ext" 
@@ -49,22 +53,32 @@ async def submit_public_form(uuid: str, request: Request, payload: Dict[str, Any
             )
         
         # Validación asíncrona (Ejemplo usando Cloudflare Turnstile, funciona igual para reCAPTCHA v3)
-        async with httpx.AsyncClient() as client:
-            # NOTA: En un entorno real, el 'secret' debe venir de tus variables de entorno (settings.CAPTCHA_SECRET_KEY)
-            res = await client.post(
-                str(settings.CAPTCHA_VERIFY_URL),
-                data={
-                    "secret": settings.CAPTCHA_SECRET_KEY,
-                    "response": captcha_token,
-                    "remoteip": request.client.host
-                }
-            )
-            verification = res.json()
-            if not verification.get("success"):
-                raise HTTPException(
-                    status.HTTP_400_BAD_REQUEST, 
-                    detail="No se pudo verificar que seas humano. Intenta de nuevo."
+        # Hallazgo #10: la llamada al proveedor externo puede fallar por su cuenta
+        # (caído, lento, responde algo no-JSON) — sin timeout explícito y sin
+        # try/except esto colgaba el request y terminaba en un 500 crudo.
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                # NOTA: En un entorno real, el 'secret' debe venir de tus variables de entorno (settings.CAPTCHA_SECRET_KEY)
+                res = await client.post(
+                    str(settings.CAPTCHA_VERIFY_URL),
+                    data={
+                        "secret": settings.CAPTCHA_SECRET_KEY,
+                        "response": captcha_token,
+                        "remoteip": get_client_ip(request)  # Hallazgo #11
+                    }
                 )
+                verification = res.json()
+        except (httpx.HTTPError, ValueError):
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No se pudo verificar el CAPTCHA, intenta de nuevo en unos segundos."
+            )
+
+        if not verification.get("success"):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail="No se pudo verificar que seas humano. Intenta de nuevo."
+            )
 
     # 2. CORS Manual (Validación de Origen)
     origin = request.headers.get("origin") or request.headers.get("referer")
@@ -72,11 +86,32 @@ async def submit_public_form(uuid: str, request: Request, payload: Dict[str, Any
         if not origin or not any(domain in origin for domain in form.allowed_domains):
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Origen no autorizado para enviar leads.")
 
-    # 3. 🛡️ INYECCIÓN DE CONTEXTO (Súper importante)
+    # 3. Validación de campos requeridos (Hallazgo #9)
+    # is_required se declara por campo del FORMULARIO (no confundir con LeadField.required,
+    # que es un flag distinto a nivel de CRM). Un campo con hidden_value nunca se exige acá
+    # porque el backend lo autocompleta más abajo, sin importar lo que mande el payload.
+    missing_labels = []
+    for field_config in form.fields:
+        if not field_config.is_required or field_config.hidden_value is not None:
+            continue
+        value = payload.get(str(field_config.id))
+        if value is None or (isinstance(value, str) and not value.strip()):
+            missing_labels.append(
+                field_config.custom_label
+                or (field_config.lead_field.name if field_config.lead_field else f"Campo #{field_config.id}")
+            )
+
+    if missing_labels:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail=f"Faltan campos requeridos: {', '.join(missing_labels)}."
+        )
+
+    # 4. 🛡️ INYECCIÓN DE CONTEXTO (Súper importante)
     # Como saltamos el security.py, seteamos la Organización a mano para que el LeadService funcione.
     TENANT_ORG_ID.set(form.organization_id)
 
-    # 4. Mapeo Seguro e Inyección de Valores Ocultos
+    # 5. Mapeo Seguro e Inyección de Valores Ocultos
     form_fields_map = {str(f.id): f for f in form.fields}
     lead_values = []
 
@@ -98,9 +133,14 @@ async def submit_public_form(uuid: str, request: Request, payload: Dict[str, Any
         if str(f.id) not in sent_keys and f.hidden_value is not None:
             lead_values.append(LeadFieldValueCreate(field_id=f.lead_field_id, value=f.hidden_value))
 
-    # 5. Estructurar payload final e inyectar al Core
+    # 6. Estructurar payload final e inyectar al Core
+    # LeadCreate.campaign_id es public_uuid desde Fase 3 (LeadService.create resuelve el id
+    # interno). `form` es el WebForm ORM crudo (WebFormService.get_public_form_by_uuid), así que
+    # form.campaign_id es el int interno -- hay que usar form.campaign.public_uuid, no el FK
+    # crudo. Sin esto, cualquier envío de formulario público rompía con 422 al construir
+    # LeadCreate (bug preexistente, no de esta sesión, ver backend/AGENTS.md §18-decies).
     lead_in = LeadCreate(
-        campaign_id=form.campaign_id,
+        campaign_id=form.campaign.public_uuid,
         values=lead_values
     )
 
@@ -114,7 +154,7 @@ async def submit_public_form(uuid: str, request: Request, payload: Dict[str, Any
             detail="Ocurrió un error al procesar el formulario. Intente nuevamente más tarde."
         )
 
-    # 6. Respuesta final
+    # 7. Respuesta final
     return {
         "success": True,
         "message": form.success_message or "Formulario enviado exitosamente."

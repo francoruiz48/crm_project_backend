@@ -13,6 +13,7 @@ from app.db.repository.nomenclator_item_repository import NomenclatorItemReposit
 from app.services.lead_service import LeadService
 from app.schemas.lead_schema import LeadCreate, LeadFieldValueCreate
 from app.models.lead import Lead
+from app.models.lead_field import LeadField
 from app.models.lead_field_value import LeadFieldValue
 from app.core.security import UserContext
 
@@ -40,15 +41,28 @@ class LeadImportExportService:
         cache = {}
         nomenclator_fields = [f for f in campaign_fields if f.nomenclator_id is not None]
         nom_ids = set(f.nomenclator_id for f in nomenclator_fields)
-        
+
         if not nom_ids: return cache
 
+        # item.id es el public_uuid (NomenclatorItemRepository.get_all() devuelve el schema
+        # Pydantic, no el ORM crudo), pero LeadFieldValueCreate.value para campos
+        # nomencladores/selector espera List[int] (id interno). Bug real encontrado
+        # 2026-07-28: rompía la importación de Excel para cualquier columna de tipo
+        # Selector/Nomenclador. Se resuelve acá en bloque (una sola query bulk) en vez de
+        # por item, para no golpear la DB N veces.
+        key_to_uuid = {}
         for nid in nom_ids:
             # INYECTADO: user_context a la búsqueda de nomencladores
             items = NomenclatorItemRepository.get_all(db, nomenclator_id=nid, page=0, user_context=user_context)
             for item in items:
                 key = (item.nomenclator_id, str(item.value).strip().lower())
-                cache[key] = item.id
+                key_to_uuid[key] = item.id
+
+        uuid_to_internal = NomenclatorItemRepository.get_internal_ids_by_public_uuids(db, list(key_to_uuid.values()))
+        for key, item_uuid in key_to_uuid.items():
+            internal_id = uuid_to_internal.get(item_uuid)
+            if internal_id is not None:
+                cache[key] = internal_id
         return cache
 
     @classmethod
@@ -57,9 +71,15 @@ class LeadImportExportService:
             return []
 
         target_campaign_id = field_def.related_campaign_id
-        # INYECTADO: user_context para respetar permisos cross-campaign
-        target_fields = LeadFieldRepository.get_all(db, campaign_id=target_campaign_id, only_active=True, user_context=user_context)
-        
+        # Bug real encontrado 2026-08-01 (mismo patrón que export_leads más abajo, ver
+        # backend/AGENTS.md §51): LeadFieldRepository.get_all() devuelve schemas Pydantic,
+        # cuyo .id es el public_uuid del campo (Fase 3). Más abajo ese .id se usaba directo en
+        # un filtro raw contra LeadFieldValue.field_id (columna int real, Fase 4 sin migrar) --
+        # nunca podía matchear (o directamente tiraba error de tipo en Postgres), así que
+        # importar una columna de tipo "Lead relacionado" siempre fallaba con "No se encontró
+        # el lead relacionado". Se consulta el ORM real acá para tener el id interno verdadero.
+        target_fields = db.query(LeadField).filter_by(campaign_id=target_campaign_id, active=True).all()
+
         primary_defs = {f.name: f for f in target_fields if f.is_primary}
         
         if not primary_defs:
@@ -121,9 +141,13 @@ class LeadImportExportService:
     # MÉTODO PRINCIPAL DE IMPORTACIÓN
     # -------------------------------------------------------------------------
     @classmethod
-    def import_leads(cls, db: Session, file: UploadFile, mapping_json: str, campaign_id: int, user_context: Optional[UserContext] = None):
+    def import_leads(cls, db: Session, file: UploadFile, mapping_json: str, campaign_id: str, user_context: Optional[UserContext] = None):
+        # campaign_id llega como public_uuid; se resuelve una vez al id interno (LeadCreate,
+        # más abajo, sigue necesitando el uuid original -- ver app/schemas/lead_schema.py).
+        campaign_internal_id = CampaignRepository.get_internal_id_by_public_uuid(db, campaign_id)
+
         # --- NUEVA VALIDACIÓN: Verificar campaña ANTES de procesar ---
-        campaign = CampaignRepository.get_by_id(db, campaign_id, user_context=user_context, only_active=True)
+        campaign = CampaignRepository.get_by_id(db, campaign_internal_id, user_context=user_context, only_active=True) if campaign_internal_id is not None else None
         if not campaign:
             raise HTTPException(404, "Campaña no encontrada o no tienes acceso.")
 
@@ -142,7 +166,7 @@ class LeadImportExportService:
             raise HTTPException(400, f"Error al procesar Excel: {str(e)}")
 
         # 1. Preparar Definiciones (Ahora seguro de que la campaña existe)
-        campaign_fields = LeadFieldRepository.get_all(db, campaign_id=campaign_id, only_active=True, user_context=user_context)
+        campaign_fields = LeadFieldRepository.get_all(db, campaign_id=campaign_internal_id, only_active=True, user_context=user_context)
         field_def_map = {f.name: f for f in campaign_fields}
         
         # 2. Analizar el Mapeo
@@ -248,18 +272,27 @@ class LeadImportExportService:
     # EXPORTACIÓN
     # -------------------------------------------------------------------------
     @classmethod
-    def export_leads(cls, db: Session, campaign_id: int, user_context: Optional[UserContext] = None) -> Tuple[io.BytesIO, str]:
-        campaign = CampaignRepository.get_by_id(db, campaign_id, user_context=user_context, only_active=True)
+    def export_leads(cls, db: Session, campaign_id: str, user_context: Optional[UserContext] = None) -> Tuple[io.BytesIO, str]:
+        # campaign_id llega como public_uuid; se resuelve una vez al id interno.
+        campaign_internal_id = CampaignRepository.get_internal_id_by_public_uuid(db, campaign_id)
+        campaign = CampaignRepository.get_by_id(db, campaign_internal_id, user_context=user_context, only_active=True) if campaign_internal_id is not None else None
         if not campaign:
             raise HTTPException(404, "Campaña no encontrada o acceso denegado.")
 
-        fields = LeadFieldRepository.get_all(db, campaign_id=campaign_id, only_active=True, user_context=user_context)
-        fields.sort(key=lambda x: x.order)
-        
-        field_map = {f.id: f.name for f in fields}
-        columns = [f.name for f in fields]
+        # Bug real encontrado 2026-08-01 (ver backend/AGENTS.md §51): LeadFieldRepository.
+        # get_all() devuelve schemas Pydantic, cuyo .id es el public_uuid del campo (Fase 3).
+        # field_map quedaba armado con esas uuid como clave, pero se lo buscaba más abajo con
+        # fv.field_id (id interno crudo, Fase 4 deliberadamente sin migrar) -- nunca matcheaba,
+        # así que el Excel exportado tenía las columnas correctas pero TODAS las celdas vacías
+        # (para el usuario, "no exporta nada"). Se consulta el ORM real acá para tener el id
+        # interno verdadero. campaign ya fue validada (permisos + organización) más arriba, así
+        # que filtrar directo por campaign_internal_id es seguro.
+        field_rows = db.query(LeadField).filter_by(campaign_id=campaign_internal_id, active=True).order_by(LeadField.order).all()
 
-        leads = LeadRepository.get_all(db, user_context=user_context, campaign_id=campaign_id, only_active=True, page=0, page_size=0)
+        field_map = {f.id: f.name for f in field_rows}
+        columns = [f.name for f in field_rows]
+
+        leads = LeadRepository.get_all(db, user_context=user_context, campaign_id=campaign_internal_id, only_active=True, page=0, page_size=0)
 
         data = []
         for lead in leads:

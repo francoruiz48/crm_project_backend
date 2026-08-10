@@ -2,12 +2,19 @@ from datetime import date, timedelta
 from typing import Optional
 from pydantic import BaseModel, EmailStr, field_validator
 
-from app.core.security import validate_password_strength
+from app.core.security import normalize_email, validate_password_strength
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+    # Hallazgo #13: normalizar acá para que el login sea case-insensitive
+    # frente a como se guardó el email al registrarse.
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, v: str) -> str:
+        return normalize_email(v)
 
 
 class RegisterRequest(BaseModel):
@@ -18,6 +25,13 @@ class RegisterRequest(BaseModel):
     phone: Optional[str] = None
     date_of_birth: Optional[date] = None
     invite_token: Optional[str] = None  # si viene de un link de invitación, une a la org automáticamente
+
+    # Hallazgo #13: normalizar antes de guardar, para que dos capitalizaciones
+    # del mismo email no puedan registrarse como cuentas distintas.
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, v: str) -> str:
+        return normalize_email(v)
 
     @field_validator("date_of_birth")
     @classmethod
@@ -50,7 +64,11 @@ class RefreshRequest(BaseModel):
 
 class InviteRequest(BaseModel):
     email: EmailStr
-    organization_id: int
+    # public_uuid de Organization (Fase 3). AuthService.invite() lo resuelve al id interno
+    # -- bug real encontrado 2026-08-01: este campo seguía tipado `int` mientras el frontend
+    # (InviteDialog.tsx) ya mandaba `activeOrg.id` (public_uuid) desde la migración Fase 3,
+    # rompiendo /auth/invite con 422 para cualquier organización real. Ver AGENTS.md.
+    organization_id: str
     role_code: str = "agent"  # Rol a asignar al invitado (default: agent)
 
 

@@ -17,6 +17,11 @@ class LeadField(BaseModelDB):
     calculation_expression = Column(String, nullable=True)
     configuration = Column(JSON, nullable=True)
     title_order = Column(Integer, nullable=True)
+    #Igual que title_order pero para el subtítulo (línea secundaria debajo del título, ej. Cargo
+    #+ Empresa). Mismo mecanismo: varios campos pueden tener subtitle_order, se concatenan en ese
+    #orden. Ver LeadFieldService._maybe_auto_assign_title_order (auto-detección) y
+    #getLeadSubtitleArray en el frontend (leadUtils.ts).
+    subtitle_order = Column(Integer, nullable=True)
 
     #relations
     campaign_id = Column(Integer, ForeignKey("campaign.id"), nullable=False)
@@ -27,7 +32,13 @@ class LeadField(BaseModelDB):
     field_type_code = Column(String, ForeignKey("lead_field_type.code"), nullable=False)
     lead_field_section_id = Column(Integer, ForeignKey("lead_field_section.id"), nullable=False)
     field_subtype_code = Column(String, ForeignKey("lead_field_subtype.code"), nullable=True)
-    
+    # Feature de nomencladores dependientes (ver docs/nomencladores.md): este
+    # campo (de tipo SELECTOR/CHECKBOX) solo ofrece ítems cuyo padre sea el
+    # ítem elegido en depends_on_field, otro campo nomenclador de la MISMA
+    # campaña. Autoreferencia simple (un solo padre por campo) — permite
+    # cadenas (A depende de B que depende de C).
+    depends_on_field_id = Column(Integer, ForeignKey("lead_field.id"), nullable=True)
+
     field_type = relationship("LeadFieldType", back_populates="fields", foreign_keys=[field_type_code])
     field_subtype = relationship("LeadFieldSubtype", foreign_keys=[field_subtype_code])
     field_values = relationship("LeadFieldValue", back_populates="field", passive_deletes="all")
@@ -37,6 +48,7 @@ class LeadField(BaseModelDB):
     nomenclator = relationship("Nomenclator", foreign_keys=[nomenclator_id])
     lead_field_section = relationship("LeadFieldSection", foreign_keys=[lead_field_section_id])
     related_campaign = relationship("Campaign", foreign_keys=[related_campaign_id])
+    depends_on_field = relationship("LeadField", remote_side=lambda: [LeadField.id], backref="dependent_fields")
 
     organization_id = Column(Integer, ForeignKey("organization.id"), nullable=False)
     organization = relationship("Organization", foreign_keys=[organization_id])

@@ -11,7 +11,9 @@ class LeadCommentBase(BaseModel):
     lead_id: int = Field(gt=0)
 
 class LeadCommentCreate(LeadCommentBase, BaseCreate):
-    pass
+    # public_uuid de Lead (Fase 3). El Response sigue con el int interno viejo (FK embebida,
+    # deliberadamente sin migrar -- ver backend/AGENTS.md §18).
+    lead_id: str
 
 class LeadCommentUpdate(BaseModel):
     content: Optional[str] = Field(default=None, min_length=1, max_length=600)

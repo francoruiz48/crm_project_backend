@@ -180,14 +180,21 @@ class ValidationRuleService(BaseService):
                 data = obj_data.copy()
 
             # --- VALIDACIÓN DE CONTEXTO ---
-            field_id = data.get("field_id")
-            if not field_id:
+            field_uuid = data.get("field_id")
+            if not field_uuid:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "field_id", "message": "El ID del campo es obligatorio."}])
+
+            # field_id llega como public_uuid; se resuelve al id interno antes de usarlo.
+            field_id = cls.lead_field_repository.get_internal_id_by_public_uuid(uow.session, field_uuid)
+            if field_id is None:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "field_id", "message": f"El campo {field_uuid} no existe."}])
 
             # Buscamos el campo padre para contexto y tipo
             lead_field = cls.lead_field_repository.get_by_id(uow.session, field_id)
             if not lead_field:
-                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "field_id", "message": f"El campo {field_id} no existe."}])
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "field_id", "message": f"El campo {field_uuid} no existe."}])
+
+            data["field_id"] = field_id
             
             # Llamamos a la lógica interna pasando nuestra lista 'errors'
             new_rule = cls.create_within_session(
@@ -211,10 +218,15 @@ class ValidationRuleService(BaseService):
         )
 
     @classmethod
-    def update(cls, obj_id: int, obj_data, user_context: Optional[UserContext] = None):
+    def update(cls, obj_id: str, obj_data, user_context: Optional[UserContext] = None):
         def do_update(uow):
             errors = []
-            current_obj = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
+            # obj_id llega como public_uuid; se resuelve una vez al id interno.
+            internal_id = cls._resolve_id(uow.session, obj_id)
+            if internal_id is None:
+                cls._not_found(obj_id)
+
+            current_obj = cls.repository.get_by_id(uow.session, internal_id, user_context=user_context)
             if not current_obj: cls._not_found(obj_id)
 
             # Convertimos a diccionario usando exclude_unset para saber qué envió realmente el usuario
@@ -278,7 +290,7 @@ class ValidationRuleService(BaseService):
                     if old_val != new_val:
                         changes[key] = {"old": old_val, "new": new_val}
 
-            updated_rule = cls.repository.update(uow.session, obj_id, data, user_context=user_context)
+            updated_rule = cls.repository.update(uow.session, internal_id, data, user_context=user_context)
             uow.session.flush()
 
             if changes:

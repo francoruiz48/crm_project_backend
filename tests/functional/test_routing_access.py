@@ -53,7 +53,9 @@ def test_security_macro_top_down_and_containment_wall(api, db_session, initial_s
 
     # Crear equipo, agregar member, dar acceso al workspace permitido
     team = api.create_team("Equipo TDC")
-    api.add_team_member(team["id"], member.id, role="AGENT")
+    # member.id sería el id interno de la fila ORM cruda (_make_user construye el User directo
+    # en la DB, no vía API) -- POST /team_members/ espera el public_uuid (Fase 3).
+    api.add_team_member(team["id"], member.public_uuid, role="AGENT")
     api.grant_workspace_access(team["id"], ws_permitido["id"])
 
     # Verificar desde el punto de vista del member
@@ -93,7 +95,7 @@ def test_security_macro_bottom_up(api, db_session, initial_structure):
 
     # Dar acceso al equipo directo a la campaign (no al workspace)
     team = api.create_team("Equipo BU")
-    api.add_team_member(team["id"], member.id, role="AGENT")
+    api.add_team_member(team["id"], member.public_uuid, role="AGENT")
     api.grant_campaign_access(team["id"], camp_hija["id"])
 
     member_api = ApiClient(api.client, org_id)
@@ -130,8 +132,8 @@ def test_security_micro_manager_vs_strict_agent(api, db_session, initial_structu
     team_strict = api.create_team("Equipo Estricto", is_visibility_shared=False)
     api.grant_workspace_access(team_strict["id"], ws["id"])
 
-    agent_member    = api.add_team_member(team_strict["id"], agent.id,     role="AGENT")
-    comp_member     = api.add_team_member(team_strict["id"], companero.id, role="AGENT")
+    agent_member    = api.add_team_member(team_strict["id"], agent.public_uuid,     role="AGENT")
+    comp_member     = api.add_team_member(team_strict["id"], companero.public_uuid, role="AGENT")
 
     # Crear campo y leads
     f_base = api.create_lead_field(camp["id"], "Dato Strict", "STRING")
@@ -141,9 +143,9 @@ def test_security_micro_manager_vs_strict_agent(api, db_session, initial_structu
     lead_del_companero = api.create_lead(camp["id"], [{"field_id": f_base["id"], "value": "Lead del Companero"}])
 
     # Asignar leads
-    api.bulk_assign([lead_del_agent["id"]],     target_team_id=team_strict["id"], target_user_id=agent.id)
+    api.bulk_assign([lead_del_agent["id"]],     target_team_id=team_strict["id"], target_user_id=agent.public_uuid)
     api.bulk_assign([lead_huerfano["id"]],      target_team_id=team_strict["id"])
-    api.bulk_assign([lead_del_companero["id"]], target_team_id=team_strict["id"], target_user_id=companero.id)
+    api.bulk_assign([lead_del_companero["id"]], target_team_id=team_strict["id"], target_user_id=companero.public_uuid)
 
     agent_api = ApiClient(api.client, org_id)
 
@@ -236,12 +238,12 @@ def test_security_micro_shared_team_agent_sees_all_leads(api, db_session, initia
     # Equipo compartido (is_visibility_shared=True → todos ven todos los leads)
     team_shared = api.create_team("Equipo Compartido", is_visibility_shared=True)
     api.grant_workspace_access(team_shared["id"], ws["id"])
-    api.add_team_member(team_shared["id"], agent.id,     role="AGENT")
-    api.add_team_member(team_shared["id"], companero.id, role="AGENT")
+    api.add_team_member(team_shared["id"], agent.public_uuid,     role="AGENT")
+    api.add_team_member(team_shared["id"], companero.public_uuid, role="AGENT")
 
     f_base             = api.create_lead_field(camp["id"], "Dato Shared", "STRING")
     lead_del_companero = api.create_lead(camp["id"], [{"field_id": f_base["id"], "value": "Lead Compañero"}])
-    api.bulk_assign([lead_del_companero["id"]], target_team_id=team_shared["id"], target_user_id=companero.id)
+    api.bulk_assign([lead_del_companero["id"]], target_team_id=team_shared["id"], target_user_id=companero.public_uuid)
 
     agent_api = ApiClient(api.client, org_id)
     with as_user(agent_api, agent):

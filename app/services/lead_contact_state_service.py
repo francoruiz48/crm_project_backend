@@ -57,18 +57,30 @@ class LeadContactStateService(BaseService):
         return cls._execute(action="Crear Estado de Contacto", func=do_create)
 
     @classmethod
-    def update(cls, obj_id: int, obj_in, user_context: Optional[UserContext] = None):
+    def update(cls, obj_id: str, obj_in, user_context: Optional[UserContext] = None):
         def do_update(uow):
-            current_obj = uow.session.query(LeadContactState).filter_by(id=obj_id).first()
+            # obj_id llega como public_uuid; se resuelve una única vez al id interno.
+            internal_id = cls._resolve_id(uow.session, obj_id)
+            if internal_id is None:
+                cls._not_found(obj_id)
+
+            # Hallazgo #22: antes esto era una query cruda sin filtro de tenant
+            # (session.query(...).filter_by(id=obj_id)) — un obj_id de otra
+            # organización llegaba hasta acá y terminaba en un 500 no controlado
+            # más abajo, en vez de un 404 limpio. get_by_id sí aplica el filtro.
+            current_obj = cls.repository.get_by_id(uow.session, internal_id, user_context=user_context)
             if not current_obj:
                 cls._not_found(obj_id)
 
+            # org_id se calcula una sola vez acá arriba porque lo usan tanto la Regla 1
+            # como la Regla 2, sin importar qué combinación de campos venga en el PUT.
+            org_id = user_context.organization_id if user_context and getattr(user_context, 'organization_id', None) is not None else TENANT_ORG_ID.get()
+
             # REGLA 1: Unicidad en Update
             if obj_in.name and obj_in.name.lower() != current_obj.name.lower():
-                org_id = user_context.organization_id if user_context and getattr(user_context, 'organization_id', None) is not None else TENANT_ORG_ID.get()
                 existing = uow.session.query(LeadContactState).filter(
                     LeadContactState.name.ilike(obj_in.name),
-                    LeadContactState.id != obj_id,
+                    LeadContactState.id != internal_id,
                     LeadContactState.organization_id == org_id
                 ).first()
                 if existing:
@@ -76,21 +88,21 @@ class LeadContactStateService(BaseService):
                         status.HTTP_400_BAD_REQUEST,
                         detail=[{"field": "name", "message": "Ya existe un estado de contacto con este nombre."}]
                     )
-            
+
             # REGLA 2: Único estado inicial
             is_initial_in = getattr(obj_in, 'is_initial', None)
             if is_initial_in is True and not current_obj.is_initial:
                 existing_initial = uow.session.query(LeadContactState).filter(
                     LeadContactState.organization_id == org_id,
                     LeadContactState.is_initial == True,
-                    LeadContactState.id != obj_id
+                    LeadContactState.id != internal_id
                 ).first()
                 if existing_initial:
                     raise HTTPException(
                         status.HTTP_400_BAD_REQUEST,
                         detail=[{"field": "is_initial", "message": f"El estado '{existing_initial.name}' ya es el inicial. Desmárquelo primero."}]
                     )
-            
+
             # REGLA 3 (Seguridad extra): Evitar que desmarque el único estado inicial
             elif is_initial_in is False and current_obj.is_initial:
                 raise HTTPException(
@@ -98,7 +110,7 @@ class LeadContactStateService(BaseService):
                     detail=[{"field": "is_initial", "message": "No puede quitar el estado inicial. Asigne otro estado de contacto como inicial primero."}]
                 )
 
-            updated_obj = cls.repository.update(uow.session, obj_id, obj_in, user_context=user_context)
+            updated_obj = cls.repository.update(uow.session, internal_id, obj_in, user_context=user_context)
             uow.session.flush()
             
             user_id = user_context.user.id if user_context and getattr(user_context, 'user', None) else None

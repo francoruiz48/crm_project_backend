@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from slowapi import Limiter
 from sqlalchemy.orm import Session
 
-from app.core.security import PermissionChecker, _get_current_user
+from app.core.security import PermissionChecker, _get_current_user, get_client_ip
 from app.db.session import get_db
 from app.models.security_models import User
 from app.schemas.security_schemas.auth_schema import (
@@ -15,25 +16,55 @@ from app.schemas.security_schemas.auth_schema import (
     RegisterRequest,
     TokenResponse,
 )
-from app.schemas.security_schemas.user_schema import UserResponse, UserUpdate
+from app.schemas.security_schemas.user_schema import UserDetailedResponse, UserUpdate
 from app.services.security_services.auth_service import AuthService
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
+# Hallazgo #12 (ronda de bug-hunting 2026-07-10): ningún endpoint de /auth tenía
+# rate limiting, permitiendo fuerza bruta de contraseñas sin freno. Se usa una
+# instancia de Limiter propia del router, mismo patrón que web_form_public_controller.py
+# (slowapi lee `app.state.limiter`/el exception handler ya están montados en main.py).
+# Hallazgo #11 (2026-07-11): key_func usa get_client_ip en vez de
+# get_remote_address — mismo motivo que en web_form_public_controller.py.
+limiter = Limiter(key_func=get_client_ip)
 
-@router.get("/me", response_model=UserResponse)
+
+@router.get("/me", response_model=UserDetailedResponse)
 def me(current_user: User = Depends(_get_current_user)):
-    """Devuelve los datos del usuario autenticado."""
+    """Devuelve los datos del usuario autenticado.
+    Se usa UserDetailedResponse (en vez de UserResponse) a propósito: es el único endpoint al que
+    puede llegar CUALQUIER usuario autenticado (no requiere ningún permiso puntual), y necesitamos
+    que el frontend sepa qué permisos tiene por organización (organizations_access[].permission_objects)
+    para poder ocultar rutas/botones sin depender de /permissions o /roles, que sí requieren permisos
+    que los roles agent/viewer no tienen. No se agrega lógica nueva: permission_objects ya existía
+    como propiedad de UserOrganization (ver models/security_models.py), simplemente se serializa acá.
+    """
     return current_user
 
 
-@router.put("/me", response_model=UserResponse)
+@router.put("/me", response_model=UserDetailedResponse)
 def update_me(
     data: UserUpdate,
     current_user: User = Depends(_get_current_user),
     db: Session = Depends(get_db),
 ):
     """Actualiza los datos del perfil del usuario autenticado."""
+    # Hallazgo #14: antes se asignaba data.email directo y se hacía commit()
+    # sin chequear unicidad — un email ya usado por otro usuario terminaba en
+    # una IntegrityError sin capturar (500 crudo), ya que User.email es unique.
+    if data.email is not None and data.email != current_user.email:
+        taken = (
+            db.query(User)
+            .filter(User.email == data.email, User.id != current_user.id)
+            .first()
+        )
+        if taken:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ese email ya está en uso por otra cuenta.",
+            )
+
     for field in ("name", "last_name", "email", "phone", "date_of_birth"):
         value = getattr(data, field, None)
         if value is not None:
@@ -44,13 +75,15 @@ def update_me(
 
 
 @router.post("/register", response_model=TokenResponse)
-def register(data: RegisterRequest):
+@limiter.limit("10/minute")
+def register(request: Request, data: RegisterRequest):
     """Registro público: crea cuenta + organización propia."""
     return AuthService.register(data)
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(data: LoginRequest):
+@limiter.limit("10/minute")
+def login(request: Request, data: LoginRequest):
     """Login con email y contraseña. Devuelve access + refresh token."""
     return AuthService.login(data)
 

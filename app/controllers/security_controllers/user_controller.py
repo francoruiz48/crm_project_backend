@@ -3,7 +3,7 @@ from fastapi import Depends, Header, Query
 from sqlalchemy.orm import Session
 
 from app.controllers.base_controller import BaseController
-from app.core.security import PermissionChecker, _get_current_user, get_current_user_roles, require_superuser
+from app.core.security import PermissionChecker, _get_current_user, _resolve_org_id, get_current_user_roles, require_superuser
 from app.db.session import get_db
 from app.models.security_models import Role, User, UserOrganization
 from app.schemas.pagination_schema import PaginatedResponse
@@ -66,7 +66,7 @@ class UserController(BaseController):
         # ---------------------------------------------------------------
         @router.get("/{obj_id}", response_model=ResponseModelItem)
         def get_one(
-            obj_id: int,
+            obj_id: str,
             detailed: bool = Query(False),
             _perm=Depends(PermissionChecker("user:view_all")),
             user_context=Depends(get_current_user_roles),
@@ -83,11 +83,21 @@ class UserController(BaseController):
         # ---------------------------------------------------------------
         @router.get("/in-org/members", response_model=List[UserPublicResponse])
         def get_users_in_org(
-            x_organization_id: int = Header(..., alias="X-Organization-Id"),
+            x_organization_id_raw: str = Header(..., alias="X-Organization-Id"),
             current_user: User = Depends(_get_current_user),
             db: Session = Depends(get_db),
         ):
             from fastapi import HTTPException, status
+
+            # Bug real encontrado 2026-07-30 (mismo de get_current_user_roles/PermissionChecker
+            # en app/core/security.py): el header ya no es un int crudo desde que el frontend
+            # manda org.id (public_uuid) -- ver _resolve_org_id para el detalle completo.
+            x_organization_id = _resolve_org_id(db, x_organization_id_raw)
+            if x_organization_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Falta o es inválido el header 'X-Organization-Id'.",
+                )
 
             # Verificar que el usuario pertenece a la org
             membership = db.query(UserOrganization).filter_by(
@@ -121,7 +131,12 @@ class UserController(BaseController):
         ):
             return cls.service.promote_to_superuser(target_user_id=id, user_context=user_context)
 
-        @router.patch("/organization/{organization_id}/promote-owner/{user_id}", dependencies=[Depends(require_superuser)])
+        # Sin Depends(require_superuser) a propósito: el service ya valida
+        # "superadmin O owner de ESA organización" (ver UserService.promote_to_org_owner).
+        # Antes, require_superuser cortaba con 403 a cualquier no-superadmin antes de
+        # que el service pudiera correr, dejando la rama de owner como código muerto
+        # inalcanzable (ver hallazgos_agente/usuarios_y_permisos.md).
+        @router.patch("/organization/{organization_id}/promote-owner/{user_id}")
         async def promote_to_org_owner(
             user_id: int,
             organization_id: int,

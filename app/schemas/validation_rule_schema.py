@@ -13,6 +13,9 @@ class ValidationRuleBase(BaseModel):
     template_params: Optional[Dict[str, Any]] = None
 
 class ValidationRuleCreate(ValidationRuleBase, BaseCreate):
+    # public_uuid de LeadField (Fase 3, ver backend/AGENTS.md §18); el service lo resuelve.
+    field_id: Optional[str] = Field(default=None)
+
     @model_validator(mode='before')
     @classmethod
     def check_creation_method(cls, data: Any) -> Any:

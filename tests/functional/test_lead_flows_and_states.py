@@ -1,4 +1,5 @@
 import pytest
+from tests.fixtures.user_fixtures import _make_user, _link_user_to_org, as_user
 
 # =============================================================================
 # FIXTURES DE PREPARACIÓN
@@ -286,27 +287,33 @@ def test_lead_lifecycle_and_history(api, flow_setup):
     res_lead = api.client.post("/leads/", json={"campaign_id": camp_valid, "values": []}, headers=api.headers)
     assert res_lead.status_code == 200
     lead_id = res_lead.json()["id"]
-    assert res_lead.json()["current_state_id"] == st_nuevo
+    assert res_lead.json()["current_state"]["id"] == st_nuevo
 
-    # Historial 1 (primer estado, from_state_id debe ser null)
-    res_hist_1 = api.client.get(f"/lead_state_history/?lead_id={lead_id}", headers=api.headers).json()["items"]
+    # Historial 1 (primer estado, from_state_id debe ser null).
+    # detailed=true porque LeadStateHistoryResponse (no-detailed) expone from_state_id/to_state_id
+    # como ids internos crudos (FK embebida, deliberadamente sin migrar -- ver backend/AGENTS.md §18);
+    # el objeto anidado from_state/to_state (LeadStateHistoryDetailedResponse) trae el public_uuid,
+    # y de paso created_at, que hace falta más abajo para ordenar el historial de forma confiable.
+    res_hist_1 = api.client.get(f"/lead_state_history/?lead_id={lead_id}&detailed=true", headers=api.headers).json()["items"]
     assert len(res_hist_1) == 1
-    assert res_hist_1[0]["from_state_id"] is None
-    assert res_hist_1[0]["to_state_id"] == st_nuevo
+    assert res_hist_1[0]["from_state"] is None
+    assert res_hist_1[0]["to_state"]["id"] == st_nuevo
 
     # Movimiento legal Nuevo -> Contactado
     res_good_jump = api.client.post(f"/leads/{lead_id}/change_state", json={
         "new_state_id": st_contactado, "notes": "Lo llamé hoy"
     }, headers=api.headers)
     assert res_good_jump.status_code == 200
-    assert res_good_jump.json()["current_state_id"] == st_contactado
+    assert res_good_jump.json()["current_state"]["id"] == st_contactado
 
     # Historial 2 verificado
-    res_hist_2 = api.client.get(f"/lead_state_history/?lead_id={lead_id}", headers=api.headers).json()["items"]
+    res_hist_2 = api.client.get(f"/lead_state_history/?lead_id={lead_id}&detailed=true", headers=api.headers).json()["items"]
     assert len(res_hist_2) == 2
-    last_hist = max(res_hist_2, key=lambda x: x["id"])
-    assert last_hist["from_state_id"] == st_nuevo
-    assert last_hist["to_state_id"] == st_contactado
+    # Ordenamos por created_at (no por "id"/public_uuid -- ese es un uuid random, no sirve para
+    # saber cuál es el registro más reciente) para quedarnos con el historial del segundo salto.
+    last_hist = max(res_hist_2, key=lambda x: x["created_at"])
+    assert last_hist["from_state"]["id"] == st_nuevo
+    assert last_hist["to_state"]["id"] == st_contactado
 
     # LEAD 2: UNHAPPY PATH — movimiento ilegal con lead separado para no contaminar el anterior
     res_lead_2 = api.client.post("/leads/", json={"campaign_id": camp_valid, "values": []}, headers=api.headers)
@@ -377,7 +384,7 @@ def test_campaign_allow_flow_change_without_leads(api, flow_setup):
 
     res = api.client.put(f"/campaigns/{camp_empty}", json={"lead_flow_id": flow_valid}, headers=api.headers)
     assert res.status_code == 200
-    assert res.json()["lead_flow_id"] == flow_valid
+    assert res.json()["lead_flow"]["id"] == flow_valid
 
 
 # =============================================================================
@@ -461,8 +468,11 @@ def test_transition_prevent_dead_end_on_delete(api, flow_setup):
     """Si al eliminar una transición un estado OPEN se queda con 0 salidas, debe fallar."""
     flow_id = flow_setup["flow_valid_id"]
 
-    res_trans = api.client.get(f"/lead_state_transitions/?lead_flow_id={flow_id}&page_size=10", headers=api.headers).json()
-    t_nuevo_contactado = next(t for t in res_trans["items"] if t["from_state_id"] == flow_setup["state_nuevo_id"])
+    # detailed=true porque LeadStateTransitionResponse (no-detailed) expone from_state_id/to_state_id
+    # como ids internos crudos (FK embebida, deliberadamente sin migrar -- ver backend/AGENTS.md §18);
+    # el objeto anidado from_state/to_state (LeadStateTransitionDetailedResponse) sí trae el public_uuid.
+    res_trans = api.client.get(f"/lead_state_transitions/?lead_flow_id={flow_id}&page_size=10&detailed=true", headers=api.headers).json()
+    t_nuevo_contactado = next(t for t in res_trans["items"] if t["from_state"]["id"] == flow_setup["state_nuevo_id"])
 
     res_del = api.client.delete(f"/lead_state_transitions/{t_nuevo_contactado['id']}", headers=api.headers)
     assert res_del.status_code == 400
@@ -518,7 +528,9 @@ def test_transition_bulk_create_nonexistent_state(api, bulk_flow_setup):
     res = api.client.post("/lead_state_transitions/bulk", json={
         "lead_flow_id": f_id,
         "transitions": [
-            {"from_state_id": s1_id, "to_state_id": 999999},
+            # public_uuid inexistente (bien formado pero que no matchea ninguna fila), no un int
+            # crudo -- to_state_id es str en LeadStateTransitionCreate/TransitionPair (Fase 3).
+            {"from_state_id": s1_id, "to_state_id": "00000000-0000-0000-0000-000000000000"},
         ]
     }, headers=api.headers)
 
@@ -579,6 +591,52 @@ def test_transition_bulk_update_success(api, bulk_flow_setup):
 # =============================================================================
 # TESTS DEL ENDPOINT DE GRAFO — ORCHESTRATOR (/lead_flows/graph)
 # =============================================================================
+
+# --- Control de acceso (hallazgo #23) -------------------------------------
+# POST /lead_flows/graph no tenía ningún chequeo de permiso más allá de estar
+# autenticado — cualquier rol (incluso "agent", que no tiene lead_flow:update)
+# podía rediseñar el flujo de ventas completo de su organización.
+
+def test_graph_blocked_for_role_without_lead_flow_update(api, db_session, initial_structure):
+    """Un usuario con rol 'agent' (sin lead_flow:update) recibe 403 al usar el grafo."""
+    org_id = initial_structure["org_id"]
+    agent_user = _make_user(db_session, "Agent Sin Permiso Grafo", f"agent_graph_{org_id}@test.com")
+    _link_user_to_org(db_session, agent_user, org_id, role_code="agent")
+    db_session.commit()
+
+    with as_user(api, agent_user, db_session):
+        res = api.client.post("/lead_flows/graph", json={
+            "name": "Flujo Intentado por Agent",
+            "states": [
+                {"id": -1, "name": "Inicio", "category": "OPEN", "is_initial": True, "order": 1},
+            ],
+            "transitions": []
+        }, headers=api.headers)
+
+    assert res.status_code == 403, f"Esperaba 403 pero recibió {res.status_code}: {res.text}"
+
+
+def test_graph_allowed_for_role_with_lead_flow_update(api, db_session, initial_structure):
+    """Un usuario con rol 'admin' (tiene lead_flow:update) puede usar el grafo normalmente."""
+    org_id = initial_structure["org_id"]
+    admin_user = _make_user(db_session, "Admin Con Permiso Grafo", f"admin_graph_{org_id}@test.com")
+    _link_user_to_org(db_session, admin_user, org_id, role_code="admin")
+    db_session.commit()
+
+    with as_user(api, admin_user, db_session):
+        res = api.client.post("/lead_flows/graph", json={
+            "name": "Flujo Creado por Admin",
+            "states": [
+                {"id": -1, "name": "Inicio", "category": "OPEN", "is_initial": True, "order": 1},
+                {"id": -2, "name": "Cerrado", "category": "WON", "is_initial": False},
+            ],
+            "transitions": [
+                {"from_state_id": -1, "to_state_id": -2},
+            ]
+        }, headers=api.headers)
+
+    assert res.status_code == 200, f"Esperaba 200 pero recibió {res.status_code}: {res.text}"
+
 
 def test_graph_create_new_flow(api):
     """El Orchestrator crea un flujo completo desde cero usando IDs negativos."""

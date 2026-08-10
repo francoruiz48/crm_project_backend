@@ -14,7 +14,9 @@ class LeadStateBase(BaseModel):
     position_y: Optional[float] = Field(default=0.0, description="Coordenada Y en la interfaz gráfica")
 
 class LeadStateCreate(LeadStateBase, BaseCreate):
-    pass
+    # public_uuid de LeadFlow (Fase 3). El Response sigue con el int interno viejo (FK
+    # embebida, deliberadamente sin migrar -- ver backend/AGENTS.md §18).
+    lead_flow_id: str
 
 class LeadStateUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
