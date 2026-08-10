@@ -10,6 +10,7 @@ from app.models.lead_state import LeadState
 from app.models.lead_state_transition import LeadStateTransition
 from app.models.lead import Lead
 from app.db.repository.lead_flow_repository import LeadFlowRepository
+from app.db.repository.lead_state_repository import LeadStateRepository
 from app.core.constans import SystemAuditLogAction
 
 class LeadFlowOrchestratorService(BaseService):
@@ -24,8 +25,15 @@ class LeadFlowOrchestratorService(BaseService):
             # ==========================================
             # 1. RESOLVER EL PADRE (LEAD FLOW)
             # ==========================================
-            flow_id = payload.id
-            
+            # payload.id llega como public_uuid (Fase 3, ver backend/AGENTS.md §18); se resuelve
+            # una vez al id interno acá y de ahí en más flow_id es siempre el int interno, igual
+            # que antes de la migración.
+            flow_id = None
+            if payload.id:
+                flow_id = LeadFlowRepository.get_internal_id_by_public_uuid(uow.session, payload.id)
+                if flow_id is None:
+                    cls._not_found(payload.id)
+
             name_query = uow.session.query(LeadFlow).filter(
                 LeadFlow.name.ilike(payload.name),
                 LeadFlow.organization_id == org_id,
@@ -63,14 +71,18 @@ class LeadFlowOrchestratorService(BaseService):
             existing_states = uow.session.query(LeadState).filter_by(lead_flow_id=flow_id, active=True).all()
             existing_states_map = {s.id: s for s in existing_states}
 
-            payload_state_ids = [s.id for s in payload.states if s.id and s.id > 0]
+            # Un estado existente llega identificado por su public_uuid (string); uno nuevo, por
+            # un int negativo/None (placeholder temporal, ver StateNodeSchema.id). Se resuelven en
+            # bloque los uuids a id interno antes del loop (Fase 3, ver backend/AGENTS.md §18).
+            existing_state_uuids = [s.id for s in payload.states if isinstance(s.id, str)]
+            uuid_to_internal_state_id = LeadStateRepository.get_internal_ids_by_public_uuids(uow.session, existing_state_uuids)
 
+            payload_state_ids = []
             id_translation_map = {}
             open_order_counter = 1
 
             for state_node in payload.states:
-                # Defensa: si manda id 0 o negativo, es nuevo
-                is_new = state_node.id is None or state_node.id <= 0
+                is_new = not isinstance(state_node.id, str)
 
                 calc_order = None
                 if state_node.category == "OPEN":
@@ -97,8 +109,12 @@ class LeadFlowOrchestratorService(BaseService):
                     uow.session.add(new_state)
                     uow.session.flush() # Obtenemos el ID real para las transiciones
                     id_translation_map[state_node.id] = new_state.id
+                    payload_state_ids.append(new_state.id)
                 else:
-                    db_state = existing_states_map.get(state_node.id)
+                    real_existing_id = uuid_to_internal_state_id.get(state_node.id)
+                    if real_existing_id is None:
+                        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "states", "message": f"Estado '{state_node.name}' no encontrado."}])
+                    db_state = existing_states_map.get(real_existing_id)
                     if db_state:
                         db_state.name = state_node.name
                         db_state.category = state_node.category
@@ -109,7 +125,8 @@ class LeadFlowOrchestratorService(BaseService):
                         db_state.position_y = state_node.position_y
                         db_state.updated_by = created_by
                         id_translation_map[state_node.id] = db_state.id
-                        
+                        payload_state_ids.append(db_state.id)
+
 
             # ==========================================
             # 3. TRADUCCIÓN Y MAPEO DE TRANSICIONES
@@ -183,7 +200,10 @@ class LeadFlowOrchestratorService(BaseService):
 
             # Auditoría y Retorno
             cls._log_audit(uow.session, flow_obj, action=SystemAuditLogAction.UPDATED, changes=None, user_id=created_by)
-            
-            return flow_obj.id
+
+            # public_uuid, no el id interno -- así el frontend puede usarlo directo en la URL
+            # /lead-flow-editor/{id} y en llamadas posteriores (GET/PUT genéricos), igual que
+            # cualquier otra entidad desde Fase 3 (ver backend/AGENTS.md §18).
+            return flow_obj.public_uuid
 
         return cls._execute(action="Guardar Grafo de Lead Flow", func=do_save)

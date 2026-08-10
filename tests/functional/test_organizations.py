@@ -45,7 +45,7 @@ class TestOrganizationHeaderVsAccessMismatch:
         api = ApiClient(client, ctx_alpha.org_id)
         with as_user(api, cross_org_user, db_session):
             resp = api.client.put(
-                f"/organizations/{ctx_beta.org_id}",
+                f"/organizations/{ctx_beta.org_uuid}",
                 json={"name": "Beta Hackeada"},
                 headers=api.headers,
             )
@@ -59,7 +59,7 @@ class TestOrganizationHeaderVsAccessMismatch:
         api = ApiClient(client, ctx_alpha.org_id)
         with as_user(api, cross_org_user, db_session):
             resp = api.client.put(
-                f"/organizations/{ctx_alpha.org_id}",
+                f"/organizations/{ctx_alpha.org_uuid}",
                 json={"name": "Alpha Renombrada"},
                 headers=api.headers,
             )
@@ -74,7 +74,7 @@ class TestOrganizationHeaderVsAccessMismatch:
         api = ApiClient(client, ctx_alpha.org_id)
         with as_user(api, superadmin, db_session):
             resp = api.client.put(
-                f"/organizations/{ctx_beta.org_id}",
+                f"/organizations/{ctx_beta.org_uuid}",
                 json={"name": "Beta vía superadmin"},
                 headers=api.headers,
             )
@@ -89,14 +89,14 @@ class TestOrganizationHeaderVsAccessMismatch:
         with as_user(api, cross_org_user, db_session):
             resp = api.client.post(
                 "/organizations/bulk-active",
-                json={"ids": [ctx_alpha.org_id, ctx_beta.org_id]},
+                json={"ids": [ctx_alpha.org_uuid, ctx_beta.org_uuid]},
                 headers=api.headers,
             )
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        assert ctx_beta.org_id not in body.get("activated", [])
-        assert ctx_beta.org_id not in body.get("already_active", [])
-        assert ctx_beta.org_id in body["failed"]
+        assert ctx_beta.org_uuid not in body.get("activated", [])
+        assert ctx_beta.org_uuid not in body.get("already_active", [])
+        assert ctx_beta.org_uuid in body["failed"]
 
 
 class TestOrganizationBulkDeleteRespectsProtected:
@@ -106,16 +106,16 @@ class TestOrganizationBulkDeleteRespectsProtected:
         api = ApiClient(client, ctx_alpha.org_id)  # client fixture actúa como superadmin
         resp = api.client.post(
             "/organizations/bulk-delete",
-            json={"ids": [ctx_alpha.org_id]},
+            json={"ids": [ctx_alpha.org_uuid]},
             headers=api.headers,
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        assert ctx_alpha.org_id in body["failed"]
-        assert ctx_alpha.org_id not in body["deleted"]
+        assert ctx_alpha.org_uuid in body["failed"]
+        assert ctx_alpha.org_uuid not in body["deleted"]
 
         # La organización debe seguir existiendo (esto es seguro de verificar acá:
         # bulk_delete no lanza excepción, solo devuelve un resultado, así que no
         # pisa la limitación de db_session documentada en AGENTS.md §5.1).
-        resp_check = api.client.get(f"/organizations/{ctx_alpha.org_id}", headers=api.headers)
+        resp_check = api.client.get(f"/organizations/{ctx_alpha.org_uuid}", headers=api.headers)
         assert resp_check.status_code == 200

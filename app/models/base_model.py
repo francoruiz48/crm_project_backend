@@ -1,13 +1,16 @@
 
+import uuid
 from app.db.base_sql import Base
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, DateTime, func
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, DateTime, func
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declared_attr
 
 class BaseModelDB(Base):
     __abstract__ = True  # No se crea tabla
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True)  # Uso interno del backend, nunca se expone al front
+    # Id público de la entidad: es lo único que el front conoce (ver base_schema.py, Fase 3).
+    public_uuid = Column(String(36), default=lambda: str(uuid.uuid4()), unique=True, nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     active = Column(Boolean, default=True, nullable=False)

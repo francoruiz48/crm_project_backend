@@ -29,15 +29,29 @@ from app.models.security_models import User
 
 @dataclass
 class TenantContext:
+    # Los campos *_id son el id interno (uso directo en queries/ORM crudo dentro del test).
+    # Los campos *_uuid son el public_uuid correspondiente -- usar estos en URLs/JSON de
+    # llamadas HTTP a la API, que desde Fase 2/3 esperan el uuid público, no el id interno
+    # (excepto X-Organization-Id / ApiClient(client, org_id), que nunca se migró y sigue
+    # siendo int). Agregado 2026-07-28: el fixture original solo exponía los ints, lo que
+    # rompía cualquier test que mandara ctx_alpha.campaign_id/workspace_id/etc. directo en
+    # una llamada real a la API (ver backend/AGENTS.md).
     org_id: int
+    org_uuid: str
     owner: User
     member: User
     workspace_id: int
+    workspace_uuid: str
     campaign_id: int
+    campaign_uuid: str
     lead_flow_id: int
+    lead_flow_uuid: str
     section_id: int
+    section_uuid: str
     state_initial_id: int
+    state_initial_uuid: str
     state_contact_id: int
+    state_contact_uuid: str
 
 
 def _build_tenant(db_session, name: str, suffix: str) -> TenantContext:
@@ -94,14 +108,21 @@ def _build_tenant(db_session, name: str, suffix: str) -> TenantContext:
 
     return TenantContext(
         org_id=org.id,
+        org_uuid=org.public_uuid,
         owner=owner,
         member=member,
         workspace_id=ws.id,
+        workspace_uuid=ws.public_uuid,
         campaign_id=camp.id,
+        campaign_uuid=camp.public_uuid,
         lead_flow_id=lf.id,
+        lead_flow_uuid=lf.public_uuid,
         section_id=section.id,
+        section_uuid=section.public_uuid,
         state_initial_id=state_new.id,
+        state_initial_uuid=state_new.public_uuid,
         state_contact_id=state_contact.id,
+        state_contact_uuid=state_contact.public_uuid,
     )
 
 

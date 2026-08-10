@@ -26,7 +26,7 @@ class LeadStateController(BaseController):
 
         @router.get("/{id}/next-states", response_model=LeadStateListResponse)
         def get_allowed_next_states(
-            id: int, 
+            id: str,
             user_context: UserContext = Depends(get_current_user_roles)
         ):
             """

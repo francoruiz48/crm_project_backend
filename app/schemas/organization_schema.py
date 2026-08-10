@@ -16,9 +16,12 @@ class OrganizationUpdate(BaseModel):
     description: Optional[str] = Field(default=None, min_length=3, max_length=500)
 
 class OrganizationResponse(OrganizationBase, BaseResponse):
-    pass
+    # Solo lectura -- no está en OrganizationCreate/Update, así que no se puede
+    # setear vía API. Lo setea únicamente el seed (seed_admin_org). Ver comentario
+    # en app/models/organization.py.
+    is_system: bool = False
 
 class OrganizationDetailedResponse(OrganizationBase, BaseDetailedResponse):
-    pass
+    is_system: bool = False
 
 

@@ -1,9 +1,23 @@
 import pytest
 from app.models.lead_field import LeadField
+from app.models.lead_field_section import LeadFieldSection
 from app.models.lead_state import LeadState
+from app.models.lead_flow import LeadFlow
+from app.models.workspace import Workspace
 from app.models.nomenclator import Nomenclator
 from app.models.nomenclator_item import NomenclatorItem
 from app.models.campaign import Campaign
+
+
+def _resolve_internal_id(db_session, model, public_uuid_or_int):
+    """
+    initial_structure devuelve public_uuid para campaign_id/section_id/workspace_id/
+    lead_flow_id (Fase 3), pero este archivo construye filas ORM (LeadField/Campaign/
+    LeadState) directo en la DB, que necesitan el id interno (columnas FK Integer reales).
+    """
+    if isinstance(public_uuid_or_int, int):
+        return public_uuid_or_int
+    return db_session.query(model.id).filter_by(public_uuid=public_uuid_or_int).scalar()
 
 # --- TESTS BÁSICOS ---
 
@@ -34,7 +48,7 @@ def test_create_lead_simple_values(api, initial_fields):
     data = api.create_lead(campaign_id=camp_id, values=values, expected_status=200)
     assert data["id"] is not None
     
-    val_nombre = next((v for v in data["field_values"] if v["field_id"] == field_nombre_id), None)
+    val_nombre = next((v for v in data["field_values"] if v["field"]["id"] == field_nombre_id), None)
     assert val_nombre["value"] == "Carlos Test"
 
 def test_create_lead_missing_required(api, initial_fields):
@@ -55,10 +69,12 @@ def test_create_lead_various_types(api, db_session, initial_structure):
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
     section_id = initial_structure["section_id"]
-    
-    f_fecha = LeadField(name="Fecha Nacimiento", field_type_code="DATE", campaign_id=camp_id, order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
-    f_vip = LeadField(name="Es VIP", field_type_code="BOOL", campaign_id=camp_id, order=2, lead_field_section_id=section_id, organization_id=org_id, active=True)
-    f_score = LeadField(name="Puntaje", field_type_code="NUMBER", campaign_id=camp_id, order=3, lead_field_section_id=section_id, organization_id=org_id, active=True)
+    camp_internal_id = _resolve_internal_id(db_session, Campaign, camp_id)
+    section_internal_id = _resolve_internal_id(db_session, LeadFieldSection, section_id)
+
+    f_fecha = LeadField(name="Fecha Nacimiento", field_type_code="DATE", campaign_id=camp_internal_id, order=1, lead_field_section_id=section_internal_id, organization_id=org_id, active=True)
+    f_vip = LeadField(name="Es VIP", field_type_code="BOOL", campaign_id=camp_internal_id, order=2, lead_field_section_id=section_internal_id, organization_id=org_id, active=True)
+    f_score = LeadField(name="Puntaje", field_type_code="NUMBER", campaign_id=camp_internal_id, order=3, lead_field_section_id=section_internal_id, organization_id=org_id, active=True)
     
     db_session.add_all([f_fecha, f_vip, f_score])
     db_session.commit()
@@ -84,8 +100,10 @@ def test_create_lead_input_mask_validation_failure(api, db_session, initial_stru
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
     section_id = initial_structure["section_id"]
-    
-    f_patente = LeadField(name="Patente Fail", field_type_code="STRING", campaign_id=camp_id, input_mask="AAA-###", order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
+    camp_internal_id = _resolve_internal_id(db_session, Campaign, camp_id)
+    section_internal_id = _resolve_internal_id(db_session, LeadFieldSection, section_id)
+
+    f_patente = LeadField(name="Patente Fail", field_type_code="STRING", campaign_id=camp_internal_id, input_mask="AAA-###", order=1, lead_field_section_id=section_internal_id, organization_id=org_id, active=True)
     db_session.add(f_patente)
     db_session.commit()
 
@@ -101,14 +119,16 @@ def test_create_lead_input_mask_validation_success(api, db_session, initial_stru
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
     section_id = initial_structure["section_id"]
-    
-    f_patente = LeadField(name="Patente OK", field_type_code="STRING", campaign_id=camp_id, input_mask="AAA-###", order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
+    camp_internal_id = _resolve_internal_id(db_session, Campaign, camp_id)
+    section_internal_id = _resolve_internal_id(db_session, LeadFieldSection, section_id)
+
+    f_patente = LeadField(name="Patente OK", field_type_code="STRING", campaign_id=camp_internal_id, input_mask="AAA-###", order=1, lead_field_section_id=section_internal_id, organization_id=org_id, active=True)
     db_session.add(f_patente)
     db_session.commit()
 
     values = [{"field_id": f_patente.id, "value": "ABC-123"}]
     data = api.create_lead(campaign_id=camp_id, values=values, expected_status=200)
-    
+
     val_guardado = next(v for v in data["field_values"] if v["field_id"] == f_patente.id)
     assert val_guardado["value"] == "ABC-123"
     
@@ -121,9 +141,11 @@ def test_create_lead_duplicate_primary_field(api, db_session, initial_structure)
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
     section_id = initial_structure["section_id"]
-    
+    camp_internal_id = _resolve_internal_id(db_session, Campaign, camp_id)
+    section_internal_id = _resolve_internal_id(db_session, LeadFieldSection, section_id)
+
     # 1. Campo Primary (DNI)
-    f_dni = LeadField(name="DNI", field_type_code="STRING", campaign_id=camp_id, is_primary=True, order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
+    f_dni = LeadField(name="DNI", field_type_code="STRING", campaign_id=camp_internal_id, is_primary=True, order=1, lead_field_section_id=section_internal_id, organization_id=org_id, active=True)
     db_session.add(f_dni)
     db_session.commit()
 
@@ -149,7 +171,7 @@ def test_lead_lifecycle(api, initial_fields):
     
     # EDITAR (PUT)
     data_updated = api.update_lead(lead_id=lead_id, campaign_id=camp_id, values=[{"field_id": f_nombre, "value": "Juan Editado"}], expected_status=200)
-    val_editado = next(v for v in data_updated["field_values"] if v["field_id"] == f_nombre)
+    val_editado = next(v for v in data_updated["field_values"] if v["field"]["id"] == f_nombre)
     assert val_editado["value"] == "Juan Editado"
     
     # BORRAR
@@ -165,10 +187,12 @@ def test_search_leads_advanced(api, db_session, initial_structure):
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
     section_id = initial_structure["section_id"]
-    
+    camp_internal_id = _resolve_internal_id(db_session, Campaign, camp_id)
+    section_internal_id = _resolve_internal_id(db_session, LeadFieldSection, section_id)
+
     # 1. Setup Campos (Edad y Nombre)
-    f_edad = LeadField(name="Edad", field_type_code="INT", campaign_id=camp_id, order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
-    f_nombre = LeadField(name="Nombre", field_type_code="STRING", campaign_id=camp_id, order=2, lead_field_section_id=section_id, organization_id=org_id, active=True)
+    f_edad = LeadField(name="Edad", field_type_code="INT", campaign_id=camp_internal_id, order=1, lead_field_section_id=section_internal_id, organization_id=org_id, active=True)
+    f_nombre = LeadField(name="Nombre", field_type_code="STRING", campaign_id=camp_internal_id, order=2, lead_field_section_id=section_internal_id, organization_id=org_id, active=True)
     db_session.add_all([f_edad, f_nombre])
     db_session.commit()
 
@@ -232,6 +256,108 @@ def test_search_leads_advanced(api, db_session, initial_structure):
     data_between = res_between.json()["items"]
     assert len(data_between) == 1 # Solo Ana
 
+def test_search_leads_text_query(api, db_session, initial_structure):
+    """
+    Regresión: POST /leads/search debe filtrar por el parámetro `query` (texto libre),
+    igual que GET /leads. Antes el controller/servicio/repositorio lo descartaban en
+    silencio -- por eso el buscador del modo Tablero (que usa /leads/search) no filtraba
+    nada, aunque el mismo buscador en modo Lista (GET /leads) sí funcionaba.
+    """
+    camp_id = initial_structure["campaign_id"]
+    org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
+    camp_internal_id = _resolve_internal_id(db_session, Campaign, camp_id)
+    section_internal_id = _resolve_internal_id(db_session, LeadFieldSection, section_id)
+
+    f_nombre = LeadField(name="Nombre", field_type_code="STRING", campaign_id=camp_internal_id, order=1, lead_field_section_id=section_internal_id, organization_id=org_id, active=True)
+    db_session.add(f_nombre)
+    db_session.commit()
+
+    api.create_lead(campaign_id=camp_id, values=[{"field_id": f_nombre.id, "value": "Ana Rodriguez"}])
+    api.create_lead(campaign_id=camp_id, values=[{"field_id": f_nombre.id, "value": "Beto Sosa"}])
+
+    # Búsqueda de texto libre (sin filters), como manda el modo Tablero
+    res = api.client.post(
+        "/leads/search",
+        params={"query": "rodrig"},
+        json={"page": 1, "filters": []},
+        headers=api.headers,
+    )
+    assert res.status_code == 200
+    items = res.json()["items"]
+    assert len(items) == 1
+    nombre_val = next(v for v in items[0]["field_values"] if v["field_id"] == f_nombre.id)
+    assert nombre_val["value"] == "Ana Rodriguez"
+
+    # Sin match -> vacío
+    res_empty = api.client.post(
+        "/leads/search",
+        params={"query": "zzz_no_existe"},
+        json={"page": 1, "filters": []},
+        headers=api.headers,
+    )
+    assert res_empty.status_code == 200
+    assert res_empty.json()["items"] == []
+
+    # Combinado con un filtro estructurado (contact_state / campaign) via `filters`
+    res_combo = api.client.post(
+        "/leads/search",
+        params={"query": "sosa", "campaign_id": camp_id},
+        json={"page": 1, "filters": []},
+        headers=api.headers,
+    )
+    assert res_combo.status_code == 200
+    items_combo = res_combo.json()["items"]
+    assert len(items_combo) == 1
+    nombre_val_combo = next(v for v in items_combo[0]["field_values"] if v["field_id"] == f_nombre.id)
+    assert nombre_val_combo["value"] == "Beto Sosa"
+
+def test_search_leads_custom_field_filter_by_public_uuid(api, db_session, initial_structure):
+    """
+    Regresión: filtrar /leads/search por un campo custom (EAV) usando el `field_id` tal
+    como lo manda el front real -- el public_uuid del LeadField, no su id interno. Antes
+    esto rompía con `psycopg2.errors.InvalidTextRepresentation: invalid input syntax for
+    type integer`, porque el filtro comparaba lead_field_value.field_id (entero) contra
+    el UUID crudo sin resolverlo primero al id interno.
+    """
+    camp_id = initial_structure["campaign_id"]
+    org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
+    camp_internal_id = _resolve_internal_id(db_session, Campaign, camp_id)
+    section_internal_id = _resolve_internal_id(db_session, LeadFieldSection, section_id)
+
+    f_nombre = LeadField(name="Nombre", field_type_code="STRING", campaign_id=camp_internal_id, order=1, lead_field_section_id=section_internal_id, organization_id=org_id, active=True)
+    db_session.add(f_nombre)
+    db_session.commit()
+
+    api.create_lead(campaign_id=camp_id, values=[{"field_id": f_nombre.id, "value": "Laura"}])
+    api.create_lead(campaign_id=camp_id, values=[{"field_id": f_nombre.id, "value": "Martin"}])
+
+    # Igual que manda el front: field_id = public_uuid del LeadField, no el id interno
+    payload = {
+        "page": 1,
+        "filters": [
+            {"field_id": f_nombre.public_uuid, "operator": "ilike", "value": "L"}
+        ]
+    }
+    res = api.client.post("/leads/search", json=payload, headers=api.headers)
+    assert res.status_code == 200
+    items = res.json()["items"]
+    assert len(items) == 1
+    nombre_val = next(v for v in items[0]["field_values"] if v["field_id"] == f_nombre.id)
+    assert nombre_val["value"] == "Laura"
+
+    # UUID que no corresponde a ningún LeadField -> no debe romper, solo no matchear nada
+    payload_missing = {
+        "page": 1,
+        "filters": [
+            {"field_id": "00000000-0000-0000-0000-000000000000", "operator": "ilike", "value": "L"}
+        ]
+    }
+    res_missing = api.client.post("/leads/search", json=payload_missing, headers=api.headers)
+    assert res_missing.status_code == 200
+    assert res_missing.json()["items"] == []
+
 # --- TESTS AVANZADOS (NOMENCLADORES) ---
 
 def test_create_lead_with_multiple_nomenclator(api, db_session, initial_structure):
@@ -256,13 +382,13 @@ def test_create_lead_with_multiple_nomenclator(api, db_session, initial_structur
 
     field_tags = LeadField(
         name="Etiquetas",
-        campaign_id=camp_id,
+        campaign_id=_resolve_internal_id(db_session, Campaign, camp_id),
         field_type_code="SELECTOR",
         field_subtype_code="SELECTOR_MULTIPLE",
         nomenclator_id=nom.id,
-        lead_field_section_id=section_id,
+        lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id),
         required=False,
-        order=5, 
+        order=5,
         organization_id=org_id,
         active=True
     )
@@ -307,9 +433,9 @@ def test_search_lead_by_nomenclator(api, db_session, initial_structure):
     db_session.commit()
 
     field_depto = LeadField(
-        name="Departamento", campaign_id=camp_id, 
+        name="Departamento", campaign_id=_resolve_internal_id(db_session, Campaign, camp_id),
         field_type_code="SELECTOR", field_subtype_code="SELECTOR_SIMPLE",
-        nomenclator_id=nom.id, lead_field_section_id=section_id, order=1, 
+        nomenclator_id=nom.id, lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id), order=1,
         organization_id=org_id, active=True
     )
     db_session.add(field_depto)
@@ -358,7 +484,9 @@ def test_create_field_from_template(api, db_session, initial_structure):
         campaign_id=camp_id, template_code="POSTAL_CODE", required=True, expected_status=200
     )
 
-    field_created = api.client.get(f"/lead_fields/{field_data['id']}", headers=api.headers)
+    # detailed=true: GET_ONE default (LeadFieldResponse) no incluye validation_rules,
+    # solo LeadFieldDetailedResponse lo trae.
+    field_created = api.client.get(f"/lead_fields/{field_data['id']}?detailed=true", headers=api.headers)
     assert field_created.status_code == 200
     assert field_created.json()["validation_rules"] is not None
 
@@ -420,20 +548,27 @@ def test_get_leads_filtering(api, db_session, initial_structure):
     workspace_id = initial_structure["workspace_id"]
     lead_flow_id = initial_structure["lead_flow_id"]
     section_id = initial_structure["section_id"]
-    
-    camp_b = Campaign(name="Campaña B", workspace_id=workspace_id, lead_flow_id=lead_flow_id, organization_id=org_id)
+
+    # workspace_id/lead_flow_id/section_id llegan como public_uuid (Fase 3); Campaign/
+    # LeadState/LeadField construidos crudos acá necesitan el id interno.
+    workspace_internal_id = _resolve_internal_id(db_session, Workspace, workspace_id)
+    lead_flow_internal_id = _resolve_internal_id(db_session, LeadFlow, lead_flow_id)
+    section_internal_id = _resolve_internal_id(db_session, LeadFieldSection, section_id)
+    camp_a_internal_id = _resolve_internal_id(db_session, Campaign, camp_a_id)
+
+    camp_b = Campaign(name="Campaña B", workspace_id=workspace_internal_id, lead_flow_id=lead_flow_internal_id, organization_id=org_id)
     db_session.add(camp_b)
     db_session.flush()
-    
+
     # --- Inyectar estado inicial a la campaña extra ---
     state_extra = LeadState(
-        lead_flow_id=lead_flow_id, organization_id=org_id, 
+        lead_flow_id=lead_flow_internal_id, organization_id=org_id,
         name="Nuevo Extra", category="OPEN", is_initial=True, order=1
     )
     db_session.add(state_extra)
 
-    f_nom_a = LeadField(name="Nombre A", field_type_code="STRING", campaign_id=camp_a_id, order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
-    f_nom_b = LeadField(name="Nombre B", field_type_code="STRING", campaign_id=camp_b.id, order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
+    f_nom_a = LeadField(name="Nombre A", field_type_code="STRING", campaign_id=camp_a_internal_id, order=1, lead_field_section_id=section_internal_id, organization_id=org_id, active=True)
+    f_nom_b = LeadField(name="Nombre B", field_type_code="STRING", campaign_id=camp_b.id, order=1, lead_field_section_id=section_internal_id, organization_id=org_id, active=True)
     db_session.add_all([f_nom_a, f_nom_b])
     db_session.commit()
 
@@ -441,8 +576,8 @@ def test_get_leads_filtering(api, db_session, initial_structure):
     api.create_lead(campaign_id=camp_a_id, values=[{"field_id": f_nom_a.id, "value": "Lead A1"}])
     api.create_lead(campaign_id=camp_a_id, values=[{"field_id": f_nom_a.id, "value": "Lead A2"}])
 
-    # 2. Crear Lead en Campaña B
-    api.create_lead(campaign_id=camp_b.id, values=[{"field_id": f_nom_b.id, "value": "Lead B1"}])
+    # 2. Crear Lead en Campaña B -- campaign_id en el body de create_lead es str (public_uuid)
+    api.create_lead(campaign_id=camp_b.public_uuid, values=[{"field_id": f_nom_b.id, "value": "Lead B1"}])
 
     # --- TEST DE FILTROS ---
     # Caso 1: Campaña A
@@ -468,10 +603,10 @@ def test_create_lead_int_validation_case_of_decimal(api, db_session, initial_str
     org_id = initial_structure["org_id"]
     section_id = initial_structure["section_id"]
 
-    f_int = LeadField(name="Contador", field_type_code="INT", campaign_id=camp_id, order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
+    f_int = LeadField(name="Contador", field_type_code="INT", campaign_id=_resolve_internal_id(db_session, Campaign, camp_id), order=1, lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id), organization_id=org_id, active=True)
     db_session.add(f_int)
     db_session.commit()
-    
+
     # --- Sub-caso 3.1: Decimales ---
     res_decimal = api.create_lead(
         campaign_id=camp_id, 
@@ -491,10 +626,10 @@ def test_create_lead_int_validation_case_of_huge_int(api, db_session, initial_st
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
     section_id = initial_structure["section_id"]
-    f_int = LeadField(name="Contador", field_type_code="INT", campaign_id=camp_id, order=1, lead_field_section_id=section_id, organization_id=org_id, active=True)
+    f_int = LeadField(name="Contador", field_type_code="INT", campaign_id=_resolve_internal_id(db_session, Campaign, camp_id), order=1, lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id), organization_id=org_id, active=True)
     db_session.add(f_int)
     db_session.commit()
-    
+
     # --- Sub-caso 3.2: Integer Overflow ---
     huge_number = 99999999999999999999999  
     

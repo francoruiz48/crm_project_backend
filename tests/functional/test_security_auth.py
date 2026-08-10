@@ -502,9 +502,11 @@ class TestInvite:
         access_token = resp_login.json()["access_token"]
 
         # 3. Invitar a un email nuevo (X-Organization-Id requerido por PermissionChecker)
+        # organization_id en el body es str (public_uuid, Fase 3) desde 2026-08-01 -- ver
+        # AGENTS.md. org.id acá es el id interno de la fila ORM cruda, no sirve para el body.
         resp_invite = plain_client.post(
             "/auth/invite",
-            json={"email": "invited@test.com", "organization_id": org.id},
+            json={"email": "invited@test.com", "organization_id": org.public_uuid},
             headers={
                 "Authorization": f"Bearer {access_token}",
                 "X-Organization-Id": str(org.id),
@@ -570,7 +572,7 @@ class TestInvite:
 
         resp_invite = plain_client.post(
             "/auth/invite",
-            json={"email": "yaexisto@test.com", "organization_id": org.id},
+            json={"email": "yaexisto@test.com", "organization_id": org.public_uuid},
             headers={
                 "Authorization": f"Bearer {owner_token}",
                 "X-Organization-Id": str(org.id),
@@ -634,7 +636,7 @@ class TestInvite:
 
         resp_invite = plain_client.post(
             "/auth/invite",
-            json={"email": "destinatario@test.com", "organization_id": org.id},
+            json={"email": "destinatario@test.com", "organization_id": org.public_uuid},
             headers={
                 "Authorization": f"Bearer {owner_token}",
                 "X-Organization-Id": str(org.id),
@@ -828,7 +830,9 @@ class TestUserEndpoints:
 
         _apply_user_overrides(app, user, initial_structure["org_id"])
         try:
-            resp = client.put(f"/users/{user.id}",
+            # user.id sería el id interno crudo de la fila ORM (_make_user construye el User
+            # directo en la DB) -- PUT /users/{id} espera el public_uuid (Fase 2/3).
+            resp = client.put(f"/users/{user.public_uuid}",
                               json={"name": "Nuevo Nombre"},
                               headers={"X-Organization-Id": str(initial_structure["org_id"])})
             assert resp.status_code == 200
@@ -850,7 +854,7 @@ class TestUserEndpoints:
         # User A intenta editar a User B
         _apply_user_overrides(app, user_a, initial_structure["org_id"])
         try:
-            resp = client.put(f"/users/{user_b.id}",
+            resp = client.put(f"/users/{user_b.public_uuid}",
                               json={"name": "Hackeado"},
                               headers={"X-Organization-Id": str(initial_structure["org_id"])})
             assert resp.status_code == 403
@@ -868,7 +872,7 @@ class TestUserEndpoints:
 
         _apply_user_overrides(app, superadmin)
         try:
-            resp = client.put(f"/users/{target.id}",
+            resp = client.put(f"/users/{target.public_uuid}",
                               json={"name": "Actualizado por Admin"},
                               headers={"X-Organization-Id": str(initial_structure["org_id"])})
             assert resp.status_code == 200

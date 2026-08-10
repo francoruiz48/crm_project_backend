@@ -4,7 +4,20 @@ from app.models.validation_rule import ValidationRule
 from app.models.lead import Lead
 from app.models.lead_field_section import LeadFieldSection
 from app.models.organization import Organization
+from app.models.campaign import Campaign
 from tests.helpers.api_helpers import ApiClient
+
+
+def _resolve_internal_id(db_session, model, public_uuid_or_int):
+    """
+    Muchas respuestas de la API (field["id"], rule["id"], lead["id"], etc.) traen
+    public_uuid (Fase 1-3), pero las PKs reales de las tablas siguen siendo int --
+    hay que resolver antes de usarlas en una query cruda de SQLAlchemy.
+    """
+    if isinstance(public_uuid_or_int, int):
+        return public_uuid_or_int
+    return db_session.query(model.id).filter_by(public_uuid=public_uuid_or_int).scalar()
+
 
 def test_lead_field_lifecycle_no_data(api, db_session, initial_structure):
     """
@@ -16,16 +29,17 @@ def test_lead_field_lifecycle_no_data(api, db_session, initial_structure):
     # 1. Crear Campo vía API
     field = api.create_lead_field(camp_id, "Campo Efímero", "STRING")
     field_id = field["id"]
+    field_internal_id = _resolve_internal_id(db_session, LeadField, field_id)
 
     # 2. Borrar Campo (Usamos client directo para validar la respuesta específica 'action')
     res_del = api.client.delete(f"/lead_fields/{field_id}", headers=api.headers)
-    
+
     assert res_del.status_code == 200
     assert res_del.json()["action"] == "deleted"
-    
+
     # 3. Verificar en DB que no existe (Borrado Físico)
     db_session.expire_all()
-    field_db = db_session.get(LeadField, field_id)
+    field_db = db_session.get(LeadField, field_internal_id)
     assert field_db is None
 
 
@@ -62,7 +76,7 @@ def test_lead_field_backfill_existing_leads(api, initial_structure):
     lead_values = leads[0]["field_values"]
     
     # Buscamos el valor del nuevo campo
-    new_val = next((v for v in lead_values if v["field_id"] == f_new["id"]), None)
+    new_val = next((v for v in lead_values if v["field"]["id"] == f_new["id"]), None)
     
     assert new_val is not None
     assert new_val["value"] == "Relleno Automático"
@@ -78,7 +92,8 @@ def test_lead_field_delete_with_data_soft_delete(api, db_session, initial_struct
     
     # 1. Crear Campo y Lead que lo usa
     f_dato = api.create_lead_field(camp_id, "Dato Importante", "INT")
-    
+    f_dato_internal_id = _resolve_internal_id(db_session, LeadField, f_dato["id"])
+
     api.create_lead(camp_id, [{"field_id": f_dato["id"], "value": 100}])
 
     # 2. Intentar Borrar el Campo
@@ -91,9 +106,9 @@ def test_lead_field_delete_with_data_soft_delete(api, db_session, initial_struct
 
     # 4. Verificar en DB (Soft Delete)
     db_session.expire_all()
-    field_db = db_session.get(LeadField, f_dato["id"])
+    field_db = db_session.get(LeadField, f_dato_internal_id)
     assert field_db is not None
-    assert field_db.active is False 
+    assert field_db.active is False
 
 
 def test_create_lead_ignores_disabled_required_field(api, initial_structure):
@@ -153,10 +168,10 @@ def test_reactivate_field(api, db_session, initial_structure):
     # 2. Reactivar
     res_active = api.client.put(f"/lead_fields/active/{f_test['id']}", headers=api.headers)
     assert res_active.status_code == 200
-    
+
     # 3. Validar
     db_session.expire_all()
-    f_db = db_session.get(LeadField, f_test["id"])
+    f_db = db_session.get(LeadField, _resolve_internal_id(db_session, LeadField, f_test["id"]))
     assert f_db.active is True
 
 
@@ -198,7 +213,7 @@ def test_create_lead_success_empty_values_optional_fields(api, initial_structure
     data = api.create_lead(camp_id, values=[])
     
     # Verificamos que se creó el valor nulo internamente
-    val_guardado = next((v for v in data["field_values"] if v["field_id"] == f_opcional["id"]), None)
+    val_guardado = next((v for v in data["field_values"] if v["field"]["id"] == f_opcional["id"]), None)
     assert val_guardado is not None
     assert val_guardado["value"] is None
 
@@ -337,8 +352,12 @@ def test_get_fields_filtering_active(api, db_session, initial_structure):
     section_id = initial_structure["section_id"]
 
     # 1. Crear Campo A (Activo) y B (Inactivo)
-    f_active = LeadField(name="Visible", field_type_code="STRING", campaign_id=camp_id, active=True, order=1, lead_field_section_id=section_id, organization_id=org_id)
-    f_inactive = LeadField(name="Oculto", field_type_code="STRING", campaign_id=camp_id, active=False, order=2, lead_field_section_id=section_id, organization_id=org_id)
+    # campaign_id/lead_field_section_id son columnas Integer FK reales -- initial_structure
+    # devuelve public_uuid (Fase 3), hay que resolver al id interno antes del INSERT crudo.
+    camp_internal_id = _resolve_internal_id(db_session, Campaign, camp_id)
+    section_internal_id = _resolve_internal_id(db_session, LeadFieldSection, section_id)
+    f_active = LeadField(name="Visible", field_type_code="STRING", campaign_id=camp_internal_id, active=True, order=1, lead_field_section_id=section_internal_id, organization_id=org_id)
+    f_inactive = LeadField(name="Oculto", field_type_code="STRING", campaign_id=camp_internal_id, active=False, order=2, lead_field_section_id=section_internal_id, organization_id=org_id)
     db_session.add_all([f_active, f_inactive])
     db_session.commit()
 
@@ -347,16 +366,16 @@ def test_get_fields_filtering_active(api, db_session, initial_structure):
     items = res_active.json().get("items", res_active.json())
     ids = [i["id"] for i in items]
 
-    assert f_active.id in ids
-    assert f_inactive.id not in ids # No debe estar
+    assert f_active.public_uuid in ids
+    assert f_inactive.public_uuid not in ids # No debe estar
 
     # 3. GET only_active=False
     res_all = api.client.get("/lead_fields/?only_active=false", headers=api.headers)
     items_all = res_all.json().get("items", res_all.json())
     ids_all = [i["id"] for i in items_all]
 
-    assert f_active.id in ids_all
-    assert f_inactive.id in ids_all # Deben estar ambos
+    assert f_active.public_uuid in ids_all
+    assert f_inactive.public_uuid in ids_all # Deben estar ambos
 
 
 def test_create_lead_field_fail_invalid_template(api, initial_structure):
@@ -382,18 +401,19 @@ def test_delete_field_cascades_validation_rules(api, db_session, initial_structu
     field = api.create_lead_field(camp_id, "Con Regla", "INT")
     
     rule = api.create_rule(
-        field["id"], 
-        "Regla Test", 
-        "value > 0", 
+        field["id"],
+        "Regla Test",
+        "value > 0",
         "Error"
     )
-    
+    rule_internal_id = _resolve_internal_id(db_session, ValidationRule, rule["id"])
+
     # 2. Borrar el Campo (Físico)
     api.client.delete(f"/lead_fields/{field['id']}", headers=api.headers)
 
     # 3. Verificar que la regla ya no existe
     db_session.expire_all()
-    rule_db = db_session.get(ValidationRule, rule["id"])
+    rule_db = db_session.get(ValidationRule, rule_internal_id)
     assert rule_db is None
 
 
@@ -457,8 +477,8 @@ def test_reorder_success_simple(api, db_session, initial_fields):
     ])
 
     db_session.expire_all()
-    f1_db = db_session.get(LeadField, f1_id)
-    f2_db = db_session.get(LeadField, f2_id)
+    f1_db = db_session.get(LeadField, _resolve_internal_id(db_session, LeadField, f1_id))
+    f2_db = db_session.get(LeadField, _resolve_internal_id(db_session, LeadField, f2_id))
 
     assert f1_db.order == 10
     assert f2_db.order == 20
@@ -554,15 +574,15 @@ def test_reorder_atomic_rollback_on_failure(api, db_session, initial_fields):
         camp_id, 
         [
             {"field_id": f1_id, "order": 99},
-            {"field_id": 0, "order": 100} # ID inválido
+            {"field_id": 0, "order": 100} # ID inválido: field_id es str (public_uuid) desde Fase 3, 0 (int) rechaza con 422
         ],
-        expected_status=422  # Pydantic rechaza field_id=0 (gt=0) con 422
+        expected_status=422
     )
 
     # Verificamos que el campo 1 SIGA teniendo su orden original (1)
     db_session.expire_all()
-    f1_db = db_session.get(LeadField, f1_id)
-    assert f1_db.order == 1 
+    f1_db = db_session.get(LeadField, _resolve_internal_id(db_session, LeadField, f1_id))
+    assert f1_db.order == 1
 
 
 def test_reorder_ignores_soft_deleted_fields_collision(api, db_session, initial_fields):
@@ -587,7 +607,7 @@ def test_reorder_ignores_soft_deleted_fields_collision(api, db_session, initial_
     )
 
     db_session.expire_all()
-    assert db_session.get(LeadField, f_nombre_id).order == 2
+    assert db_session.get(LeadField, _resolve_internal_id(db_session, LeadField, f_nombre_id)).order == 2
 
 
 # =============================================================================
@@ -687,7 +707,8 @@ def test_update_required_succeeds_when_only_inactive_leads_have_nulls(api, db_se
     lead_data = api.create_lead(camp_id, values=[])
 
     # 2. Soft-delete del lead (activo=False)
-    db_session.query(Lead).filter_by(id=lead_data["id"]).update({"active": False})
+    lead_internal_id = _resolve_internal_id(db_session, Lead, lead_data["id"])
+    db_session.query(Lead).filter_by(id=lead_internal_id).update({"active": False})
     db_session.commit()
 
     # 3. Ahora no hay leads activos con nulos: debe permitir marcar como requerido
@@ -712,7 +733,10 @@ def test_create_lead_field_related_campaign_nonexistent_fails(api, initial_struc
         "campaign_id": camp_id,
         "name": "Lead Inexistente",
         "field_type_code": "LEAD",
-        "related_campaign_id": 999999
+        # related_campaign_id es str (public_uuid) desde Fase 3 -- se manda un uuid con
+        # formato válido pero inexistente para no chocar con el 422 de tipo antes del
+        # chequeo semántico "la campaña no existe".
+        "related_campaign_id": "00000000-0000-0000-0000-000000000000"
     }, headers=api.headers)
 
     assert res.status_code == 400
@@ -751,7 +775,8 @@ def test_create_field_without_section_fails_when_default_section_inactive(api, d
     section_id = initial_structure["section_id"]
 
     # Desactivar la única sección de la org
-    db_session.query(LeadFieldSection).filter_by(id=section_id).update({"active": False})
+    section_internal_id = _resolve_internal_id(db_session, LeadFieldSection, section_id)
+    db_session.query(LeadFieldSection).filter_by(id=section_internal_id).update({"active": False})
     db_session.commit()
 
     res = api.client.post("/lead_fields/", json={
@@ -834,4 +859,4 @@ def test_bulk_delete_respects_tenant_filter(client, db_session, initial_structur
 
     # El campo sigue existiendo en DB
     db_session.expire_all()
-    assert db_session.get(LeadField, field_id) is not None
+    assert db_session.get(LeadField, _resolve_internal_id(db_session, LeadField, field_id)) is not None

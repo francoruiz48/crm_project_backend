@@ -10,6 +10,9 @@ from app.models.lead_routing_policy import (
     VALID_LOGICAL_OPS, LIST_OPERATORS, NATIVE_FIELDS,
 )
 from app.schemas.base_schema import BaseResponse, BaseDetailedResponse, BaseCreate
+from app.schemas.team_schema import TeamResponse
+from app.schemas.campaign_schema import CampaignResponse
+from app.schemas.lead_field_schema import LeadFieldLiteResponse
 
 
 # ===========================================================================
@@ -24,8 +27,15 @@ class LeadRoutingConditionCreate(BaseModel):
     """
     position: int = Field(default=0, ge=0)
 
-    # Campo
-    lead_field_id: Optional[int] = Field(default=None, gt=0)
+    # Campo. public_uuid de LeadField (Fase 3); el service lo resuelve a id interno
+    # antes de usarlo (ver backend/AGENTS.md §18) mutando este mismo objeto in-place
+    # (_resolve_condition_field_ids), porque se reusa después en _build_conditions y en
+    # validate_conditions vía model_dump(). Union[int, str] (no solo str) para que esa
+    # reasignación no dispare un warning de serialización de Pydantic
+    # (PydanticSerializationUnexpectedValue) -- mismo patrón ya usado en otros campos con
+    # el mismo doble uso, ej. RuleCondition.field_id en field_automation_schema.py. Ver
+    # backend/AGENTS.md §21/§53.
+    lead_field_id: Optional[Union[int, str]] = Field(default=None)
     native_field:  Optional[str] = Field(default=None)
 
     # Modo simple
@@ -125,6 +135,12 @@ class LeadRoutingConditionResponse(BaseModel):
     value_min:    Optional[str]
     operator_max: Optional[str]
     value_max:    Optional[str]
+    # Fase 4: objeto anidado con el uuid real de LeadField, sin tocar lead_field_id (sigue
+    # siendo la FK embebida sin migrar, ver backend/AGENTS.md §18). El modelo ya tenía la
+    # relación `lead_field` definida (lead_routing_policy.py), sin usar hasta ahora. Antes,
+    # el front forzaba `lead_field_id: null` al editar una condición dinámica (forzando
+    # re-selección) porque no tenía forma de resolver el uuid real -- ver backend/AGENTS.md.
+    lead_field: Optional[LeadFieldLiteResponse] = None
 
     model_config = {"from_attributes": True}
 
@@ -148,6 +164,10 @@ class LeadRoutingPolicyCreate(LeadRoutingPolicyBase, BaseCreate):
     Si conditions está vacío, la política existe pero nunca matcheará
     (se necesita al menos una condición para asignar equipo).
     """
+    # public_uuid de Team/Campaign (Fase 3). El Response sigue con el int interno viejo
+    # (FK embebida, deliberadamente sin migrar -- ver backend/AGENTS.md §18).
+    target_team_id: str
+    campaign_id: Optional[str] = Field(default=None)
     conditions: List[LeadRoutingConditionCreate] = Field(default_factory=list)
 
 
@@ -160,17 +180,26 @@ class LeadRoutingPolicyUpdate(BaseModel):
     description: Optional[str] = Field(default=None, max_length=500)
     priority: Optional[int] = Field(default=None, gt=0)
     logical_operator: Optional[Literal["AND", "OR"]] = None
-    target_team_id: Optional[int] = Field(default=None, gt=0)
+    # public_uuid de Team (Fase 3, ver backend/AGENTS.md §18).
+    target_team_id: Optional[str] = Field(default=None)
     conditions: Optional[List[LeadRoutingConditionCreate]] = None
 
 
 class LeadRoutingPolicyResponse(LeadRoutingPolicyBase, BaseResponse):
     organization_id: int
+    # Fase 4: objeto anidado con el uuid real de Team/Campaign, sin tocar
+    # target_team_id/campaign_id (siguen siendo la FK embebida sin migrar, ver
+    # backend/AGENTS.md §18). target_team siempre viene (FK obligatoria); campaign
+    # puede ser None (política global de la organización).
+    target_team: Optional[TeamResponse] = None
+    campaign: Optional[CampaignResponse] = None
 
 
 class LeadRoutingPolicyDetailedResponse(LeadRoutingPolicyBase, BaseDetailedResponse):
     organization_id: int
     conditions: List[LeadRoutingConditionResponse] = []
+    target_team: Optional[TeamResponse] = None
+    campaign: Optional[CampaignResponse] = None
 
 
 # ===========================================================================
@@ -178,8 +207,9 @@ class LeadRoutingPolicyDetailedResponse(LeadRoutingPolicyBase, BaseDetailedRespo
 # ===========================================================================
 
 class LeadRoutingPolicyValidateRequest(BaseModel):
-    campaign_id: Optional[int] = Field(default=None, gt=0)
-    target_team_id: int = Field(..., gt=0)
+    # public_uuid de Campaign/Team (Fase 3, ver backend/AGENTS.md §18).
+    campaign_id: Optional[str] = Field(default=None)
+    target_team_id: str
     logical_operator: Literal["AND", "OR"] = "AND"
     conditions: List[LeadRoutingConditionCreate] = Field(default_factory=list)
 

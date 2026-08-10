@@ -37,6 +37,19 @@ class Lead(BaseModelDB):
 
     tags = relationship("Tag", secondary=lead_tag_association, back_populates="leads")
 
-    
+    # Número de referencia legible por organización (pedido por el usuario 2026-08-01, ver
+    # backend/AGENTS.md §50). Nullable porque algunos tests insertan Lead directo por ORM
+    # sin pasar por lead_service.create() (que es el único lugar que lo asigna, vía el contador
+    # atómico Organization.lead_counter) -- esos leads de test no necesitan reference. Todo lead
+    # real creado por la API (incluida la importación de Excel, que reusa create()) sí lo tiene.
+    lead_number = Column(Integer, nullable=True)
 
-    
+    @property
+    def reference(self):
+        """Referencia legible para el usuario, ej. "L-0001". El padding de 4 dígitos es un
+        mínimo, no un máximo -- pasado los 9999 leads de una organización simplemente pasa a
+        "L-10000" sin romperse ni necesitar ningún cambio de código."""
+        if self.lead_number is None:
+            return None
+        return f"L-{self.lead_number:04d}"
+

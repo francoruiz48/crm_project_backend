@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.context import TENANT_ORG_ID
 from app.db.session import get_db
+from app.models.organization import Organization
 from app.models.security_models import User, UserOrganization
 
 # ---------------------------------------------------------------------------
@@ -195,11 +196,42 @@ class UserContext:
     permissions: list = field(default_factory=list)
 
 
+def _resolve_org_id(db_session: Session, raw_value: Optional[str]) -> Optional[int]:
+    """
+    Resuelve el valor crudo del header 'X-Organization-Id' al id interno (int).
+
+    Bug real encontrado 2026-07-30: el header se declaraba `Optional[int]`, pero
+    el frontend manda `org.id`, que desde la migración Fase 3 de
+    `OrganizationResponse` es el `public_uuid` de la organización (no el id
+    interno) -- excepto para la organización sintética "Panel Global"
+    (SUPERUSER, id=1 literal en el frontend), que coincidía con ADMIN_ORG_ID y
+    por eso nunca se notó en uso manual. FastAPI rechazaba con 422 cualquier
+    otro valor (un uuid no parsea como int), rompiendo TODOS los requests de
+    un usuario real que no esté parado en esa org especial. Acá aceptamos
+    ambos formatos: si es numérico, se usa tal cual (compat hacia atrás /
+    SUPERUSER); si no, se resuelve por `Organization.public_uuid`. Si no
+    matchea nada, devuelve None (mismo comportamiento que header ausente).
+    """
+    if raw_value is None:
+        return None
+    raw_value = raw_value.strip()
+    if not raw_value:
+        return None
+    if raw_value.lstrip("-").isdigit():
+        return int(raw_value)
+
+    row = db_session.query(Organization.id).filter(
+        Organization.public_uuid == raw_value
+    ).first()
+    return row[0] if row else None
+
+
 def get_current_user_roles(
     current_user: User = Depends(_get_current_user),
     db_session: Session = Depends(get_db),
-    x_organization_id: Optional[int] = Header(default=None, alias="X-Organization-Id"),
+    x_organization_id_raw: Optional[str] = Header(default=None, alias="X-Organization-Id"),
 ) -> UserContext:
+    x_organization_id = _resolve_org_id(db_session, x_organization_id_raw)
     if x_organization_id is not None:
         TENANT_ORG_ID.set(x_organization_id)
 
@@ -239,8 +271,11 @@ class PermissionChecker:
     async def __call__(
         self,
         user: User = Depends(_get_current_user),
-        x_organization_id: Optional[int] = Header(default=None, alias="X-Organization-Id"),
+        db_session: Session = Depends(get_db),
+        x_organization_id_raw: Optional[str] = Header(default=None, alias="X-Organization-Id"),
     ):
+        x_organization_id = _resolve_org_id(db_session, x_organization_id_raw)
+
         # El header es obligatorio para TODOS (incluido superadmin) para garantizar
         # el aislamiento de contexto. Sin org_id no hay contexto de operación válido.
         if not x_organization_id:

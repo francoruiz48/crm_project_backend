@@ -52,6 +52,17 @@ def _link_org(db, user, org_id):
     return link
 
 
+def _resolve_internal_id(db, model, public_uuid_or_int):
+    """
+    initial_structure devuelve public_uuid para campaign_id/section_id (ver
+    backend/AGENTS.md §18-novies); acá se necesita el id interno para el INSERT crudo de
+    LeadField (columnas FK Integer reales). Si ya viene un int, lo devuelve tal cual.
+    """
+    if isinstance(public_uuid_or_int, int):
+        return public_uuid_or_int
+    return db.query(model.id).filter_by(public_uuid=public_uuid_or_int).scalar()
+
+
 def _make_field(db, name, type_code, campaign_id, section_id, org_id,
                 required=False, is_primary=False, nomenclator_id=None,
                 field_subtype_code=None):
@@ -59,9 +70,9 @@ def _make_field(db, name, type_code, campaign_id, section_id, org_id,
         name=name,
         field_type_code=type_code,
         field_subtype_code=field_subtype_code,
-        campaign_id=campaign_id,
+        campaign_id=_resolve_internal_id(db, Campaign, campaign_id),
         order=1,
-        lead_field_section_id=section_id,
+        lead_field_section_id=_resolve_internal_id(db, LeadFieldSection, section_id),
         organization_id=org_id,
         active=True,
         required=required,
@@ -117,7 +128,7 @@ class TestCreateOrgValidations:
             "/leads/",
             json={
                 "campaign_id": camp_id,
-                "team_id": foreign_team.id,
+                "team_id": foreign_team.public_uuid,
                 "values": [{"field_id": f.id, "value": "Test"}],
             },
             headers=api.headers,
@@ -140,7 +151,7 @@ class TestCreateOrgValidations:
             "/leads/",
             json={
                 "campaign_id": camp_id,
-                "assigned_to_user_id": outsider.id,
+                "assigned_to_user_id": outsider.public_uuid,
                 "values": [{"field_id": f.id, "value": "Test"}],
             },
             headers=api.headers,
@@ -164,7 +175,7 @@ class TestCreateOrgValidations:
             "/leads/",
             json={
                 "campaign_id": camp_id,
-                "assigned_to_user_id": member.id,
+                "assigned_to_user_id": member.public_uuid,
                 "values": [{"field_id": f.id, "value": "Test"}],
             },
             headers=api.headers,
@@ -197,7 +208,7 @@ class TestAssignedToUserPersisted:
             "/leads/",
             json={
                 "campaign_id": camp_id,
-                "assigned_to_user_id": member.id,
+                "assigned_to_user_id": member.public_uuid,
                 "values": [{"field_id": f.id, "value": "Maria"}],
             },
             headers=api.headers,
@@ -241,7 +252,7 @@ class TestUpdateContactStateValidation:
 
         res = api.client.put(
             f"/leads/{lead['id']}",
-            json={"contact_state_id": foreign_cs.id},
+            json={"contact_state_id": foreign_cs.public_uuid},
             headers=api.headers,
         )
         assert res.status_code == 400
@@ -263,7 +274,7 @@ class TestUpdateContactStateValidation:
 
         res = api.client.put(
             f"/leads/{lead['id']}",
-            json={"contact_state_id": cs.id},
+            json={"contact_state_id": cs.public_uuid},
             headers=api.headers,
         )
         assert res.status_code == 200
@@ -278,9 +289,12 @@ class TestCampaignValidationOrder:
     devolviendo 'no tiene campos configurados' en vez de 'no existe'."""
 
     def test_nonexistent_campaign_returns_campaign_error(self, api, db_session, initial_structure):
+        # campaign_id ahora es public_uuid (string) -- se manda un uuid con formato válido pero
+        # que no existe en la DB, para no chocar con la validación 422 de tipo antes de llegar
+        # al chequeo semántico "la campaña no existe" (bug real de test encontrado 2026-07-30).
         res = api.client.post(
             "/leads/",
-            json={"campaign_id": 999999, "values": []},
+            json={"campaign_id": "00000000-0000-0000-0000-000000000000", "values": []},
             headers=api.headers,
         )
         assert res.status_code == 400
@@ -395,7 +409,11 @@ class TestChangeStateFromNull:
 
         lead = _create_lead_http(api, camp_id, [{"field_id": f.id, "value": "Test"}])
 
-        db_session.query(Lead).filter_by(id=lead["id"]).update({"current_state_id": None})
+        # lead["id"] es public_uuid (Fase 1-3); Lead.id (PK) sigue siendo el int interno --
+        # hay que resolverlo antes de usarlo en un filter_by crudo (mismo patrón que
+        # _resolve_internal_id de arriba).
+        lead_internal_id = _resolve_internal_id(db_session, Lead, lead["id"])
+        db_session.query(Lead).filter_by(id=lead_internal_id).update({"current_state_id": None})
         db_session.commit()
 
         # Con current_state_id=NULL el servicio no puede serializar el lead
@@ -575,10 +593,13 @@ class TestBulkAssignSecurity:
 
     def test_exceeds_max_lead_ids_returns_400(self, api, db_session, initial_structure):
         """Mas de 200 lead_ids → 400."""
-        lead_ids = list(range(1, 202))
+        # BulkAssignRequest.lead_ids/target_team_id son str (public_uuid) desde Fase 3 -- el
+        # chequeo de límite (len(lead_ids) > 200) corre antes de resolver ningún uuid, así que
+        # alcanza con mandar strings cualquiera, no hace falta que existan de verdad.
+        lead_ids = [str(i) for i in range(1, 202)]
         res = api.client.patch(
             "/leads/bulk-assign",
-            json={"lead_ids": lead_ids, "target_team_id": 1},
+            json={"lead_ids": lead_ids, "target_team_id": "dummy"},
             headers=api.headers,
         )
         assert res.status_code == 400
@@ -604,7 +625,7 @@ class TestBulkAssignSecurity:
 
         res = api.client.patch(
             "/leads/bulk-assign",
-            json={"lead_ids": [lead["id"]], "target_team_id": foreign_team.id},
+            json={"lead_ids": [lead["id"]], "target_team_id": foreign_team.public_uuid},
             headers=api.headers,
         )
         assert res.status_code == 400
@@ -653,7 +674,7 @@ class TestBulkAssignSecurity:
 
         res = api.client.patch(
             "/leads/bulk-assign",
-            json={"lead_ids": [other_lead.id], "target_team_id": my_team.id},
+            json={"lead_ids": [other_lead.public_uuid], "target_team_id": my_team.public_uuid},
             headers=api.headers,
         )
         assert res.status_code == 200

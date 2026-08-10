@@ -19,13 +19,15 @@ class UserPublicResponse(BaseModel):
     """Schema reducido para exponer usuarios dentro de una organización.
     Solo incluye lo necesario para la UI (asignaciones, menciones, chat).
     """
-    id: int
+    # No hereda BaseResponse (es un schema standalone), así que el alias a
+    # public_uuid se declara acá directo -- ver base_schema.py para el porqué.
+    id: str = Field(validation_alias="public_uuid")
     name: str
     last_name: Optional[str] = None
     email: str
     active: bool
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 class UserBase(BaseModel):

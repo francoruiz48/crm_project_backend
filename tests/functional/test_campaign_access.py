@@ -154,7 +154,9 @@ class TestTopDownAccess:
         camp2 = api.create_campaign(ws["id"], "Camp TD 2", lead_flow_id=flow_id, is_public=False)
 
         team = api.create_team("Equipo TopDown")
-        api.add_team_member(team["id"], member.id, role="AGENT")
+        # member.id sería el id interno de la fila ORM cruda (_make_user construye el User
+        # directo en la DB, no vía API) -- POST /team_members/ espera el public_uuid (Fase 3).
+        api.add_team_member(team["id"], member.public_uuid, role="AGENT")
         api.grant_workspace_access(team["id"], ws["id"])
 
         member_api = ApiClient(api.client, org_id)
@@ -180,7 +182,9 @@ class TestTopDownAccess:
         camp_b = api.create_campaign(ws_b["id"], "Camp No Concedida", lead_flow_id=flow_id, is_public=False)
 
         team = api.create_team("Equipo Solo WS-A")
-        api.add_team_member(team["id"], member.id, role="AGENT")
+        # member.id sería el id interno de la fila ORM cruda (_make_user construye el User
+        # directo en la DB, no vía API) -- POST /team_members/ espera el public_uuid (Fase 3).
+        api.add_team_member(team["id"], member.public_uuid, role="AGENT")
         api.grant_workspace_access(team["id"], ws_a["id"])
 
         member_api = ApiClient(api.client, org_id)
@@ -214,7 +218,9 @@ class TestBottomUpAccess:
         camp = api.create_campaign(ws["id"], "Camp BottomUp", lead_flow_id=flow_id, is_public=False)
 
         team = api.create_team("Equipo BottomUp")
-        api.add_team_member(team["id"], member.id, role="AGENT")
+        # member.id sería el id interno de la fila ORM cruda (_make_user construye el User
+        # directo en la DB, no vía API) -- POST /team_members/ espera el public_uuid (Fase 3).
+        api.add_team_member(team["id"], member.public_uuid, role="AGENT")
         api.grant_campaign_access(team["id"], camp["id"])
 
         member_api = ApiClient(api.client, org_id)
@@ -236,7 +242,9 @@ class TestBottomUpAccess:
         camp = api.create_campaign(ws["id"], "Camp Direct", lead_flow_id=flow_id, is_public=False)
 
         team = api.create_team("Equipo Direct Camp")
-        api.add_team_member(team["id"], member.id, role="AGENT")
+        # member.id sería el id interno de la fila ORM cruda (_make_user construye el User
+        # directo en la DB, no vía API) -- POST /team_members/ espera el public_uuid (Fase 3).
+        api.add_team_member(team["id"], member.public_uuid, role="AGENT")
         api.grant_campaign_access(team["id"], camp["id"])
 
         member_api = ApiClient(api.client, org_id)

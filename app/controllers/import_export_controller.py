@@ -25,7 +25,8 @@ def detect_headers(file: UploadFile = File(...), user_context = Depends(get_curr
     dependencies=[Depends(PermissionChecker("lead:create"))],
 )
 def process_import(
-    campaign_id: int = Form(...),
+    # public_uuid de Campaign (Fase 3, ver backend/AGENTS.md §18); el service lo resuelve.
+    campaign_id: str = Form(...),
     mapping: str = Form(..., description='JSON String: {"ColumnaExcel": "NombreCampoDB"}'),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -51,7 +52,8 @@ def process_import(
     dependencies=[Depends(PermissionChecker("lead:view"))],
 )
 def export_leads(
-    campaign_id: int,
+    # public_uuid de Campaign (Fase 3, ver backend/AGENTS.md §18); el service lo resuelve.
+    campaign_id: str,
     db: Session = Depends(get_db),
     user_context = Depends(get_current_user_roles)
 ):

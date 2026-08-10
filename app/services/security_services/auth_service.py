@@ -15,6 +15,7 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
+from app.db.repository.organization_repository import OrganizationRepository
 from app.db.unit_of_work import UnitOfWork
 from app.models.organization import Organization
 from app.models.refresh_token_model import RefreshToken
@@ -229,16 +230,32 @@ class AuthService:
         return {"message": "Sesión cerrada correctamente."}
 
     @classmethod
-    def invite(cls, email: str, organization_id: int, current_user: User, role_code: str = "agent") -> InviteResponse:
+    def invite(cls, email: str, organization_id: str, current_user: User, role_code: str = "agent") -> InviteResponse:
         """
         Genera un token de invitación para que alguien se una a una organización.
         El frontend usa este token para redirigir al usuario al flujo de registro/aceptación.
+
+        organization_id llega como public_uuid (Fase 3) -- bug real encontrado 2026-08-01,
+        ver AGENTS.md: este método usaba el valor recibido directo como id interno (PK de
+        Organization, FK de UserOrganization/Role), rompiendo /auth/invite con 422 para
+        cualquier organización real, porque el frontend (InviteDialog.tsx) manda
+        activeOrg.id, que es el public_uuid desde la migración Fase 3. Se resuelve acá al
+        id interno antes de usarlo en cualquier query, y ese id interno (no el uuid) es el
+        que se guarda en el invite_token -- register()/accept_invite() ya esperan el int
+        interno en el claim "org_id".
         """
         with UnitOfWork() as uow:
+            org_internal_id = OrganizationRepository.get_internal_id_by_public_uuid(uow.session, organization_id)
+            if not org_internal_id:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Organización no encontrada.",
+                )
+
             # Verificar que el que invita pertenece a la org
             membership = uow.session.query(UserOrganization).filter_by(
                 user_id=current_user.id,
-                organization_id=organization_id,
+                organization_id=org_internal_id,
             ).first()
 
             if not membership and not current_user.is_superuser:
@@ -247,18 +264,12 @@ class AuthService:
                     detail="No pertenecés a esta organización.",
                 )
 
-            org = uow.session.get(Organization, organization_id)
-            if not org:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Organización no encontrada.",
-                )
-
+            org = uow.session.get(Organization, org_internal_id)
             org_name = org.name  # capturar antes de que la sesión se cierre
 
             # Verificar que el rol existe (primero org-específico, luego global como fallback)
             role = (
-                uow.session.query(Role).filter_by(code=role_code, organization_id=organization_id).first()
+                uow.session.query(Role).filter_by(code=role_code, organization_id=org_internal_id).first()
                 or uow.session.query(Role).filter_by(code=role_code, organization_id=ADMIN_ORG_ID).first()
             )
             if not role:
@@ -270,7 +281,7 @@ class AuthService:
         invite_token = create_invite_token(
             data={
                 "email": email,
-                "org_id": organization_id,
+                "org_id": org_internal_id,
                 "invited_by": current_user.id,
                 "role_code": role_code,
             }
