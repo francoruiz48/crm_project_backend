@@ -18,6 +18,9 @@ from app.db.repository.campaign_repository import CampaignRepository
 from app.db.repository.lead_state_repository import LeadStateRepository
 from app.db.repository.lead_state_transition_repository import LeadStateTransitionRepository
 from app.db.repository.audit.lead_state_history_repository import LeadStateHistoryRepository
+from app.db.repository.team_repository import TeamRepository
+from app.db.repository.security_repositories.user_repository import UserRepository
+from app.db.repository.lead_contact_state_repository import LeadContactStateRepository
 from app.core.security import UserContext
 from app.services.routing_rule_evaluator_service import RoutingRuleEvaluatorService
 from typing import List, Optional
@@ -105,6 +108,140 @@ class LeadService(BaseService):
             except Exception:
                 input_data[field.id] = None
         return input_data
+
+    @classmethod
+    def _resolve_value_field_ids(cls, session, values_in):
+        """
+        `values[].field_id` llega como public_uuid del LeadField -- a diferencia de
+        campaign_id/team_id/assigned_to_user_id/contact_state_id (todos migrados a public_uuid
+        desde Fase 3, ver LeadCreate/LeadUpdate), este campo específico nunca se había migrado
+        ni en el schema (LeadFieldValueBase.field_id seguía siendo `int`) ni acá: el frontend
+        manda `field.id` (uuid, LeadForm.tsx) pero el resto de este archivo compara `field_id`
+        directo contra `LeadField.id` (int) -- rompía con 422 "Input should be a valid integer"
+        en CUALQUIER creación/actualización de Lead con campos dinámicos, no solo en tests (ver
+        backend/AGENTS.md §18-decies). Se resuelve acá, una vez, mutando cada item en el lugar
+        (soporta dict y objeto Pydantic, mismo patrón que el resto del archivo) para que el resto
+        del código -- que ya compara contra ids internos -- no tenga que cambiar.
+        """
+        for v in values_in:
+            is_dict = isinstance(v, dict)
+            raw_fid = v.get('field_id') if is_dict else getattr(v, 'field_id', None)
+            if raw_fid is None:
+                continue
+            # Ya es un id interno (ej. algún caller interno que arma los values a mano) -- no
+            # hay nada que resolver.
+            if isinstance(raw_fid, int) or (isinstance(raw_fid, str) and raw_fid.lstrip('-').isdigit()):
+                resolved = int(raw_fid)
+            else:
+                resolved = cls.field_repository.get_internal_id_by_public_uuid(session, raw_fid)
+                if resolved is None:
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST,
+                        detail=[{"field": f"ID_{raw_fid}", "message": "El campo no existe en el sistema."}]
+                    )
+            if is_dict:
+                v['field_id'] = resolved
+            else:
+                v.field_id = resolved
+        return values_in
+
+    @classmethod
+    def _resolve_value_nomenclator_ids(cls, session, values_in, defs_map: dict):
+        """
+        Bug real encontrado 2026-07-30 (mismo patrón y misma causa que _resolve_value_field_ids
+        de arriba): para campos SELECTOR/CHECKBOX, `value` es una lista de ids de
+        NomenclatorItem -- pero desde Fase 4 NomenclatorItem.id que devuelve la API es
+        public_uuid, no el id interno. LeadFieldValueBase.value seguía esperando List[int],
+        así que cualquier alta/edición real de un campo de este tipo (mandando los ids reales
+        que da la API) rompía con 422. Requiere `defs_map` (field_id interno -> LeadField) ya
+        armado por el caller para saber qué campos son de este tipo.
+
+        Debe llamarse DESPUÉS de _resolve_value_field_ids (necesita field_id ya resuelto a int).
+        """
+        from app.core.constans import NOMENCLATOR_FIELD_TYPES
+        from app.db.repository.nomenclator_item_repository import NomenclatorItemRepository
+
+        for v in values_in:
+            is_dict = isinstance(v, dict)
+            fid = v.get('field_id') if is_dict else getattr(v, 'field_id', None)
+            field_def = defs_map.get(fid)
+            if field_def is None or field_def.field_type_code not in NOMENCLATOR_FIELD_TYPES:
+                continue
+
+            raw_val = v.get('value') if is_dict else getattr(v, 'value', None)
+            if raw_val is None:
+                continue
+
+            was_list = isinstance(raw_val, list)
+            items = raw_val if was_list else [raw_val]
+
+            resolved_items = []
+            for item in items:
+                if isinstance(item, int) or (isinstance(item, str) and item.lstrip('-').isdigit()):
+                    resolved_items.append(int(item))
+                else:
+                    resolved = NomenclatorItemRepository.get_internal_id_by_public_uuid(session, item)
+                    if resolved is None:
+                        raise HTTPException(
+                            status.HTTP_400_BAD_REQUEST,
+                            detail=[{"field": field_def.name, "message": f"La opción seleccionada ('{item}') no existe."}]
+                        )
+                    resolved_items.append(resolved)
+
+            new_val = resolved_items if was_list else (resolved_items[0] if resolved_items else None)
+            if is_dict:
+                v['value'] = new_val
+            else:
+                v.value = new_val
+        return values_in
+
+    @classmethod
+    def _resolve_value_lead_ids(cls, session, values_in, defs_map: dict):
+        """
+        Bug real encontrado 2026-08-01, mismo patrón y misma causa que
+        _resolve_value_field_ids/_resolve_value_nomenclator_ids de arriba: para campos tipo LEAD
+        (relaciones entre leads), `value` es una lista de ids de Lead relacionado -- pero la API
+        siempre devuelve/espera public_uuid para Lead.id (Fase 1-4), nunca el id interno. Como acá
+        nunca se resolvía, `_validate_processed_data` (más abajo) exigía `isinstance(x, int)`
+        sobre esos valores y SIEMPRE fallaba con "ID de lead inválido" para cualquier request real
+        contra la API (que solo puede mandar uuid, ya que es lo único que expone). Es decir: nunca
+        fue posible relacionar leads a través de la API real, solo en tests que insertaban el id
+        interno a mano bypaseando la API. Se resuelve acá, mismo criterio que nomencladores.
+
+        Debe llamarse DESPUÉS de _resolve_value_field_ids (necesita field_id ya resuelto a int).
+        """
+        for v in values_in:
+            is_dict = isinstance(v, dict)
+            fid = v.get('field_id') if is_dict else getattr(v, 'field_id', None)
+            field_def = defs_map.get(fid)
+            if field_def is None or field_def.field_type_code != "LEAD":
+                continue
+
+            raw_val = v.get('value') if is_dict else getattr(v, 'value', None)
+            if raw_val is None:
+                continue
+
+            was_list = isinstance(raw_val, list)
+            items = raw_val if was_list else [raw_val]
+
+            resolved_items = []
+            for item in items:
+                if isinstance(item, int) or (isinstance(item, str) and item.lstrip('-').isdigit()):
+                    resolved_items.append(int(item))
+                else:
+                    resolved = LeadRepository.get_internal_id_by_public_uuid(session, item)
+                    # Si no existe, dejamos pasar un id imposible (-1) en vez de cortar acá: el
+                    # chequeo real de existencia + mensaje "El lead relacionado (...) no existe"
+                    # ya lo hace _validate_processed_data más abajo, y así evitamos duplicar
+                    # lógica de error entre las dos funciones.
+                    resolved_items.append(resolved if resolved is not None else -1)
+
+            new_val = resolved_items if was_list else (resolved_items[0] if resolved_items else None)
+            if is_dict:
+                v['value'] = new_val
+            else:
+                v.value = new_val
+        return values_in
 
     @classmethod
     def _prepare_context_dict(cls, values_in):
@@ -708,7 +845,7 @@ class LeadService(BaseService):
     # LÓGICA CENTRAL DE PREPARACIÓN
     # ---------------------------------------------------------
     @classmethod
-    def _prepare_creation_data(cls, uow, obj_in, files_map, created_by, campaign, is_simulation=False, native_ctx: dict = None):
+    def _prepare_creation_data(cls, uow, obj_in, files_map, created_by, campaign, campaign_internal_id, is_simulation=False, native_ctx: dict = None):
         """
         Ejecuta lógica. Retorna tuple. Si hay errores, lanza HTTPException con la lista.
         Recibe el objeto 'campaign' ya validado para evitar re-queries y errores semánticos.
@@ -723,11 +860,31 @@ class LeadService(BaseService):
         """
         errors = [] # ACUMULADOR DE ERRORES
 
-        campaign_id = obj_in.campaign_id
+        # campaign ya viene validada y resuelta por el caller (create/simulate_create), que también
+        # nos pasa campaign_internal_id explícito -- NO usar campaign.id acá: desde Fase 3,
+        # CampaignRepository.get_by_id() devuelve el schema Pydantic, cuyo .id es el public_uuid
+        # de la campaña (string), no el id interno que necesita el resto de esta función. Bug real
+        # encontrado 2026-07-28: rompía create()/simulate_create() completos (ver AGENTS.md).
+        campaign_id = campaign_internal_id
         all_field_defs = cls.field_repository.get_all_active_with_rules(uow.session, campaign_id=campaign_id)
+
+        # obj_in.values[].field_id llega como public_uuid del LeadField -- se resuelve acá, antes
+        # de armar defs_map/incoming_field_ids (ambos comparan contra el id interno). Cubre tanto
+        # create() como simulate_create() (los dos llaman a esta función). Ver
+        # _resolve_value_field_ids y backend/AGENTS.md §18-decies.
+        cls._resolve_value_field_ids(uow.session, obj_in.values)
 
         # 1. Validación inicial de existencia de campos
         defs_map = {f.id: f for f in all_field_defs}
+
+        # Ver _resolve_value_nomenclator_ids -- resuelve uuids de NomenclatorItem en `value`
+        # para campos SELECTOR/CHECKBOX, ahora que defs_map (con field_type_code) ya existe.
+        cls._resolve_value_nomenclator_ids(uow.session, obj_in.values, defs_map)
+
+        # Ver _resolve_value_lead_ids -- resuelve uuids de Lead relacionado en `value`
+        # para campos tipo LEAD, mismo criterio que nomencladores.
+        cls._resolve_value_lead_ids(uow.session, obj_in.values, defs_map)
+
         incoming_field_ids = [v.get('field_id') if isinstance(v, dict) else v.field_id for v in obj_in.values]
 
         for fid in incoming_field_ids:
@@ -810,20 +967,28 @@ class LeadService(BaseService):
             created_by = user_context.user.id if user_context else None
 
             # 1. Validar campaña primero para dar el error correcto si no existe
-            campaign = cls.campaign_repository.get_by_id(uow.session, obj_in.campaign_id, user_context=user_context)
+            # obj_in.campaign_id llega como public_uuid desde Fase 3 (el front ya no conoce el
+            # id interno de Campaign) -- se resuelve acá antes de buscar el objeto.
+            campaign_internal_id = cls.campaign_repository.get_internal_id_by_public_uuid(uow.session, obj_in.campaign_id)
+            campaign = cls.campaign_repository.get_by_id(uow.session, campaign_internal_id, user_context=user_context) if campaign_internal_id is not None else None
             if not campaign:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "campaign_id", "message": "La campaña no existe."}])
 
             # 2. Validar que team_id y assigned_to_user_id pertenecen al org
+            # (mismo motivo: son public_uuid de Team/User, se resuelven a id interno acá)
             from app.models.team import Team
             from app.models.security_models import UserOrganization
             org_id = campaign.organization_id
+            team_internal_id = None
             if obj_in.team_id is not None:
-                team = uow.session.query(Team).filter_by(id=obj_in.team_id, organization_id=org_id).first()
+                team_internal_id = TeamRepository.get_internal_id_by_public_uuid(uow.session, obj_in.team_id)
+                team = uow.session.query(Team).filter_by(id=team_internal_id, organization_id=org_id).first()
                 if not team:
                     raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "team_id", "message": "El equipo no existe o no pertenece a esta organización."}])
+            user_internal_id = None
             if obj_in.assigned_to_user_id is not None:
-                membership = uow.session.query(UserOrganization).filter_by(user_id=obj_in.assigned_to_user_id, organization_id=org_id, active=True).first()
+                user_internal_id = UserRepository.get_internal_id_by_public_uuid(uow.session, obj_in.assigned_to_user_id)
+                membership = uow.session.query(UserOrganization).filter_by(user_id=user_internal_id, organization_id=org_id, active=True).first()
                 if not membership:
                     raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "assigned_to_user_id", "message": "El usuario no existe o no pertenece a esta organización."}])
 
@@ -837,6 +1002,14 @@ class LeadService(BaseService):
                     status.HTTP_400_BAD_REQUEST,
                     detail=[{"field": "general", "message": "La campaña no tiene un flujo de estados válido (falta configurar un estado inicial)."}]
                 )
+            # Bug real encontrado 2026-07-30: state_repository.get_all() devuelve schemas Pydantic
+            # (no objetos ORM), así que initial_state.id es el public_uuid del estado, no su id
+            # interno. Todo el resto de esta función usa este valor como FK cruda (contexto nativo
+            # del motor de automatizaciones/ruteo, fallback de current_state_id) -- hay que
+            # resolverlo acá al id interno real antes de usarlo. Sin este fix, el motor de ruteo
+            # nunca podía matchear condiciones nativas de current_state_id sobre un lead recién
+            # creado en su estado inicial (comparaba un id interno crudo contra un uuid).
+            initial_state_internal_id = cls.state_repository.get_internal_id_by_public_uuid(uow.session, initial_state.id)
 
             from app.models.lead_contact_state import LeadContactState
             initial_contact_state = uow.session.query(LeadContactState).filter_by(
@@ -853,15 +1026,16 @@ class LeadService(BaseService):
             id_equipo = NATIVE_LEAD_FIELDS_BY_ATTR["team_id"].id
             id_asignado = NATIVE_LEAD_FIELDS_BY_ATTR["assigned_to_user_id"].id
             automation_native_ctx = {
-                id_etapa: initial_state.id,
+                id_etapa: initial_state_internal_id,
                 id_estado: initial_contact_state.id if initial_contact_state else None,
-                id_equipo: obj_in.team_id,
-                id_asignado: obj_in.assigned_to_user_id,
+                id_equipo: team_internal_id,
+                id_asignado: user_internal_id,
             }
 
             # 5. Procesar campos y validaciones (recibe campaign para evitar re-queries)
             clean_values, context_data, current_campaign_defs = cls._prepare_creation_data(
-                uow, obj_in, files_map, created_by=created_by, campaign=campaign, is_simulation=False,
+                uow, obj_in, files_map, created_by=created_by, campaign=campaign,
+                campaign_internal_id=campaign_internal_id, is_simulation=False,
                 native_ctx=automation_native_ctx,
             )
 
@@ -870,11 +1044,11 @@ class LeadService(BaseService):
             # (no de "transición permitida" -- a pedido explícito del usuario, una automatización
             # escribe estos campos como un UPDATE directo) para no terminar con una FK rota si la
             # regla apunta a un ID que no existe o no pertenece a esta organización/flujo.
-            final_current_state_id = context_data.get(id_etapa, initial_state.id)
-            if final_current_state_id != initial_state.id:
+            final_current_state_id = context_data.get(id_etapa, initial_state_internal_id)
+            if final_current_state_id != initial_state_internal_id:
                 state_obj = cls.state_repository.get_by_id(uow.session, final_current_state_id, user_context=user_context)
                 if not state_obj or state_obj.lead_flow_id != campaign.lead_flow_id:
-                    final_current_state_id = initial_state.id
+                    final_current_state_id = initial_state_internal_id
 
             final_contact_state_id = context_data.get(id_estado, automation_native_ctx[id_estado])
             if final_contact_state_id and final_contact_state_id != automation_native_ctx[id_estado]:
@@ -882,25 +1056,25 @@ class LeadService(BaseService):
                 if not cs_obj:
                     final_contact_state_id = automation_native_ctx[id_estado]
 
-            final_team_id = context_data.get(id_equipo, obj_in.team_id)
-            if final_team_id and final_team_id != obj_in.team_id:
+            final_team_id = context_data.get(id_equipo, team_internal_id)
+            if final_team_id and final_team_id != team_internal_id:
                 from app.models.team import Team as _Team
                 team_obj = uow.session.query(_Team).filter_by(id=final_team_id, organization_id=org_id).first()
                 if not team_obj:
-                    final_team_id = obj_in.team_id
+                    final_team_id = team_internal_id
 
-            final_assigned_user_id = context_data.get(id_asignado, obj_in.assigned_to_user_id)
-            if final_assigned_user_id and final_assigned_user_id != obj_in.assigned_to_user_id:
+            final_assigned_user_id = context_data.get(id_asignado, user_internal_id)
+            if final_assigned_user_id and final_assigned_user_id != user_internal_id:
                 from app.models.security_models import UserOrganization as _UserOrganization
                 membership_obj = uow.session.query(_UserOrganization).filter_by(user_id=final_assigned_user_id, organization_id=org_id, active=True).first()
                 if not membership_obj:
-                    final_assigned_user_id = obj_in.assigned_to_user_id
+                    final_assigned_user_id = user_internal_id
 
             # 7. Motor de enrutamiento (determina equipo automático) -- alimentado con los valores
             # YA resueltos (posteriores a la automatización), no los originales del request.
             native_ctx: dict = {
                 "__native__current_state_id": final_current_state_id,
-                "__native__campaign_id":      campaign.id,
+                "__native__campaign_id":      campaign_internal_id,
             }
             if final_assigned_user_id is not None:
                 native_ctx["__native__assigned_to_user_id"] = final_assigned_user_id
@@ -909,7 +1083,7 @@ class LeadService(BaseService):
 
             assigned_team_id = RoutingRuleEvaluatorService.evaluate(
                 session=uow.session,
-                campaign_id=campaign.id,
+                campaign_id=campaign_internal_id,
                 organization_id=campaign.organization_id,
                 context_data={**context_data, **native_ctx},
                 field_defs_list=current_campaign_defs,
@@ -923,19 +1097,38 @@ class LeadService(BaseService):
                 StorageService.validate_file(avatar_file, ALLOWED_IMAGE_TYPES)
                 picture_url = StorageService.upload_file(avatar_file, folder="avatars")
 
+            # Próximo número de referencia legible para el usuario (ej. "L-0001"), pedido
+            # 2026-08-01 (ver backend/AGENTS.md §50). SELECT... FOR UPDATE bloquea la fila
+            # de Organization hasta el commit de este UnitOfWork, así que dos altas simultáneas
+            # de la misma organización no pueden terminar con el mismo lead_number.
+            from app.models.organization import Organization
+            org_row = uow.session.query(Organization).filter_by(id=org_id).with_for_update().first()
+            org_row.lead_counter = (org_row.lead_counter or 0) + 1
+            next_lead_number = org_row.lead_counter
+
             # El routing engine tiene prioridad; si no asignó equipo, se usa el ya resuelto arriba
             lead_data = {
-                'campaign_id': obj_in.campaign_id,
+                'campaign_id': campaign_internal_id,
                 'current_state_id': final_current_state_id,
                 'contact_state_id': final_contact_state_id,
                 'team_id': assigned_team_id if assigned_team_id is not None else final_team_id,
                 'assigned_to_user_id': final_assigned_user_id,
-                'picture_url': picture_url
+                'picture_url': picture_url,
+                'lead_number': next_lead_number,
             }
 
             lead = cls.repository.create(uow.session, lead_data, user_context=user_context)
-            cls.repository.upsert_values(uow.session, lead.id, clean_values)
-            lead_id = lead.id
+            # lead.id es el public_uuid (repository.create() devuelve el schema Pydantic, no el
+            # ORM crudo) -- se resuelve acá al id interno antes de usarlo en cualquier operación
+            # raw (upsert_values, queries, historial, actividad). Bug real encontrado 2026-07-28
+            # (mismo patrón que organization_service.py/team_service.py/lead_field_service.py):
+            # rompía el guardado de valores de campos, tags, historial de estado y actividad de
+            # TODO lead creado por la API -- era la causa de los errores masivos
+            # "invalid input syntax for type integer" sobre lead_field_value.lead_id vistos en
+            # el log de Postgres. cls.get_by_id() al final sigue necesitando el public_uuid.
+            lead_public_uuid = lead.id
+            lead_id = cls.repository.get_internal_id_by_public_uuid(uow.session, lead_public_uuid)
+            cls.repository.upsert_values(uow.session, lead_id, clean_values)
 
             #Agregamos las etiquetas si vienen en el input
             if hasattr(obj_in, 'tag_ids') and obj_in.tag_ids is not None:
@@ -949,7 +1142,7 @@ class LeadService(BaseService):
                 "lead_id": lead_id,
                 "from_state_id": None,
                 "to_state_id": final_current_state_id,
-                "notes": "Ingreso al sistema" if final_current_state_id == initial_state.id
+                "notes": "Ingreso al sistema" if final_current_state_id == initial_state_internal_id
                     else "Ingreso al sistema (Etapa ajustada por una automatización)"
             }
             cls.state_history_repository.create(uow.session, state_history_data, user_context=user_context)
@@ -962,12 +1155,12 @@ class LeadService(BaseService):
                 user_id=created_by
             )
 
-            cls._log_audit(uow.session, lead, action=SystemAuditLogAction.CREATED, changes=None, user_id=created_by)
-        
-        return cls.get_by_id(lead_id, detailed=True)
+            cls._log_audit(uow.session, lead, action=SystemAuditLogAction.CREATED, changes=None, user_id=created_by, internal_id=lead_id)
+
+        return cls.get_by_id(lead_public_uuid, detailed=True)
 
     @classmethod
-    def bulk_assign(cls, lead_ids: list[int], target_team_id: int = None, target_user_id: int = None,
+    def bulk_assign(cls, lead_ids: list[str], target_team_id: str = None, target_user_id: str = None,
                     clear_team: bool = False, clear_user: bool = False, user_context: Optional[UserContext] = None):
         """
         Reasigna un lote de leads a un equipo o usuario específico.
@@ -987,18 +1180,30 @@ class LeadService(BaseService):
         def do_bulk(uow):
             org_id = TENANT_ORG_ID.get()
 
+            # lead_ids/target_team_id/target_user_id llegan como public_uuid desde Fase 3 (el
+            # frontend ya no conoce ningún id interno). Este endpoint (PATCH /leads/bulk-assign)
+            # había quedado deliberadamente sin migrar en Fase 2 (ver backend/AGENTS.md §17)
+            # asumiendo que el caller igual podía conseguir ids internos -- eso dejó de ser
+            # cierto. Se resuelven acá (necesitan session) con nombres nuevos para no chocar con
+            # el shadowing de closures de Python (asignar a los parámetros originales dentro de
+            # esta función anidada rompería con UnboundLocalError).
+            uuid_to_internal_lead = cls.repository.get_internal_ids_by_public_uuids(uow.session, lead_ids)
+            internal_lead_ids = list(uuid_to_internal_lead.values())
+            internal_target_team_id = TeamRepository.get_internal_id_by_public_uuid(uow.session, target_team_id) if target_team_id is not None else None
+            internal_target_user_id = UserRepository.get_internal_id_by_public_uuid(uow.session, target_user_id) if target_user_id is not None else None
+
             # --- Validar que team y user destino pertenecen al org del contexto ---
-            if target_team_id is not None:
-                team = uow.session.query(Team).filter_by(id=target_team_id, organization_id=org_id).first()
+            if internal_target_team_id is not None:
+                team = uow.session.query(Team).filter_by(id=internal_target_team_id, organization_id=org_id).first()
                 if not team:
                     raise HTTPException(
                         status.HTTP_400_BAD_REQUEST,
                         detail=[{"field": "target_team_id", "message": "El equipo destino no existe o no pertenece a esta organización."}]
                     )
 
-            if target_user_id is not None:
+            if internal_target_user_id is not None:
                 membership = uow.session.query(UserOrganization).filter_by(
-                    user_id=target_user_id, organization_id=org_id, active=True
+                    user_id=internal_target_user_id, organization_id=org_id, active=True
                 ).first()
                 if not membership:
                     raise HTTPException(
@@ -1007,10 +1212,10 @@ class LeadService(BaseService):
                     )
 
             # Validar que el usuario destino pertenezca al equipo destino (si se envían ambos)
-            if target_team_id is not None and target_user_id is not None:
+            if internal_target_team_id is not None and internal_target_user_id is not None:
                 from app.models.team_member import TeamMember as TM
                 member_in_team = uow.session.query(TM).filter_by(
-                    team_id=target_team_id, user_id=target_user_id
+                    team_id=internal_target_team_id, user_id=internal_target_user_id
                 ).first()
                 if not member_in_team:
                     raise HTTPException(
@@ -1020,7 +1225,7 @@ class LeadService(BaseService):
 
             # --- Filtrar leads por tenant y permisos de usuario para prevenir IDOR ---
             leads_query = uow.session.query(Lead).filter(
-                Lead.id.in_(lead_ids),
+                Lead.id.in_(internal_lead_ids),
                 Lead.organization_id == org_id
             )
             leads_query = cls.repository.apply_security_filter(uow.session, leads_query, user_context)
@@ -1037,10 +1242,10 @@ class LeadService(BaseService):
 
             all_team_ids = {lead.team_id for lead in leads if lead.team_id is not None}
             all_user_ids = {lead.assigned_to_user_id for lead in leads if lead.assigned_to_user_id is not None}
-            if target_team_id is not None:
-                all_team_ids.add(target_team_id)
-            if target_user_id is not None:
-                all_user_ids.add(target_user_id)
+            if internal_target_team_id is not None:
+                all_team_ids.add(internal_target_team_id)
+            if internal_target_user_id is not None:
+                all_user_ids.add(internal_target_user_id)
 
             teams_map = {
                 t.id: t.name for t in uow.session.query(Team).filter(Team.id.in_(all_team_ids)).all()
@@ -1058,12 +1263,12 @@ class LeadService(BaseService):
                 # "no tocar este campo", no "vaciarlo".
                 if clear_team:
                     lead.team_id = None
-                elif target_team_id is not None:
-                    lead.team_id = target_team_id
+                elif internal_target_team_id is not None:
+                    lead.team_id = internal_target_team_id
                 if clear_user:
                     lead.assigned_to_user_id = None
-                elif target_user_id is not None:
-                    lead.assigned_to_user_id = target_user_id
+                elif internal_target_user_id is not None:
+                    lead.assigned_to_user_id = internal_target_user_id
 
                 # Motor de Automatizaciones de Campos: bulk-assign tampoco pasaba por update(),
                 # así que una regla "Al actualizar registro" que lea/escriba Equipo/Usuario
@@ -1132,15 +1337,33 @@ class LeadService(BaseService):
         return cls._execute(action="Reasignación Masiva", func=do_bulk, success_msg="Leads reasignados con éxito.")
 
     @classmethod
-    def change_state(cls, obj_id: int, new_state_id: int, notes: str = None, user_context: Optional[UserContext] = None):
+    def change_state(cls, obj_id: str, new_state_id: str, notes: str = None, user_context: Optional[UserContext] = None):
         """
         Cambia el estado de un lead verificando que la transición sea permitida en el flujo.
         Registra el evento en el historial.
         """
         with UnitOfWork() as uow:
+            # obj_id/new_state_id llegan como public_uuid (Lead y LeadState respectivamente) desde
+            # Fase 3 -- este endpoint quedó deliberadamente sin migrar en Fase 2 (ver
+            # backend/AGENTS.md §17) asumiendo que el caller igual podía conseguir el id interno,
+            # pero eso dejó de ser cierto: el frontend ya no conoce ningún id interno. Se resuelven
+            # acá y se SHADOWEAN las mismas variables con el id interno -- de acá para abajo el
+            # resto del método sigue exactamente igual que antes. La única excepción es el
+            # `cls.get_by_id` del final, que necesita el UUID público original (se guarda aparte).
+            public_obj_id = obj_id
+            internal_id = cls._resolve_id(uow.session, obj_id)
+            if internal_id is None:
+                cls._not_found(obj_id)
+            obj_id = internal_id
+
+            internal_state_id = cls.state_repository.get_internal_id_by_public_uuid(uow.session, new_state_id)
+            if internal_state_id is None:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "new_state_id", "message": "El estado no existe."}])
+            new_state_id = internal_state_id
+
             lead = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
             if not lead:
-                cls._not_found(obj_id)
+                cls._not_found(public_obj_id)
 
             # Lock de fila para evitar race conditions en cambios concurrentes
             uow.session.query(Lead).filter(Lead.id == obj_id).with_for_update().first()
@@ -1164,7 +1387,15 @@ class LeadService(BaseService):
                     lead_flow_id=campaign.lead_flow_id, is_initial=True
                 )
                 initial_state = initial_states[0] if initial_states else None
-                if not initial_state or new_state_id != initial_state.id:
+                # Bug real encontrado 2026-07-30 (mismo patrón que create(), ver comentario ahí):
+                # initial_state.id es un public_uuid (schema Pydantic), pero new_state_id ya fue
+                # resuelto al id interno más arriba -- comparar directo siempre daba False y
+                # rechazaba con 400 incluso cuando el destino SÍ era el estado inicial del flujo.
+                initial_state_internal_id = (
+                    cls.state_repository.get_internal_id_by_public_uuid(uow.session, initial_state.id)
+                    if initial_state else None
+                )
+                if not initial_state or new_state_id != initial_state_internal_id:
                     raise HTTPException(
                         status.HTTP_400_BAD_REQUEST,
                         detail=[{"field": "new_state_id", "message": "Un lead sin estado solo puede transicionar al estado inicial del flujo."}]
@@ -1197,8 +1428,11 @@ class LeadService(BaseService):
             )
 
             # 4. Inyectar el historial
+            # lead.id es el public_uuid (lead viene de repository.get_by_id(), que devuelve el
+            # schema Pydantic) -- usamos obj_id (ya resuelto al id interno más arriba) en vez de
+            # lead.id. Bug real encontrado 2026-07-28, mismo patrón que en create().
             history_data = {
-                "lead_id": lead.id,
+                "lead_id": obj_id,
                 "from_state_id": current_state_id,
                 "to_state_id": new_state_id,
                 "notes": notes
@@ -1246,10 +1480,10 @@ class LeadService(BaseService):
                 )
 
         # Devolvemos el Lead actualizado para el Frontend
-        return cls.get_by_id(obj_id, detailed=True)
+        return cls.get_by_id(public_obj_id, detailed=True)
 
     @classmethod
-    def change_contact_state(cls, obj_id: int, new_contact_state_id: int, notes: str = None, user_context: Optional[UserContext] = None):
+    def change_contact_state(cls, obj_id: str, new_contact_state_id: str, notes: str = None, user_context: Optional[UserContext] = None):
         """
         Cambia el estado de contacto de un lead. A diferencia del estado de flujo, no tiene
         transiciones restringidas (se puede pasar a cualquier estado de contacto activo de
@@ -1263,9 +1497,23 @@ class LeadService(BaseService):
         from app.models.lead_contact_state import LeadContactState
 
         with UnitOfWork() as uow:
+            # Mismo motivo/patrón que en change_state: obj_id/new_contact_state_id llegan como
+            # public_uuid (Lead/LeadContactState) desde Fase 3, se resuelven y se shadowean acá.
+            public_obj_id = obj_id
+            internal_id = cls._resolve_id(uow.session, obj_id)
+            if internal_id is None:
+                cls._not_found(obj_id)
+            obj_id = internal_id
+
+            from app.db.repository.lead_contact_state_repository import LeadContactStateRepository
+            internal_contact_state_id = LeadContactStateRepository.get_internal_id_by_public_uuid(uow.session, new_contact_state_id)
+            if internal_contact_state_id is None:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "new_contact_state_id", "message": "El estado de contacto no existe."}])
+            new_contact_state_id = internal_contact_state_id
+
             lead = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
             if not lead:
-                cls._not_found(obj_id)
+                cls._not_found(public_obj_id)
 
             current_contact_state_id = lead.contact_state_id
 
@@ -1335,7 +1583,7 @@ class LeadService(BaseService):
                 )
 
         # Devolvemos el Lead actualizado para el Frontend
-        return cls.get_by_id(obj_id, detailed=True)
+        return cls.get_by_id(public_obj_id, detailed=True)
 
     @classmethod
     def simulate_create(cls, obj_in, user_context: Optional[UserContext] = None, files_map: dict = None):
@@ -1345,7 +1593,10 @@ class LeadService(BaseService):
             from app.core.context import TENANT_ORG_ID
             dummy_org_id = TENANT_ORG_ID.get() or 0
 
-            campaign = cls.campaign_repository.get_by_id(uow.session, obj_in.campaign_id, user_context=user_context)
+            # obj_in.campaign_id/team_id/assigned_to_user_id llegan como public_uuid desde Fase 3
+            # (mismo motivo que en create() más arriba).
+            campaign_internal_id = cls.campaign_repository.get_internal_id_by_public_uuid(uow.session, obj_in.campaign_id)
+            campaign = cls.campaign_repository.get_by_id(uow.session, campaign_internal_id, user_context=user_context) if campaign_internal_id is not None else None
             if not campaign:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "campaign_id", "message": "La campaña no existe."}])
 
@@ -1354,24 +1605,40 @@ class LeadService(BaseService):
             from app.models.security_models import UserOrganization
             org_id = campaign.organization_id
             if obj_in.team_id is not None:
-                team = uow.session.query(Team).filter_by(id=obj_in.team_id, organization_id=org_id).first()
+                team_internal_id = TeamRepository.get_internal_id_by_public_uuid(uow.session, obj_in.team_id)
+                team = uow.session.query(Team).filter_by(id=team_internal_id, organization_id=org_id).first()
                 if not team:
                     raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "team_id", "message": "El equipo no existe o no pertenece a esta organización."}])
             if obj_in.assigned_to_user_id is not None:
-                membership = uow.session.query(UserOrganization).filter_by(user_id=obj_in.assigned_to_user_id, organization_id=org_id, active=True).first()
+                user_internal_id = UserRepository.get_internal_id_by_public_uuid(uow.session, obj_in.assigned_to_user_id)
+                membership = uow.session.query(UserOrganization).filter_by(user_id=user_internal_id, organization_id=org_id, active=True).first()
                 if not membership:
                     raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "assigned_to_user_id", "message": "El usuario no existe o no pertenece a esta organización."}])
 
-            clean_values, context_data, field_defs = cls._prepare_creation_data(uow, obj_in, files_map, created_by, campaign=campaign, is_simulation=True)
+            clean_values, context_data, field_defs = cls._prepare_creation_data(uow, obj_in, files_map, created_by, campaign=campaign, campaign_internal_id=campaign_internal_id, is_simulation=True)
 
             states = cls.state_repository.get_all(uow.session, user_context=user_context, lead_flow_id=campaign.lead_flow_id, is_initial=True)
             initial_state = states[0] if states else None
             if not initial_state:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "general", "message": "La campaña no tiene un estado inicial configurado."}])
+            # Bug real encontrado 2026-07-30 (mismo patrón que create()): initial_state.id es un
+            # public_uuid -- el campo plano current_state_id de LeadResponse sigue siendo int
+            # (Fase 4 no lo migró), así que hay que resolverlo acá. El nested "current_state.id"
+            # de más abajo sí debe quedar como uuid -- ese no se toca.
+            initial_state_internal_id = cls.state_repository.get_internal_id_by_public_uuid(uow.session, initial_state.id)
 
             dummy_lead_id = -1
             fields_map = {f.id: f for f in field_defs}
 
+            # Bug real encontrado 2026-08-01: este dict se arma a mano (el Lead simulado no se
+            # persiste, así que no hay fila real de la que sacar un public_uuid) e id/field_values[].id
+            # seguían siendo los ints negativos de antes de la migración a public_uuid (Fase 1-4) --
+            # LeadResponse.id/LeadFieldValueResponse.id son `str` desde entonces, así que CUALQUIER
+            # llamada a POST /leads/simulate rompía con ResponseValidationError real (no era un bug
+            # de test). Fix: sentinel strings fijos para el Lead/field_value simulados (no persisten,
+            # no tiene sentido un uuid real o generado al vuelo -- decisión confirmada con el
+            # usuario, ver backend/AGENTS.md). field.id sí usa field_def.public_uuid real: el
+            # LeadField SÍ existe en la base, a diferencia del Lead/LeadFieldValue simulados.
             simulated_values = []
             for item_proxy in clean_values:
                 data = item_proxy._data
@@ -1379,7 +1646,7 @@ class LeadService(BaseService):
                 field_def = fields_map.get(fid)
 
                 simulated_values.append({
-                    "id": -1 * fid,
+                    "id": f"simulated-{field_def.public_uuid}" if field_def else "simulated",
                     "active": True,
                     "lead_id": dummy_lead_id,
                     "field_id": fid,
@@ -1387,7 +1654,7 @@ class LeadService(BaseService):
                     "nomenclator_items": [],
                     "related_leads": [],
                     "field": {
-                        "id": field_def.id,
+                        "id": field_def.public_uuid,
                         "active": True,
                         "name": field_def.name,
                         "order": field_def.order,
@@ -1398,11 +1665,11 @@ class LeadService(BaseService):
                 })
 
             return {
-                "id": dummy_lead_id,
+                "id": "simulated",
                 "active": True,
-                "campaign_id": obj_in.campaign_id,
+                "campaign_id": campaign_internal_id,
                 "organization_id": dummy_org_id,
-                "current_state_id": initial_state.id,
+                "current_state_id": initial_state_internal_id,
                 "current_state": {
                     "id": initial_state.id,
                     "active": True,
@@ -1422,18 +1689,29 @@ class LeadService(BaseService):
             }
 
     @classmethod
-    def update(cls, obj_id: int, obj_in, files_map: dict = None, user_context: Optional[UserContext] = None, avatar_file: UploadFile = None):
-        errors = [] 
-        
+    def update(cls, obj_id: str, obj_in, files_map: dict = None, user_context: Optional[UserContext] = None, avatar_file: UploadFile = None):
+        errors = []
+
         with UnitOfWork() as uow:
-            current_lead = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context)
+            # obj_id llega como public_uuid; se resuelve una única vez al id interno,
+            # que es lo que sigue esperando cls.repository y el resto de este método.
+            internal_id = cls._resolve_id(uow.session, obj_id)
+            if internal_id is None:
+                cls._not_found(obj_id)
+
+            current_lead = cls.repository.get_by_id(uow.session, internal_id, user_context=user_context)
             if not current_lead: cls._not_found(obj_id)
 
             # Validar que contact_state_id pertenece al org
+            # obj_in.contact_state_id llega como public_uuid de LeadContactState desde Fase 3.
+            # BaseRepository.update() ya resuelve el mismo campo genéricamente (vía
+            # _resolve_fk_payload_fields) antes del UPDATE real, pero acá necesitamos el id
+            # interno ADEMÁS para esta validación manual, que corre antes de esa llamada.
             if obj_in and obj_in.contact_state_id is not None:
                 from app.models.lead_contact_state import LeadContactState
+                contact_state_internal_id = LeadContactStateRepository.get_internal_id_by_public_uuid(uow.session, obj_in.contact_state_id)
                 contact_state = uow.session.query(LeadContactState).filter_by(
-                    id=obj_in.contact_state_id,
+                    id=contact_state_internal_id,
                     organization_id=current_lead.organization_id,
                     active=True
                 ).first()
@@ -1442,7 +1720,7 @@ class LeadService(BaseService):
 
             # Logica de Tags
             if obj_in and "tag_ids" in obj_in.model_fields_set:
-                lead_db = uow.session.query(Lead).filter_by(id=obj_id).first()
+                lead_db = uow.session.query(Lead).filter_by(id=internal_id).first()
                 cls._assign_tags(
                     session=uow.session,
                     lead_obj=lead_db,
@@ -1459,13 +1737,26 @@ class LeadService(BaseService):
                 lead_data["picture_url"] = picture_url
 
             if lead_data:
-                cls.repository.update(uow.session, obj_id, lead_data, user_context=user_context)
+                cls.repository.update(uow.session, internal_id, lead_data, user_context=user_context)
 
             if obj_in and obj_in.values is not None:
+                # obj_in.values[].field_id llega como public_uuid del LeadField -- se resuelve
+                # acá antes de comparar contra defs_map (id interno). Ver _resolve_value_field_ids
+                # y backend/AGENTS.md §18-decies.
+                cls._resolve_value_field_ids(uow.session, obj_in.values)
+
                 all_field_defs = cls.field_repository.get_all_active_with_rules(uow.session, campaign_id=current_lead.campaign_id)
                 current_campaign_defs = [f for f in all_field_defs if f.campaign_id == current_lead.campaign_id]
 
                 defs_map = {f.id: f for f in current_campaign_defs}
+
+                # Ver _resolve_value_nomenclator_ids -- resuelve uuids de NomenclatorItem en
+                # `value` para campos SELECTOR/CHECKBOX, ahora que defs_map ya existe.
+                cls._resolve_value_nomenclator_ids(uow.session, obj_in.values, defs_map)
+
+                # Ver _resolve_value_lead_ids -- resuelve uuids de Lead relacionado en `value`
+                # para campos tipo LEAD, mismo criterio que nomencladores.
+                cls._resolve_value_lead_ids(uow.session, obj_in.values, defs_map)
 
                 # Validaciones previas
                 incoming_ids = [v.get('field_id') if isinstance(v, dict) else v.field_id for v in obj_in.values]
@@ -1487,14 +1778,44 @@ class LeadService(BaseService):
                     pending_files = cls._validate_file_uploads(incoming_data, files_map, current_campaign_defs, errors)
 
                 # Reconstruir estado actual DB
+                # Bug real encontrado 2026-07-30: current_lead viene de cls.repository.get_by_id()
+                # -- devuelve el schema Pydantic (LeadDetailedResponse), no el ORM crudo. Sus
+                # nomenclator_items[].id son public_uuid (Fase 4), pero el resto de esta función
+                # (validación, motor de automatizaciones -- ver APPEND_TO_LIST/REMOVE_FROM_LIST en
+                # automation_engine.py) siempre trabajó con los ids internos crudos de
+                # NomenclatorItem. Hay que resolverlos acá antes de usarlos como "old_value".
+                from app.db.repository.nomenclator_item_repository import NomenclatorItemRepository
+                all_item_uuids = [
+                    item.id
+                    for v in current_lead.field_values
+                    if getattr(v, "value", None) is None and getattr(v, "nomenclator_items", None)
+                    for item in v.nomenclator_items
+                ]
+                item_uuid_to_internal = NomenclatorItemRepository.get_internal_ids_by_public_uuids(uow.session, all_item_uuids)
+
+                # Bug real encontrado 2026-08-01, mismo patrón exacto que item_uuid_to_internal
+                # de arriba (para NomenclatorItem): `current_lead.field_values[].related_leads[].id`
+                # también es public_uuid (RelatedLeadResponse, Fase 1-4), pero antes se usaba tal
+                # cual como "old_value" en db_values -- comparado/mezclado más abajo con
+                # incoming_data (que desde _resolve_value_lead_ids ya trae ids internos). Rompía
+                # con DataError de Postgres en _translate_value_for_history (`lead_id IN (uuid)`)
+                # en cualquier update() de un Lead con un campo LEAD ya poblado.
+                all_related_lead_uuids = [
+                    l.id
+                    for v in current_lead.field_values
+                    if getattr(v, "value", None) is None and getattr(v, "related_leads", None)
+                    for l in v.related_leads
+                ]
+                related_lead_uuid_to_internal = LeadRepository.get_internal_ids_by_public_uuids(uow.session, all_related_lead_uuids)
+
                 db_values = {}
                 for v in current_lead.field_values:
                     val = getattr(v, "value", None)
                     if val is None:
                         if hasattr(v, "nomenclator_items") and v.nomenclator_items:
-                            val = [item.id for item in v.nomenclator_items]
+                            val = [item_uuid_to_internal.get(item.id) for item in v.nomenclator_items]
                         elif hasattr(v, "related_leads") and v.related_leads:
-                            val = [l.id for l in v.related_leads]
+                            val = [related_lead_uuid_to_internal.get(l.id) for l in v.related_leads]
                         elif hasattr(v, "nomenclator_item_id") and v.nomenclator_item_id:
                             val = v.nomenclator_item_id
                     db_values[v.field_id] = val
@@ -1519,10 +1840,10 @@ class LeadService(BaseService):
                 full_context = cls._evaluate_calculated_fields(full_context, current_campaign_defs)
 
                 # Chequear duplicados en primary fields (excluimos el lead actual)
-                cls._check_duplicates(uow.session, current_lead.campaign_id, full_context, current_campaign_defs, errors, exclude_lead_id=obj_id)
+                cls._check_duplicates(uow.session, current_lead.campaign_id, full_context, current_campaign_defs, errors, exclude_lead_id=internal_id)
 
                 # Validar reglas
-                cls._validate_processed_data(uow, full_context, current_campaign_defs, errors, current_lead_id=obj_id)
+                cls._validate_processed_data(uow, full_context, current_campaign_defs, errors, current_lead_id=internal_id)
 
                 if errors:
                     raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=errors)
@@ -1588,14 +1909,14 @@ class LeadService(BaseService):
                 # `change_contact_state` y `bulk_assign` -- ver ese método para el detalle de
                 # la validación liviana que reemplaza a "transición permitida"/"pertenece al equipo".
                 native_changes, native_history_changes = cls._apply_native_automation_writeback(
-                    uow, obj_id, native_ctx_before, automation_audit, user_context
+                    uow, internal_id, native_ctx_before, automation_audit, user_context
                 )
                 changes.update(native_changes)
                 history_changes.update(native_history_changes)
 
                 # Persistencia
                 clean_values = cls._reconstruct_items_for_repo(incoming_data, current_campaign_defs)
-                cls.repository.upsert_values(uow.session, obj_id, clean_values)
+                cls.repository.upsert_values(uow.session, internal_id, clean_values)
 
                 user_id = user_context.user.id if user_context else None
 
@@ -1603,7 +1924,7 @@ class LeadService(BaseService):
                 # upsert_values() solo modifica filas de lead_field_value (con su propio
                 # updated_at), por lo que sin esto lead.updated_at quedaba desactualizado.
                 if changes:
-                    lead_obj = uow.session.query(Lead).filter_by(id=obj_id).first()
+                    lead_obj = uow.session.query(Lead).filter_by(id=internal_id).first()
                     if lead_obj:
                         lead_obj.updated_at = func.now()
                         if user_id is not None:
@@ -1616,16 +1937,17 @@ class LeadService(BaseService):
                 if history_changes:
                     cls._log_activity(
                         session=uow.session,
-                        lead_id=obj_id,
+                        lead_id=internal_id,
                         activity_type="FIELDS_UPDATED",
                         details={"changes": history_changes},
                         user_id=user_id
                     )
 
+        # obj_id sigue siendo el public_uuid original -- get_by_id (ya migrado) lo vuelve a resolver.
         return cls.get_by_id(obj_id, detailed=True)
 
     @classmethod
-    def search(cls, user_context: Optional[UserContext] = None, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, detailed: bool = False, search_req=None, order_by=None, ascending: bool = True, only_active: bool = True, campaign_id: Optional[int] = None):
+    def search(cls, user_context: Optional[UserContext] = None, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE, detailed: bool = False, search_req=None, order_by=None, ascending: bool = True, only_active: bool = True, campaign_id: Optional[int] = None, query: Optional[str] = None):
         def do_search(uow):
             total, items = cls.repository.search(
                 session=uow.session, user_context=user_context,
@@ -1636,7 +1958,8 @@ class LeadService(BaseService):
                 order_by=order_by,
                 ascending=ascending,
                 only_active=only_active,
-                campaign_id=campaign_id
+                campaign_id=campaign_id,
+                query=query
             )
 
             accessible_campaign_ids = CampaignRepository.get_accessible_campaign_ids(uow.session, user_context)
@@ -1680,9 +2003,13 @@ class LeadService(BaseService):
         return total, items
 
     @classmethod
-    def get_by_id(cls, obj_id: int, user_context: Optional[UserContext] = None, detailed: bool = True):
+    def get_by_id(cls, obj_id: str, user_context: Optional[UserContext] = None, detailed: bool = True):
         def _fetch(uow):
-            lead = cls.repository.get_by_id(uow.session, obj_id, user_context=user_context, detailed=detailed)
+            # obj_id llega como public_uuid; se resuelve una vez al id interno.
+            internal_id = cls._resolve_id(uow.session, obj_id)
+            if internal_id is None:
+                return None
+            lead = cls.repository.get_by_id(uow.session, internal_id, user_context=user_context, detailed=detailed)
             if lead is None: return None  # Deja que _execute dispare el 404 de siempre
             accessible_campaign_ids = CampaignRepository.get_accessible_campaign_ids(uow.session, user_context)
             return lead, accessible_campaign_ids
@@ -1697,29 +2024,34 @@ class LeadService(BaseService):
         return cls._enrich_lead_with_urls(lead)
     
     @classmethod
-    def _assign_tags(cls, session, lead_obj, tag_ids: list[int], org_id: int):
+    def _assign_tags(cls, session, lead_obj, tag_ids: list[str], org_id: int):
         """
         Asigna etiquetas a un lead. Si tag_ids es una lista vacía, borra las asociaciones.
         Verifica que todas las etiquetas pertenezcan a la organización del lead.
+
+        tag_ids son public_uuid de Tag (desde Fase 3 el front ya no conoce el id interno --
+        TagResponse hereda BaseResponse). Se filtra directo por Tag.public_uuid en vez de
+        resolver a id interno primero, porque de cualquier forma necesitamos volver a traer
+        los objetos Tag completos para asignarlos a la relación.
         """
         from app.models.tag import Tag
-        
+
         if tag_ids is None or not tag_ids:
             lead_obj.tags = [] # Borramos todas las etiquetas asociadas
             return
 
-        # Buscamos solo las etiquetas que coinciden con los IDs y pertenecen a la empresa
+        # Buscamos solo las etiquetas que coinciden con los UUID y pertenecen a la empresa
         tags = session.query(Tag).filter(
-            Tag.id.in_(tag_ids),
+            Tag.public_uuid.in_(tag_ids),
             Tag.organization_id == org_id
         ).all()
 
         if len(tags) != len(set(tag_ids)):
-            found_ids = {t.id for t in tags}
-            missing_ids = [i for i in tag_ids if i not in found_ids]
+            found_uuids = {t.public_uuid for t in tags}
+            missing_uuids = [i for i in tag_ids if i not in found_uuids]
             raise HTTPException(
                 status_code=400,
-                detail=[{"field": "tag_ids", "message": f"Las etiquetas {missing_ids} no existen o no pertenecen a tu organización."}]
+                detail=[{"field": "tag_ids", "message": f"Las etiquetas {missing_uuids} no existen o no pertenecen a tu organización."}]
             )
 
         lead_obj.tags = tags

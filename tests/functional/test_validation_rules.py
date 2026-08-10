@@ -1,7 +1,19 @@
 import pytest
 from app.models.lead_field import LeadField
+from app.models.campaign import Campaign
+from app.models.lead_field_section import LeadFieldSection
 import json
 from datetime import datetime, timedelta
+
+
+def _resolve_internal_id(db_session, model, public_uuid):
+    """
+    initial_structure devuelve public_uuid para campaign_id (Fase 3, ver backend/AGENTS.md
+    §18), pero este archivo también construye filas ORM (LeadField) directo en la DB, que
+    necesitan el id interno (columna FK Integer real).
+    """
+    return db_session.query(model.id).filter_by(public_uuid=public_uuid).scalar()
+
 
 def test_validation_rule_test_rule_success(api, db_session, initial_structure):
     """
@@ -15,11 +27,11 @@ def test_validation_rule_test_rule_success(api, db_session, initial_structure):
     
     # 1. Setup: Crear un campo numérico "Edad"
     f_edad = LeadField(
-        name="Edad Regla", 
-        field_type_code="INT", 
-        campaign_id=camp_id, 
+        name="Edad Regla",
+        field_type_code="INT",
+        campaign_id=_resolve_internal_id(db_session, Campaign, camp_id),
         order=1,
-        lead_field_section_id=section_id, 
+        lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id),
         organization_id=org_id,
         active=True
     )
@@ -28,7 +40,9 @@ def test_validation_rule_test_rule_success(api, db_session, initial_structure):
 
     # 2. CREAR REGLA: Valor Mínimo 18
     payload_rule = {
-        "field_id": f_edad.id,
+        # ValidationRuleCreate.field_id es str (public_uuid, Fase 3) -- f_edad.id acá sería
+        # el id interno crudo de la fila ORM.
+        "field_id": f_edad.public_uuid,
         "template_code": "MIN_VALUE",
         "template_params": {"limit": 18},
         "error_message": "Debes ser mayor de 18 años."
@@ -97,11 +111,11 @@ def test_validation_rule_delete_rule(api, db_session, initial_structure):
     
     # 1. Setup: Crear un campo numérico "Edad"
     f_edad = LeadField(
-        name="Edad Regla", 
-        field_type_code="INT", 
-        campaign_id=camp_id, 
+        name="Edad Regla",
+        field_type_code="INT",
+        campaign_id=_resolve_internal_id(db_session, Campaign, camp_id),
         order=1,
-        lead_field_section_id=section_id, 
+        lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id),
         organization_id=org_id,
         active=True
     )
@@ -110,7 +124,9 @@ def test_validation_rule_delete_rule(api, db_session, initial_structure):
 
     # 2. CREAR REGLA
     payload_rule = {
-        "field_id": f_edad.id,
+        # ValidationRuleCreate.field_id es str (public_uuid, Fase 3) -- f_edad.id acá sería
+        # el id interno crudo de la fila ORM.
+        "field_id": f_edad.public_uuid,
         "template_code": "MIN_VALUE",
         "template_params": {"limit": 18},
         "error_message": "Debes ser mayor de 18 años."
@@ -142,11 +158,11 @@ def test_validation_rule_delete_rule_check_404(api, db_session, initial_structur
     
     # 1. Setup: Crear un campo numérico "Edad"
     f_edad = LeadField(
-        name="Edad Regla", 
-        field_type_code="INT", 
-        campaign_id=camp_id, 
+        name="Edad Regla",
+        field_type_code="INT",
+        campaign_id=_resolve_internal_id(db_session, Campaign, camp_id),
         order=1,
-        lead_field_section_id=section_id, 
+        lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id),
         organization_id=org_id,
         active=True
     )
@@ -155,7 +171,9 @@ def test_validation_rule_delete_rule_check_404(api, db_session, initial_structur
 
     # 2. CREAR REGLA
     payload_rule = {
-        "field_id": f_edad.id,
+        # ValidationRuleCreate.field_id es str (public_uuid, Fase 3) -- f_edad.id acá sería
+        # el id interno crudo de la fila ORM.
+        "field_id": f_edad.public_uuid,
         "template_code": "MIN_VALUE",
         "template_params": {"limit": 18},
         "error_message": "Debes ser mayor de 18 años."
@@ -182,13 +200,22 @@ def test_create_manual_validation_rule_success(api, db_session, initial_structur
     org_id = initial_structure["org_id"]
     section_id = initial_structure["section_id"]
     
-    f_num = LeadField(name="Numero Par", field_type_code="INT", campaign_id=camp_id, order=2, lead_field_section_id=section_id, organization_id=org_id, active=True)
+    f_num = LeadField(
+        name="Numero Par",
+        field_type_code="INT",
+        campaign_id=_resolve_internal_id(db_session, Campaign, camp_id),
+        order=2,
+        lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, section_id),
+        organization_id=org_id,
+        active=True
+    )
     db_session.add(f_num)
     db_session.commit() 
 
     # Crear regla manual: "MOD(value,2) = 0"
     payload_manual = {
-        "field_id": f_num.id,
+        # mismo motivo que arriba: field_id es str (public_uuid).
+        "field_id": f_num.public_uuid,
         "name": "Solo Pares",
         "expression": "MOD(value,2) = 0", 
         "error_message": "El número debe ser par."

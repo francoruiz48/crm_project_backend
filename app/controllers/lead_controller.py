@@ -106,7 +106,8 @@ class LeadController(BaseController):
             search_req: LeadSearchRequest = Body(...),
             detailed: bool = Query(False),
             only_active: bool = Query(True),
-            campaign_id: Optional[int] = Query(None, description="Filtrar por ID de campaña"),
+            campaign_id: Optional[str] = Query(None, description="Filtrar por UUID público de campaña"),
+            query: Optional[str] = Query(None, description="Buscar leads (texto libre)"),
             order_by: str = Query(None, description="Campo por el cual ordenar"),
             ascending: bool = Query(True, description="Orden ascendente (true) o descendente (false)")
         ):
@@ -120,7 +121,8 @@ class LeadController(BaseController):
                 order_by=order_by,
                 ascending=ascending,
                 only_active=only_active,
-                campaign_id=campaign_id
+                campaign_id=campaign_id,
+                query=query
             )
             
             return PaginatedResponse.create(
@@ -143,7 +145,7 @@ class LeadController(BaseController):
             page_size: int = Query(DEFAULT_PAGE_SIZE, ge=0, le=PAGE_SIZE_LIMIT),
             only_active: bool = True, 
             detailed: bool = Query(False),
-            campaign_id: Optional[int] = Query(None, description="Filtrar por ID de campaña"),
+            campaign_id: Optional[str] = Query(None, description="Filtrar por UUID público de campaña"),
             query: Optional[str] = Query(None, description="Buscar leads"),
             order_by: str = Query(None, description="Campo por el cual ordenar"), 
             ascending: bool = Query(True, description="Orden ascendente (true) o descendente (false)"),
@@ -192,7 +194,7 @@ class LeadController(BaseController):
         # --- UPDATE HÍBRIDO ---
         @router.put("/{id}", response_model=LeadResponse, dependencies=cls._get_deps("update"))
         async def update_lead(
-            id: int,
+            id: str,
             request: Request,
             user_context = Depends(get_current_user_roles)
         ):
@@ -238,12 +240,12 @@ class LeadController(BaseController):
             return result
         
         class ChangeStateRequest(BaseModel):
-            new_state_id: int = Field(gt=0)
+            new_state_id: str
             notes: str = None
 
         @router.post("/{id}/change_state", response_model=ResponseModelItem, dependencies=cls._get_deps("update"))
         async def change_lead_state(
-            id: int,
+            id: str,
             payload: ChangeStateRequest = Body(...),
             user_context = Depends(get_current_user_roles)
         ):
@@ -255,12 +257,12 @@ class LeadController(BaseController):
             )
 
         class ChangeContactStateRequest(BaseModel):
-            new_contact_state_id: int = Field(gt=0)
+            new_contact_state_id: str
             notes: str = None
 
         @router.post("/{id}/change_contact_state", response_model=ResponseModelItem, dependencies=cls._get_deps("update"))
         async def change_lead_contact_state(
-            id: int,
+            id: str,
             payload: ChangeContactStateRequest = Body(...),
             user_context = Depends(get_current_user_roles)
         ):

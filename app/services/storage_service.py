@@ -48,13 +48,17 @@ class StorageService:
         
     @classmethod
     def upload_file(cls, file: UploadFile, folder: str = "uploads") -> str:
-        client = cls.get_client()
-        
-        # Sanitizar nombre y validar extensión contra el MIME type declarado
+        # Sanitizar nombre y validar extensión contra el MIME type declarado -- se hace ANTES
+        # de tocar el cliente de Supabase a propósito (bug real encontrado 2026-07-30): es una
+        # validación puramente local, no necesita red ni credenciales, así que no tiene sentido
+        # pagar el costo (ni la dependencia) de instanciar el cliente solo para rechazar un
+        # archivo por extensión inválida.
         file_ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename and "." in file.filename else ""
         allowed_exts = _MIME_TO_EXTENSIONS.get(file.content_type, set())
         if allowed_exts and file_ext not in allowed_exts:
             raise HTTPException(400, f"Extensión de archivo '.{file_ext}' no es válida para el tipo '{file.content_type}'.")
+
+        client = cls.get_client()
         unique_name = f"{uuid.uuid4()}.{file_ext}"
         path = f"{folder}/{unique_name}"
         

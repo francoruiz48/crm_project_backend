@@ -1,17 +1,11 @@
-import uuid
 from sqlalchemy import Column, Integer, String, Text, Boolean, ForeignKey, JSON
-from sqlalchemy.dialects.postgresql import UUID # Si usas PostgreSQL, esto es ideal. Si usas MySQL/SQLite, puedes usar String(36)
 from sqlalchemy.orm import relationship
 from app.models.base_model import BaseModelDB
 
 class WebForm(BaseModelDB):
     __tablename__ = "web_form"
 
-    # ID interno para relaciones (Rápido y eficiente)
-    id = Column(Integer, primary_key=True, index=True)
-    
-    # UUID público para el iframe (Seguro e inyectable)
-    public_uuid = Column(String(36), default=lambda: str(uuid.uuid4()), unique=True, index=True, nullable=False)
+    # id y public_uuid ahora se heredan de BaseModelDB (todas las entidades tienen public_uuid).
 
     # Relaciones base
     organization_id = Column(Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False)

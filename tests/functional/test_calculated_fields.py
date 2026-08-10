@@ -28,8 +28,8 @@ def test_calculated_field_intent_to_assign_a_value(api, initial_structure):
     
     # 4. Verificar cálculo (5 * 4 = 20)
     values = lead_resp["field_values"]
-    val_total = next(v for v in values if v["field_id"] == f_total["id"])
-    
+    val_total = next(v for v in values if v["field"]["id"] == f_total["id"])
+
     # El backend debió sobreescribir el 1 con 20.0
     assert float(val_total["value"]) == 20.0
 
@@ -59,7 +59,7 @@ def test_calculated_field_arithmetic(api, initial_structure):
     
     # 3. Verificar cálculo (10.5 * 4 = 42.0)
     values = lead_resp["field_values"]
-    val_total = next(v for v in values if v["field_id"] == f_total["id"])
+    val_total = next(v for v in values if v["field"]["id"] == f_total["id"])
     assert float(val_total["value"]) == 42.0
 
 
@@ -85,7 +85,7 @@ def test_calculated_field_logic_and_text(api, initial_structure):
         {"field_id": f_nombre["id"], "value": "Juan"},
         {"field_id": f_edad["id"], "value": 20}
     ])
-    val1 = next(v for v in res1["field_values"] if v["field_id"] == f_estado["id"])
+    val1 = next(v for v in res1["field_values"] if v["field"]["id"] == f_estado["id"])
     assert val1["value"] == "Mayor: Juan"
 
     # Caso 2: Menor
@@ -93,7 +93,7 @@ def test_calculated_field_logic_and_text(api, initial_structure):
         {"field_id": f_nombre["id"], "value": "Pedrito"},
         {"field_id": f_edad["id"], "value": 10}
     ])
-    val2 = next(v for v in res2["field_values"] if v["field_id"] == f_estado["id"])
+    val2 = next(v for v in res2["field_values"] if v["field"]["id"] == f_estado["id"])
     assert val2["value"] == "Menor"
 
 
@@ -118,5 +118,5 @@ def test_calculated_field_cleaning_functions(api, initial_structure):
         {"field_id": f_sucio["id"], "value": "  juan PEREZ  "}
     ])
     
-    val_limpio = next(v for v in res["field_values"] if v["field_id"] == f_limpio["id"])
+    val_limpio = next(v for v in res["field_values"] if v["field"]["id"] == f_limpio["id"])
     assert val_limpio["value"] == "Juan Perez"

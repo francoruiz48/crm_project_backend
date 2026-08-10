@@ -85,9 +85,9 @@ class TestCampaignIsolation:
 
         with as_user(api_a, ctx_alpha.owner):
             camp = api_a.create_campaign(
-                workspace_id=ctx_alpha.workspace_id,
+                workspace_id=ctx_alpha.workspace_uuid,
                 name="Camp Privada Alpha",
-                lead_flow_id=ctx_alpha.lead_flow_id,
+                lead_flow_id=ctx_alpha.lead_flow_uuid,
             )
 
         with as_user(api_b, ctx_beta.owner):
@@ -100,9 +100,9 @@ class TestCampaignIsolation:
 
         with as_user(api_a, ctx_alpha.owner):
             camp = api_a.create_campaign(
-                workspace_id=ctx_alpha.workspace_id,
+                workspace_id=ctx_alpha.workspace_uuid,
                 name="Camp Propia Alpha",
-                lead_flow_id=ctx_alpha.lead_flow_id,
+                lead_flow_id=ctx_alpha.lead_flow_uuid,
             )
             resp = client.get("/campaigns/", headers=api_a.headers)
 
@@ -471,10 +471,10 @@ class TestValidationRuleIsolation:
         with as_user(api_a, ctx_alpha.owner):
             # Necesitamos un campo para asociar la regla
             field = api_a.create_lead_field(
-                campaign_id=ctx_alpha.campaign_id,
+                campaign_id=ctx_alpha.campaign_uuid,
                 name="Edad Regla",
                 field_type_code="INT",
-                section_id=ctx_alpha.section_id,
+                section_id=ctx_alpha.section_uuid,
             )
             rule = api_a.create_rule(
                 field_id=field["id"],
@@ -502,21 +502,21 @@ class TestLeadIsolation:
 
         with as_user(api_a, ctx_alpha.owner):
             field = api_a.create_lead_field(
-                campaign_id=ctx_alpha.campaign_id,
+                campaign_id=ctx_alpha.campaign_uuid,
                 name="Nombre Lead",
                 field_type_code="STRING",
                 required=True,
-                section_id=ctx_alpha.section_id,
+                section_id=ctx_alpha.section_uuid,
             )
             lead = api_a.create_lead(
-                campaign_id=ctx_alpha.campaign_id,
+                campaign_id=ctx_alpha.campaign_uuid,
                 values=[{"field_id": field["id"], "value": "Juan Alpha"}],
             )
 
         # Beta intenta listar los leads de la campaña de Alpha directamente
         with as_user(api_b, ctx_beta.owner):
             resp = client.get(
-                f"/leads/?campaign_id={ctx_alpha.campaign_id}",
+                f"/leads/?campaign_id={ctx_alpha.campaign_uuid}",
                 headers=api_b.headers,
             )
 
@@ -528,18 +528,18 @@ class TestLeadIsolation:
 
         with as_user(api_a, ctx_alpha.owner):
             field = api_a.create_lead_field(
-                campaign_id=ctx_alpha.campaign_id,
+                campaign_id=ctx_alpha.campaign_uuid,
                 name="Nombre Lead Propio",
                 field_type_code="STRING",
                 required=True,
-                section_id=ctx_alpha.section_id,
+                section_id=ctx_alpha.section_uuid,
             )
             lead = api_a.create_lead(
-                campaign_id=ctx_alpha.campaign_id,
+                campaign_id=ctx_alpha.campaign_uuid,
                 values=[{"field_id": field["id"], "value": "Maria Alpha"}],
             )
             resp = client.get(
-                f"/leads/?campaign_id={ctx_alpha.campaign_id}",
+                f"/leads/?campaign_id={ctx_alpha.campaign_uuid}",
                 headers=api_a.headers,
             )
 
@@ -595,14 +595,14 @@ class TestLeadCommentIsolation:
 
     def _create_alpha_lead(self, api_a, ctx_alpha):
         field = api_a.create_lead_field(
-            campaign_id=ctx_alpha.campaign_id,
+            campaign_id=ctx_alpha.campaign_uuid,
             name="Nombre Lead Comment",
             field_type_code="STRING",
             required=True,
-            section_id=ctx_alpha.section_id,
+            section_id=ctx_alpha.section_uuid,
         )
         return api_a.create_lead(
-            campaign_id=ctx_alpha.campaign_id,
+            campaign_id=ctx_alpha.campaign_uuid,
             values=[{"field_id": field["id"], "value": "Juan Alpha Comment"}],
         )
 
@@ -683,7 +683,7 @@ class TestFieldAutomationIsolation:
         with as_user(api_b, ctx_beta.owner):
             resp = client.post(
                 "/field_automations/",
-                json=self._payload(ctx_alpha.campaign_id, "Automatización intrusa"),
+                json=self._payload(ctx_alpha.campaign_uuid, "Automatización intrusa"),
                 headers=api_b.headers,
             )
 
@@ -697,7 +697,7 @@ class TestFieldAutomationIsolation:
         with as_user(api_a, ctx_alpha.owner):
             resp_create = client.post(
                 "/field_automations/",
-                json=self._payload(ctx_alpha.campaign_id, "Automatización Privada Alpha"),
+                json=self._payload(ctx_alpha.campaign_uuid, "Automatización Privada Alpha"),
                 headers=api_a.headers,
             )
             assert resp_create.status_code == 200
@@ -714,7 +714,7 @@ class TestFieldAutomationIsolation:
         with as_user(api_a, ctx_alpha.owner):
             resp_create = client.post(
                 "/field_automations/",
-                json=self._payload(ctx_alpha.campaign_id, "Automatización Propia Alpha"),
+                json=self._payload(ctx_alpha.campaign_uuid, "Automatización Propia Alpha"),
                 headers=api_a.headers,
             )
             assert resp_create.status_code == 200
@@ -739,9 +739,9 @@ class TestLeadStateTransitionIsolation:
             resp = client.post(
                 "/lead_state_transitions/bulk",
                 json={
-                    "lead_flow_id": ctx_alpha.lead_flow_id,
+                    "lead_flow_id": ctx_alpha.lead_flow_uuid,
                     "transitions": [
-                        {"from_state_id": ctx_alpha.state_contact_id, "to_state_id": ctx_alpha.state_initial_id}
+                        {"from_state_id": ctx_alpha.state_contact_uuid, "to_state_id": ctx_alpha.state_initial_uuid}
                     ],
                 },
                 headers=api_b.headers,
@@ -758,9 +758,9 @@ class TestLeadStateTransitionIsolation:
             resp = client.put(
                 "/lead_state_transitions/bulk",
                 json={
-                    "lead_flow_id": ctx_alpha.lead_flow_id,
+                    "lead_flow_id": ctx_alpha.lead_flow_uuid,
                     "transitions": [
-                        {"from_state_id": ctx_alpha.state_initial_id, "to_state_id": ctx_alpha.state_contact_id}
+                        {"from_state_id": ctx_alpha.state_initial_uuid, "to_state_id": ctx_alpha.state_contact_uuid}
                     ],
                 },
                 headers=api_b.headers,
@@ -809,14 +809,14 @@ class TestLeadHistoryIsolation:
 
     def _create_alpha_lead(self, api_a, ctx_alpha):
         field = api_a.create_lead_field(
-            campaign_id=ctx_alpha.campaign_id,
+            campaign_id=ctx_alpha.campaign_uuid,
             name="Nombre Lead History",
             field_type_code="STRING",
             required=True,
-            section_id=ctx_alpha.section_id,
+            section_id=ctx_alpha.section_uuid,
         )
         return api_a.create_lead(
-            campaign_id=ctx_alpha.campaign_id,
+            campaign_id=ctx_alpha.campaign_uuid,
             values=[{"field_id": field["id"], "value": "Juan Alpha History"}],
         )
 
@@ -841,7 +841,10 @@ class TestLeadHistoryIsolation:
 
         items = _items(resp)
         assert items != [], "Alpha debería ver el historial de actividad de su propio lead"
-        assert all(item["lead_id"] == lead["id"] for item in items)
+        # Nota: igual que en test_state_history_visible_from_own_org -- LeadActivityHistoryResponse.lead_id
+        # es un int sin migrar (FK cruda, alcance de Fase 4), no el public_uuid del lead. Comparar contra
+        # lead["id"] (uuid) siempre daba False; el aislamiento real ya lo cubre items != [] de acá arriba
+        # y test_activity_history_not_visible_from_other_org.
 
     def test_state_history_not_visible_from_other_org(self, client, ctx_alpha, ctx_beta):
         api_a = ApiClient(client, ctx_alpha.org_id)
@@ -864,4 +867,7 @@ class TestLeadHistoryIsolation:
 
         items = _items(resp)
         assert items != [], "Alpha debería ver el historial de estados de su propio lead"
-        assert all(item["lead_id"] == lead["id"] for item in items)
+        # Nota: LeadStateHistoryResponse.lead_id es un int sin migrar (FK cruda, alcance
+        # de Fase 4 -- ver LeadStateHistoryBase), no el public_uuid del lead. Comparar
+        # contra lead["id"] (uuid) siempre daba False; no medía aislamiento real, ya
+        # cubierto por items != [] de acá arriba y por test_state_history_not_visible_from_other_org.

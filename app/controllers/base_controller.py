@@ -48,9 +48,9 @@ class BaseController:
 
         from pydantic import BaseModel
             
-        # Esquema para recibir el arreglo
+        # Esquema para recibir el arreglo (UUIDs públicos, no el id interno)
         class BulkIdsRequest(BaseModel):
-            ids: list[int]
+            ids: list[str]
 
         # ---------------------------------------------------------
         # GET ALL
@@ -130,15 +130,15 @@ class BaseController:
                 return cls.service.create(obj_in, user_context=user_context)
 
         if "PUT" in cls.enabled_methods:
-            @router.put("/{obj_id}", response_model=ResponseModelItem, 
+            @router.put("/{obj_id}", response_model=ResponseModelItem,
                 dependencies=cls._get_deps("update"))
-            def update(obj_id: int, obj_in: cls.schema_update = Body(...),
+            def update(obj_id: str, obj_in: cls.schema_update = Body(...),
                        user_context = Depends(get_current_user_roles)):
                 return cls.service.update(obj_id, obj_in, user_context=user_context)
 
         if "DELETE" in cls.enabled_methods:
             @router.delete("/{obj_id}", dependencies=cls._get_deps("delete"))
-            def delete(obj_id: int, force: bool = Query(False, description="Hard delete forzado (solo estrategias C y E)"), user_context = Depends(get_current_user_roles)):
+            def delete(obj_id: str, force: bool = Query(False, description="Hard delete forzado (solo estrategias C y E)"), user_context = Depends(get_current_user_roles)):
                 return cls.service.delete(obj_id, user_context=user_context, force=force)
             
         if "DELETE" in cls.enabled_methods:                
@@ -152,7 +152,7 @@ class BaseController:
 
         if "ACTIVE" in cls.enabled_methods:
             @router.put("/active/{obj_id}", dependencies=cls._get_deps("active"))
-            def set_active(obj_id: int, user_context = Depends(get_current_user_roles)):
+            def set_active(obj_id: str, user_context = Depends(get_current_user_roles)):
                 cls.service.set_active(obj_id, user_context=user_context)
                 return {"actived": True}
             
@@ -165,15 +165,15 @@ class BaseController:
 
         if "DEACTIVATE" in cls.enabled_methods:
             @router.delete("/active/{obj_id}", dependencies=cls._get_deps("delete"))
-            def deactivate(obj_id: int, user_context = Depends(get_current_user_roles)):
+            def deactivate(obj_id: str, user_context = Depends(get_current_user_roles)):
                 """Desactiva (active=False) sin eliminar el registro."""
                 return cls.service.deactivate(obj_id, user_context=user_context)
-            
+
         if "GET_ONE" in cls.enabled_methods:
-            @router.get("/{obj_id}", 
-                response_model=ResponseModelItem, 
+            @router.get("/{obj_id}",
+                response_model=ResponseModelItem,
                 dependencies=cls._get_deps("read"))
-            def get_one(obj_id: int, detailed: bool = Query(False), user_context = Depends(get_current_user_roles)):
+            def get_one(obj_id: str, detailed: bool = Query(False), user_context = Depends(get_current_user_roles)):
                 # El repositorio ya devuelve un objeto Pydantic (Detail o Simple)
                 obj = cls.service.get_by_id(obj_id, detailed=detailed, user_context=user_context)
                 

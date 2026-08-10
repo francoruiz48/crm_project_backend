@@ -49,10 +49,10 @@ class DashboardService:
         )
         recent_activity = [
             RecentActivity(
-                id=log.id,
+                id=log.public_uuid,
                 action=log.action,
                 entity_type=log.entity_type,
-                entity_id=log.entity_id,
+                entity_id=log.entity_uuid,
                 user_name=f"{u.name} {u.last_name or ''}".strip() if u else None,
                 created_at=log.created_at,
             )
@@ -71,7 +71,7 @@ class DashboardService:
         )
         org_users = [
             OrgUser(
-                id=u.id, name=u.name, last_name=u.last_name,
+                id=u.public_uuid, name=u.name, last_name=u.last_name,
                 email=u.email, is_owner=m.is_owner,
             )
             for m, u in memberships
@@ -149,7 +149,7 @@ class DashboardService:
             owner_name = f"{owner_row.name} {owner_row.last_name or ''}".strip() if owner_row else None
 
             org_stats.append(OrgStats(
-                org_id=org.id,
+                org_id=org.public_uuid,
                 org_name=org.name,
                 total_users=user_count,
                 total_leads=lead_count,

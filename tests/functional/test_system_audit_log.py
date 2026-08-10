@@ -40,7 +40,15 @@ from app.core.constans import ADMIN_ORG_ID
 from app.core.context import TENANT_ORG_ID
 from app.models.audit.system_audit_log import SystemAuditLog
 from app.models.lead_comment import LeadComment
+from app.models.lead import Lead
+from app.models.organization import Organization
 from app.services.lead_comment_service import LeadCommentService
+
+
+def _resolve_internal_id(db_session, model, public_uuid):
+    """public_uuid -> id interno (columna FK Integer real), para comparar/construir filas
+    ORM directo contra columnas que no aceptan el uuid público (ver backend/AGENTS.md §18)."""
+    return db_session.query(model.id).filter_by(public_uuid=public_uuid).scalar()
 
 
 def _create_lead(api, campaign_id, nombre_field_id):
@@ -69,7 +77,10 @@ class TestAuditLogOrganizationIdFallback:
 
         audit_row = (
             db_session.query(SystemAuditLog)
-            .filter_by(entity_type="LeadComment", entity_id=comment_id)
+            # entity_id es el id interno (columna Integer); comment_id es el uuid público
+            # que devuelve la API -- se filtra por entity_uuid, que es la columna que
+            # guarda ese valor (ver backend/AGENTS.md §18-ter, fix de _log_audit).
+            .filter_by(entity_type="LeadComment", entity_uuid=comment_id)
             .first()
         )
         assert audit_row is not None, "No se encontró la fila de auditoría del comentario."
@@ -118,7 +129,9 @@ class TestAuditLogOrganizationIdFallback:
 
         audit_row = (
             db_session.query(SystemAuditLog)
-            .filter_by(entity_type="Workspace", entity_id=ws_id)
+            # ws_id es el uuid público (respuesta de la API) -- filtrar por entity_uuid,
+            # no por entity_id (id interno). Ver backend/AGENTS.md §18-ter.
+            .filter_by(entity_type="Workspace", entity_uuid=ws_id)
             .first()
         )
         assert audit_row is not None
@@ -145,12 +158,19 @@ class TestAuditLogFallbackDoesNotCrashOnNonexistentOrg:
 
         audit_row = (
             db_session.query(SystemAuditLog)
-            .filter_by(entity_type="Organization", entity_id=new_org_id)
+            # new_org_id es el uuid público -- filtrar por entity_uuid (ver backend/AGENTS.md
+            # §18-ter). Ojo aparte: para Organization, entity_id (id interno) coincide con
+            # organization_id porque _log_audit usa el propio objeto como "dueño" de la
+            # auditoría (ver docstring del módulo) -- pero el join de arriba sigue siendo
+            # por uuid, no por ese id interno.
+            .filter_by(entity_type="Organization", entity_uuid=new_org_id)
             .first()
         )
         assert audit_row is not None
         # Debe quedar asociada a la organización recién creada, no al header inexistente.
-        assert audit_row.organization_id == new_org_id
+        # audit_row.organization_id es el id interno (FK Integer real); new_org_id es el
+        # public_uuid que devuelve la API -- se resuelve antes de comparar.
+        assert audit_row.organization_id == _resolve_internal_id(db_session, Organization, new_org_id)
 
     def test_log_audit_falls_back_to_null_when_tenant_org_id_does_not_exist(
         self, db_session, initial_structure, initial_fields, api
@@ -159,7 +179,9 @@ class TestAuditLogFallbackDoesNotCrashOnNonexistentOrg:
         modelo auditado no es Organization, _log_audit no debe reventar —
         debe caer a organization_id=NULL como comportamiento seguro."""
         lead = _create_lead(api, initial_structure["campaign_id"], initial_fields["nombre_id"])
-        comment = LeadComment(lead_id=lead["id"], content="Comentario para test de bajo nivel")
+        # lead["id"] es el public_uuid (respuesta de la API); LeadComment.lead_id es la
+        # columna FK Integer real -- se resuelve antes de construir la fila ORM a mano.
+        comment = LeadComment(lead_id=_resolve_internal_id(db_session, Lead, lead["id"]), content="Comentario para test de bajo nivel")
         db_session.add(comment)
         db_session.flush()
 

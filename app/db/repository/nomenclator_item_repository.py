@@ -22,11 +22,23 @@ class NomenclatorItemRepository(BaseRepository):
         parent_item_id = kwargs.pop("parent_item_id", None)
         query = base_query if base_query is not None else session.query(cls.model)
         if parent_item_id is not None:
+            # parent_item_id llega como public_uuid de NomenclatorItem (Fase 3, el frontend
+            # nunca conoce el id interno -- ver nomenclatorService.ts). Bug real encontrado
+            # 2026-08-04: antes se hacía int(parent_item_id) directo, sin resolver -- tiraba
+            # ValueError sin capturar (500) en CUALQUIER llamada real (LeadPartialUpdate.tsx/
+            # LeadFormMultipleFields.tsx siempre mandan el uuid del ítem padre elegido). El
+            # resolver genérico de FKs (resolve_fk_filter_value) no aplica acá porque esto no
+            # es una columna real de cls.model, es una relación M2M autorreferencial -- se
+            # resuelve a mano contra el propio modelo. Ver backend/AGENTS.md.
+            if str(parent_item_id).lstrip("-").isdigit():
+                parent_item_id_internal = int(parent_item_id)
+            else:
+                parent_item_id_internal = cls.get_internal_id_by_public_uuid(session, parent_item_id)
             query = query.join(
                 nomenclator_item_parent_association,
                 nomenclator_item_parent_association.c.item_id == cls.model.id,
             ).filter(
-                nomenclator_item_parent_association.c.parent_item_id == int(parent_item_id)
+                nomenclator_item_parent_association.c.parent_item_id == parent_item_id_internal
             )
         return super().get_all(
             session, user_context=user_context, only_active=only_active,

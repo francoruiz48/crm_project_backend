@@ -29,7 +29,9 @@ class WebFormBase(BaseModel):
     active: bool = True
 
 class WebFormCreate(WebFormBase, BaseCreate):
-    campaign_id: int = Field(gt=0)
+    # Override: público_uuid de Campaign (Fase 3, nunca migrado en este módulo hasta ahora --
+    # ver backend/AGENTS.md §18-undecies). Se resuelve a id interno en WebFormService.create.
+    campaign_id: str
     # Permite crear el formulario y sus campos en una sola petición
     fields: Optional[List[WebFormFieldCreate]] = Field(default_factory=list)
 

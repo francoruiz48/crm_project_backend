@@ -256,7 +256,10 @@ def get_flow_states(flow_id: int) -> list:
     return r.json().get("items", []) if r.status_code == 200 else []
 
 def get_flow_transitions(flow_id: int) -> list:
-    r = api_get("/lead_state_transitions", params={"lead_flow_id": flow_id, "page_size": 200})
+    # detailed=true: necesitamos from_state/to_state anidados con su public_uuid real (Fase 4,
+    # ver AGENTS.md). Sin esto, from_state_id/to_state_id vienen como int interno crudo y
+    # advance_lead_through_flow() los manda tal cual a change_state, que espera un public_uuid.
+    r = api_get("/lead_state_transitions", params={"lead_flow_id": flow_id, "page_size": 200, "detailed": "true"})
     return r.json().get("items", []) if r.status_code == 200 else []
 
 
@@ -480,22 +483,30 @@ def advance_lead_through_flow(lead_id: int, transitions: list, target_steps: int
     transitions: lista de dicts con from_state_id y to_state_id.
     target_steps: cuántos pasos avanzar como máximo.
     """
-    # Primero obtenemos el estado actual del lead
+    # Primero obtenemos el estado actual del lead. current_state_id (int interno crudo,
+    # Fase 4 sin migrar) NO sirve para change_state (espera public_uuid) -- usamos el objeto
+    # anidado current_state.id, que sí es el public_uuid real y viene siempre presente en
+    # LeadResponse (no hace falta detailed=true acá).
     r = api_get(f"/leads/{lead_id}", params={"detailed": "false"})
     if r.status_code != 200:
         return
-    current_state_id = r.json().get("current_state_id")
+    current_state_id = (r.json().get("current_state") or {}).get("id")
     if not current_state_id:
         return
 
     steps_done = 0
     for _ in range(target_steps):
-        # Buscar transiciones válidas desde el estado actual
-        valid_next = [t for t in transitions if t["from_state_id"] == current_state_id]
+        # Buscar transiciones válidas desde el estado actual (transitions viene de
+        # get_flow_transitions(), que ahora pide detailed=true -- from_state/to_state
+        # anidados con public_uuid real).
+        valid_next = [
+            t for t in transitions
+            if t.get("from_state") and t["from_state"]["id"] == current_state_id
+        ]
         if not valid_next:
             break
         chosen = random.choice(valid_next)
-        new_state_id = chosen["to_state_id"]
+        new_state_id = chosen["to_state"]["id"]
         notes = random.choice([
             "Actualización de estado por gestión comercial.",
             "Cliente respondió positivamente.",

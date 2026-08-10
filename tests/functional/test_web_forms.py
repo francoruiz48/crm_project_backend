@@ -38,6 +38,8 @@ import pytest
 
 from app.models.lead import Lead
 from app.models.lead_field import LeadField
+from app.models.lead_field_section import LeadFieldSection
+from app.models.campaign import Campaign
 from app.models.web_form import WebForm
 from app.models.web_form_field import WebFormField
 from app.controllers.web_form_public_controller import limiter as public_forms_limiter
@@ -47,12 +49,25 @@ from app.controllers.web_form_public_controller import limiter as public_forms_l
 # HELPERS
 # =============================================================================
 
+def _resolve_internal_id(db_session, model, public_uuid_or_int):
+    """
+    Las fixtures (initial_structure/initial_fields) devuelven public_uuid para que los
+    payloads de API funcionen (igual que la API real, ver backend/AGENTS.md §18-novies), pero
+    estos helpers insertan filas ORM directo en la DB, así que necesitan el id interno (las
+    columnas FK son Integer reales). Si ya viene un int (por si algún caller lo resolvió antes),
+    lo devuelve tal cual.
+    """
+    if isinstance(public_uuid_or_int, int):
+        return public_uuid_or_int
+    return db_session.query(model.id).filter_by(public_uuid=public_uuid_or_int).scalar()
+
+
 def _create_web_form_db(db_session, org_id, campaign_id, **overrides):
     """Crea un WebForm directo en la DB (sin pasar por el endpoint privado),
     para no acoplar los tests del área pública al área privada."""
     defaults = dict(
         organization_id=org_id,
-        campaign_id=campaign_id,
+        campaign_id=_resolve_internal_id(db_session, Campaign, campaign_id),
         name="Formulario de Test",
         title="Dejanos tus datos",
         require_captcha=False,
@@ -67,7 +82,11 @@ def _create_web_form_db(db_session, org_id, campaign_id, **overrides):
 
 
 def _add_web_form_field(db_session, web_form_id, lead_field_id, **overrides):
-    defaults = dict(web_form_id=web_form_id, lead_field_id=lead_field_id, order=1)
+    defaults = dict(
+        web_form_id=web_form_id,
+        lead_field_id=_resolve_internal_id(db_session, LeadField, lead_field_id),
+        order=1,
+    )
     defaults.update(overrides)
     field = WebFormField(**defaults)
     db_session.add(field)
@@ -96,7 +115,11 @@ class TestWebFormPrivateCRUD:
         assert resp.status_code in (200, 201), resp.text
         body = resp.json()
         assert body["public_uuid"]
-        assert body["campaign_id"] == campaign_id
+        # WebFormResponse.campaign_id sigue siendo el id interno (int) -- mismo criterio que
+        # LeadResponse.campaign_id (ver lead_schema.py): la Response no migró este campo
+        # embebido a public_uuid (Fase 4 no llegó a este módulo), así que no puede compararse
+        # contra el uuid que mandamos en el request.
+        assert isinstance(body["campaign_id"], int)
 
     def test_create_web_form_rejects_duplicate_field_ids(self, api, initial_structure, initial_fields):
         """Regla 1 de _validate_form_fields: no se puede repetir el mismo lead_field_id."""
@@ -134,9 +157,9 @@ class TestWebFormPrivateCRUD:
         other_field = LeadField(
             name="Campo Ajeno",
             field_type_code="STRING",
-            campaign_id=other_campaign["id"],
+            campaign_id=_resolve_internal_id(db_session, Campaign, other_campaign["id"]),
             organization_id=org_id,
-            lead_field_section_id=initial_structure["section_id"],
+            lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, initial_structure["section_id"]),
             order=1,
             active=True,
         )
@@ -162,9 +185,9 @@ class TestWebFormPrivateCRUD:
         inactive_field = LeadField(
             name="Campo Inactivo",
             field_type_code="STRING",
-            campaign_id=campaign_id,
+            campaign_id=_resolve_internal_id(db_session, Campaign, campaign_id),
             organization_id=org_id,
-            lead_field_section_id=initial_structure["section_id"],
+            lead_field_section_id=_resolve_internal_id(db_session, LeadFieldSection, initial_structure["section_id"]),
             order=1,
             active=False,
         )
@@ -205,9 +228,10 @@ class TestWebFormPrivateCRUD:
             headers=api.headers,
         )
         assert resp.status_code == 200, resp.text
-        remaining = db_session.query(WebFormField).filter_by(web_form_id=created["id"]).all()
+        form_internal_id = _resolve_internal_id(db_session, WebForm, created["id"])
+        remaining = db_session.query(WebFormField).filter_by(web_form_id=form_internal_id).all()
         assert len(remaining) == 1
-        assert remaining[0].lead_field_id == edad_id
+        assert remaining[0].lead_field_id == _resolve_internal_id(db_session, LeadField, edad_id)
 
 
 # =============================================================================
@@ -263,10 +287,10 @@ class TestPublicFormSubmit:
         assert resp.status_code == 200, resp.text
         assert resp.json()["success"] is True
 
-        leads = db_session.query(Lead).filter_by(campaign_id=initial_structure["campaign_id"]).all()
+        leads = db_session.query(Lead).filter_by(campaign_id=_resolve_internal_id(db_session, Campaign, initial_structure["campaign_id"])).all()
         assert len(leads) == 1
         values = {fv.field_id: fv.value for fv in leads[0].field_values}
-        assert values.get(initial_fields["nombre_id"]) == "Juan Pérez"
+        assert values.get(_resolve_internal_id(db_session, LeadField, initial_fields["nombre_id"])) == "Juan Pérez"
         # El lead público no tiene usuario logueado que lo haya creado.
         assert leads[0].created_by is None
 
@@ -285,7 +309,7 @@ class TestPublicFormSubmit:
         assert resp.status_code == 200
         assert resp.json()["success"] is True
 
-        leads = db_session.query(Lead).filter_by(campaign_id=initial_structure["campaign_id"]).all()
+        leads = db_session.query(Lead).filter_by(campaign_id=_resolve_internal_id(db_session, Campaign, initial_structure["campaign_id"])).all()
         assert len(leads) == 0
 
     def test_submit_hidden_value_is_injected_and_cannot_be_overridden(
@@ -309,9 +333,9 @@ class TestPublicFormSubmit:
         )
         assert resp.status_code == 200, resp.text
 
-        lead = db_session.query(Lead).filter_by(campaign_id=initial_structure["campaign_id"]).first()
+        lead = db_session.query(Lead).filter_by(campaign_id=_resolve_internal_id(db_session, Campaign, initial_structure["campaign_id"])).first()
         values = {fv.field_id: fv.value for fv in lead.field_values}
-        assert values.get(initial_fields["edad_id"]) == "99"
+        assert values.get(_resolve_internal_id(db_session, LeadField, initial_fields["edad_id"])) == "99"
 
     def test_submit_missing_required_field_returns_400(
         self, api, db_session, initial_structure, initial_fields
@@ -330,7 +354,7 @@ class TestPublicFormSubmit:
         assert resp.status_code == 400
         assert "requeridos" in resp.text.lower()
 
-        leads = db_session.query(Lead).filter_by(campaign_id=initial_structure["campaign_id"]).all()
+        leads = db_session.query(Lead).filter_by(campaign_id=_resolve_internal_id(db_session, Campaign, initial_structure["campaign_id"])).all()
         assert len(leads) == 0
 
         # También debe rechazar el string vacío, no solo la ausencia de la clave.
@@ -354,7 +378,7 @@ class TestPublicFormSubmit:
         )
         assert resp.status_code == 200, resp.text
 
-        leads = db_session.query(Lead).filter_by(campaign_id=initial_structure["campaign_id"]).all()
+        leads = db_session.query(Lead).filter_by(campaign_id=_resolve_internal_id(db_session, Campaign, initial_structure["campaign_id"])).all()
         assert len(leads) == 1
 
     def test_submit_required_field_with_hidden_value_not_demanded_from_payload(
@@ -375,9 +399,9 @@ class TestPublicFormSubmit:
         )
         assert resp.status_code == 200, resp.text
 
-        lead = db_session.query(Lead).filter_by(campaign_id=initial_structure["campaign_id"]).first()
+        lead = db_session.query(Lead).filter_by(campaign_id=_resolve_internal_id(db_session, Campaign, initial_structure["campaign_id"])).first()
         values = {fv.field_id: fv.value for fv in lead.field_values}
-        assert values.get(initial_fields["edad_id"]) == "99"
+        assert values.get(_resolve_internal_id(db_session, LeadField, initial_fields["edad_id"])) == "99"
 
     def test_submit_requires_captcha_token_when_form_demands_it(
         self, api, db_session, initial_structure, initial_fields
@@ -415,7 +439,7 @@ class TestPublicFormSubmit:
         assert resp.status_code == 400
         assert "verificar" in resp.text.lower()
 
-        leads = db_session.query(Lead).filter_by(campaign_id=initial_structure["campaign_id"]).all()
+        leads = db_session.query(Lead).filter_by(campaign_id=_resolve_internal_id(db_session, Campaign, initial_structure["campaign_id"])).all()
         assert len(leads) == 0
 
     def test_submit_captcha_verification_success_creates_lead(
@@ -435,7 +459,7 @@ class TestPublicFormSubmit:
             )
         assert resp.status_code == 200, resp.text
 
-        leads = db_session.query(Lead).filter_by(campaign_id=initial_structure["campaign_id"]).all()
+        leads = db_session.query(Lead).filter_by(campaign_id=_resolve_internal_id(db_session, Campaign, initial_structure["campaign_id"])).all()
         assert len(leads) == 1
 
     def test_submit_captcha_remoteip_uses_x_forwarded_for(
@@ -481,7 +505,7 @@ class TestPublicFormSubmit:
             )
         assert resp.status_code == 503, resp.text
 
-        leads = db_session.query(Lead).filter_by(campaign_id=initial_structure["campaign_id"]).all()
+        leads = db_session.query(Lead).filter_by(campaign_id=_resolve_internal_id(db_session, Campaign, initial_structure["campaign_id"])).all()
         assert len(leads) == 0
 
     def test_submit_captcha_provider_invalid_json_returns_503(
@@ -524,7 +548,7 @@ class TestPublicFormSubmit:
         )
         assert resp.status_code == 403
 
-        leads = db_session.query(Lead).filter_by(campaign_id=initial_structure["campaign_id"]).all()
+        leads = db_session.query(Lead).filter_by(campaign_id=_resolve_internal_id(db_session, Campaign, initial_structure["campaign_id"])).all()
         assert len(leads) == 0
 
     def test_submit_allows_matching_origin(self, api, db_session, initial_structure, initial_fields):

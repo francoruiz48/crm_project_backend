@@ -10,7 +10,10 @@ class TeamMemberBase(BaseModel):
     team_id: int = Field(..., gt=0)
 
 class TeamMemberCreate(TeamMemberBase, BaseCreate):
-    pass
+    # public_uuid de User/Team (Fase 3). El Response sigue con el int interno viejo (FK
+    # embebida, deliberadamente sin migrar -- ver backend/AGENTS.md §18).
+    user_id: str
+    team_id: str
 
 class TeamMemberUpdate(BaseModel):
     role: Optional[str] = Field(default=None, pattern="^(MANAGER|AGENT)$")
@@ -22,9 +25,11 @@ class TeamMemberDetailedResponse(TeamMemberBase, BaseDetailedResponse):
     user: UserResponse
 
 class BulkAssignRequest(BaseModel):
-    lead_ids: List[int] = Field(..., min_length=1, description="Lista de IDs de leads a reasignar")
-    target_team_id: Optional[int] = Field(None, gt=0)
-    target_user_id: Optional[int] = Field(None, gt=0)
+    # public_uuid de Lead/Team/User desde Fase 3 (LeadService.bulk_assign los resuelve a id
+    # interno, ver backend/AGENTS.md §18).
+    lead_ids: List[str] = Field(..., min_length=1, description="Lista de public_uuid de leads a reasignar")
+    target_team_id: Optional[str] = None
+    target_user_id: Optional[str] = None
     #target_team_id/target_user_id = None significa "no tocar este campo" (no "vaciarlo"), así que
     #para poder desasignar (dejar el lead sin equipo/usuario) hacen falta estos dos flags aparte.
     clear_team: bool = False

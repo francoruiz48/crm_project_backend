@@ -159,7 +159,10 @@ def test_lead_assign_tags_invalid_id_fails(api, tags_setup):
     lead_id = tags_setup["lead_id"]
 
     res = api.client.put(f"/leads/{lead_id}", json={
-        "tag_ids": [999999] # ID falso
+        # LeadUpdate.tag_ids es List[str] (public_uuid, Fase 3) -- un int crudo como 999999
+        # da 422 (error de validación de schema) en vez de 400 (error de negocio). Se usa un
+        # public_uuid bien formado pero inexistente, mismo patrón que en otros archivos.
+        "tag_ids": ["00000000-0000-0000-0000-000000000000"]
     }, headers=api.headers)
     
     assert res.status_code == 400

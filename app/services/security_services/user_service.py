@@ -22,13 +22,25 @@ class UserService(BaseService):
         )
 
     @classmethod
-    def update(cls, obj_id: int, obj_data, user_context: UserContext = None):
-        cls._assert_can_modify(obj_id, user_context)
+    def update(cls, obj_id: str, obj_data, user_context: UserContext = None):
+        # obj_id llega como public_uuid del front -- lo resolvemos al id interno para
+        # poder compararlo contra user_context.user.id (que sigue siendo int internamente).
+        from app.db.unit_of_work import UnitOfWork
+        with UnitOfWork() as uow:
+            internal_id = cls._resolve_id(uow.session, obj_id)
+        if internal_id is None:
+            cls._not_found(obj_id)
+        cls._assert_can_modify(internal_id, user_context)
         return super().update(obj_id, obj_data, user_context=user_context)
 
     @classmethod
-    def delete(cls, obj_id: int, user_context: UserContext = None, force: bool = False):
-        cls._assert_can_modify(obj_id, user_context)
+    def delete(cls, obj_id: str, user_context: UserContext = None, force: bool = False):
+        from app.db.unit_of_work import UnitOfWork
+        with UnitOfWork() as uow:
+            internal_id = cls._resolve_id(uow.session, obj_id)
+        if internal_id is None:
+            cls._not_found(obj_id)
+        cls._assert_can_modify(internal_id, user_context)
         return super().delete(obj_id, user_context=user_context)
 
     @classmethod

@@ -56,7 +56,17 @@ def db_session(db_engine):
     connection = db_engine.connect()
     transaction = connection.begin()
     
-    SessionTest = sessionmaker(bind=connection, expire_on_commit=False)
+    # join_transaction_mode="create_savepoint": sin esto, un session.commit() hecho por
+    # código de producción (UnitOfWork.__exit__ en una request exitosa) termina la
+    # transacción REAL de la conexión (no un savepoint anidado dentro de `transaction` de
+    # arriba). Si más tarde, en la misma sesión de test, una request que se espera que
+    # falle dispara session.rollback() (UnitOfWork.__exit__ en el path de excepción), ese
+    # rollback deshace TODO lo commiteado desde el arranque del test, no solo esa request
+    # fallida -- bug real encontrado 2026-08-01 (ver backend/AGENTS.md), reproducido con un
+    # script standalone: sin este flag, una fila commiteada desaparece tras un rollback
+    # posterior en la misma sesión; con el flag, sobrevive y el aislamiento entre tests
+    # (rollback de `transaction` al final de este fixture) sigue funcionando igual.
+    SessionTest = sessionmaker(bind=connection, expire_on_commit=False, join_transaction_mode="create_savepoint")
     session = SessionTest()
 
     # --- 🛡️ PROTECCIÓN CONTRA CIERRE PREMATURO ---

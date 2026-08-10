@@ -22,11 +22,20 @@ class NomenclatorRepository(BaseRepository):
         parent_nomenclator_id = kwargs.pop("parent_nomenclator_id", None)
         query = base_query if base_query is not None else session.query(cls.model)
         if parent_nomenclator_id is not None:
+            # parent_nomenclator_id llega como public_uuid de Nomenclator (Fase 3). Mismo bug
+            # y mismo fix que NomenclatorItemRepository.get_all (parent_item_id) -- antes
+            # int(parent_nomenclator_id) directo tiraba ValueError sin capturar (500) para
+            # cualquier uuid real. Relación M2M autorreferencial, se resuelve a mano contra
+            # el propio modelo. Ver backend/AGENTS.md.
+            if str(parent_nomenclator_id).lstrip("-").isdigit():
+                parent_nomenclator_id_internal = int(parent_nomenclator_id)
+            else:
+                parent_nomenclator_id_internal = cls.get_internal_id_by_public_uuid(session, parent_nomenclator_id)
             query = query.join(
                 nomenclator_parent_association,
                 nomenclator_parent_association.c.nomenclator_id == cls.model.id,
             ).filter(
-                nomenclator_parent_association.c.parent_nomenclator_id == int(parent_nomenclator_id)
+                nomenclator_parent_association.c.parent_nomenclator_id == parent_nomenclator_id_internal
             )
         return super().get_all(
             session, user_context=user_context, only_active=only_active,
