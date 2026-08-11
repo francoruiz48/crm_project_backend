@@ -14,11 +14,22 @@ from app.models.lead_field import LeadField
 from app.core.security import UserContext
 
 # Atributos nativos del modelo Lead que pueden usarse como filtro en /search.
-# No incluir campos sensibles de infraestructura (organization_id, created_by, etc.)
+# No incluir campos sensibles de infraestructura (organization_id, etc.)
+#
+# Bug real encontrado 2026-08-10: created_by/updated_by quedaban afuera de este set a
+# propósito, pero el frontend sí los expone como filtros nativos ("Usuario Creador"/
+# "Usuario Modificador", ver nativeLeadFields.ts ids -7/-8). Al no estar acá, el filtro
+# no entraba por la rama de filtros nativos (resuelta con resolve_fk_filter_value, que
+# ya sabe resolver FKs como esta) y caía por descarte en la rama de filtros EAV/custom,
+# que trata cualquier field_id no-nativo como uuid de un LeadField -- como "created_by"/
+# "updated_by" no son uuid de ningún LeadField real, _resolve_custom_field_id devolvía el
+# sentinel -1 y el filtro nunca matcheaba nada (0 resultados garantizados, sin importar
+# los leads que hubiera). Son FKs reales (Lead.created_by/updated_by → user.id), así que
+# alcanza con sumarlos acá para que se resuelvan igual que assigned_to_user_id.
 LEAD_NATIVE_FILTER_FIELDS = {
     "campaign_id", "current_state_id", "contact_state_id",
     "team_id", "assigned_to_user_id", "active",
-    "created_at", "updated_at",
+    "created_at", "updated_at", "created_by", "updated_by",
 }
 
 class LeadRepository(BaseRepository):
@@ -316,7 +327,18 @@ class LeadRepository(BaseRepository):
             db_query = db_query.join(lv_alias, cls.model.field_values)
 
             db_val = lv_alias.value
-            per_filter_conds = []   # una condición de valor por filtro del grupo → se combinan con OR
+            per_filter_conds = []   # condiciones no-rango del grupo → se combinan con OR
+            # Bug real encontrado 2026-08-11 (reportado por el usuario -- filtro de rango NUMBER
+            # "no estaría filtrando bien"): un filtro Desde/Hasta de NUMBER o DATE llega desde el
+            # front como DOS LeadFilter separados sobre el mismo field_id (uno "gte", uno "lte" --
+            # ver LeadFilters.tsx::onSubmit), que antes cae acá en el mismo grupo que
+            # per_filter_conds y terminaba OR-eado con el resto (línea de abajo, value_cond).
+            # Eso arma "valor >= Desde OR valor <= Hasta", que matchea casi cualquier valor en vez
+            # de "Desde <= valor <= Hasta". El OR tiene sentido para el caso que originó ese
+            # diseño (dos filas de texto: "contiene 'Juan'" OR "contiene 'Pedro'"), pero no para
+            # gt/lt/gte/lte del mismo campo, que en la UI siempre representan los dos extremos de
+            # UN rango y deben ANDearse entre sí.
+            range_conds = []   # condiciones gt/lt/gte/lte del grupo → se combinan con AND
 
             for f in filters:
                 val = f.value
@@ -398,11 +420,24 @@ class LeadRepository(BaseRepository):
                     cond = db_val.ilike(f"%{val}%")
 
                 if cond is not None:
-                    per_filter_conds.append(cond)
+                    if f.operator in ("gt", "lt", "gte", "lte"):
+                        range_conds.append(cond)
+                    else:
+                        per_filter_conds.append(cond)
 
+            # range_conds (Desde/Hasta) se ANDean entre sí; per_filter_conds (todo lo demás,
+            # ej. múltiples "contiene") se sigue OR-eando como antes. Si un mismo campo tuviera
+            # de los dos tipos a la vez (no lo arma la UI hoy), se combinan con AND -- cada
+            # bloque configurado para el campo termina restringiendo más, no ampliando.
+            combined = []
+            if range_conds:
+                combined.append(and_(*range_conds) if len(range_conds) > 1 else range_conds[0])
             if per_filter_conds:
+                combined.append(or_(*per_filter_conds) if len(per_filter_conds) > 1 else per_filter_conds[0])
+
+            if combined:
                 field_cond = lv_alias.field_id == field_id
-                value_cond = or_(*per_filter_conds) if len(per_filter_conds) > 1 else per_filter_conds[0]
+                value_cond = and_(*combined) if len(combined) > 1 else combined[0]
                 db_query = db_query.filter(and_(field_cond, value_cond))
 
         # Si hubo JOINs EAV y/o búsqueda de texto libre, el query tiene filas duplicadas

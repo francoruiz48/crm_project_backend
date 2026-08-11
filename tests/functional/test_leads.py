@@ -259,6 +259,263 @@ def test_search_leads_advanced(api, db_session, initial_structure):
     data_between = res_between.json()["items"]
     assert len(data_between) == 1 # Solo Ana
 
+
+def test_search_leads_range_two_filters_same_field(api, db_session, initial_structure):
+    """
+    Bug real encontrado 2026-08-11 (reportado por el usuario -- filtro de rango de un campo
+    NUMBER "no estaría filtrando bien"): a diferencia de test_search_leads_advanced (que prueba
+    el operador "between", un único LeadFilter con value=[min, max]), el front real NUNCA manda
+    "between" -- LeadFilters.tsx::onSubmit arma un rango Desde/Hasta como DOS LeadFilter
+    separados sobre el mismo field_id (uno "gte", uno "lte"). LeadRepository.search() agrupaba
+    todas las condiciones de un mismo field_id con OR, así que ese par terminaba siendo
+    "valor >= Desde OR valor <= Hasta" -- matchea casi cualquier valor, no filtra el rango.
+    Cubre el caso real (NUMBER e INT) con dos filtros separados, y que el resto de la
+    combinación (OR entre condiciones no-rango) sigue intacto.
+    """
+    camp_id = initial_structure["campaign_id"]
+    org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
+    camp_internal_id = _resolve_internal_id(db_session, Campaign, camp_id)
+    section_internal_id = _resolve_internal_id(db_session, LeadFieldSection, section_id)
+
+    f_edad = LeadField(name="Edad Rango", field_type_code="INT", campaign_id=camp_internal_id, order=1, lead_field_section_id=section_internal_id, organization_id=org_id, active=True)
+    f_puntaje = LeadField(name="Puntaje Rango", field_type_code="NUMBER", campaign_id=camp_internal_id, order=2, lead_field_section_id=section_internal_id, organization_id=org_id, active=True)
+    db_session.add_all([f_edad, f_puntaje])
+    db_session.commit()
+
+    api.create_lead(campaign_id=camp_id, values=[{"field_id": f_edad.id, "value": "25"}, {"field_id": f_puntaje.id, "value": "10.5"}])   # Ana
+    api.create_lead(campaign_id=camp_id, values=[{"field_id": f_edad.id, "value": "40"}, {"field_id": f_puntaje.id, "value": "50.0"}])   # Beto
+    api.create_lead(campaign_id=camp_id, values=[{"field_id": f_edad.id, "value": "60"}, {"field_id": f_puntaje.id, "value": "90.0"}])   # Carlos
+
+    # Rango [30, 50] sobre INT (Edad) armado como dos filtros separados, igual que manda el
+    # front real -> debe traer solo a Beto (40), no a los tres.
+    payload_range = {
+        "page": 1,
+        "filters": [
+            {"field_id": f_edad.id, "operator": "gte", "value": 30},
+            {"field_id": f_edad.id, "operator": "lte", "value": 50},
+        ]
+    }
+    res_range = api.client.post("/leads/search", json=payload_range, headers=api.headers)
+    assert res_range.status_code == 200
+    data_range = res_range.json()["items"]
+    assert len(data_range) == 1
+    vals = {v["field_id"]: v["value"] for v in data_range[0]["field_values"]}
+    assert vals[f_edad.id] == "40"
+
+    # Mismo caso sobre NUMBER (Puntaje), rango [20.0, 60.0] -> debe traer solo a Beto (50.0).
+    payload_range_number = {
+        "page": 1,
+        "filters": [
+            {"field_id": f_puntaje.id, "operator": "gte", "value": 20.0},
+            {"field_id": f_puntaje.id, "operator": "lte", "value": 60.0},
+        ]
+    }
+    res_range_number = api.client.post("/leads/search", json=payload_range_number, headers=api.headers)
+    assert res_range_number.status_code == 200
+    data_range_number = res_range_number.json()["items"]
+    assert len(data_range_number) == 1
+    vals_number = {v["field_id"]: v["value"] for v in data_range_number[0]["field_values"]}
+    assert vals_number[f_puntaje.id] == "50.0"
+
+    # Rango que no matchea a nadie (Edad entre 100 y 200) -> debe devolver vacío, no todos.
+    payload_range_empty = {
+        "page": 1,
+        "filters": [
+            {"field_id": f_edad.id, "operator": "gte", "value": 100},
+            {"field_id": f_edad.id, "operator": "lte", "value": 200},
+        ]
+    }
+    res_range_empty = api.client.post("/leads/search", json=payload_range_empty, headers=api.headers)
+    assert res_range_empty.status_code == 200
+    assert res_range_empty.json()["items"] == []
+
+
+def test_search_leads_date_range_two_filters_same_field(api, db_session, initial_structure):
+    """
+    Mismo caso que test_search_leads_range_two_filters_same_field pero para DATE, que comparte
+    exactamente el mismo código de agrupado (gte/lte del mismo field_id -> AND). Cubre además el
+    caso de un solo lado del rango (solo "Desde", sin "Hasta") -- LeadFilters.tsx::onSubmit no
+    siempre manda los dos operadores.
+    """
+    camp_id = initial_structure["campaign_id"]
+    org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
+    camp_internal_id = _resolve_internal_id(db_session, Campaign, camp_id)
+    section_internal_id = _resolve_internal_id(db_session, LeadFieldSection, section_id)
+
+    f_fecha = LeadField(name="Fecha Alta", field_type_code="DATE", campaign_id=camp_internal_id, order=1, lead_field_section_id=section_internal_id, organization_id=org_id, active=True)
+    db_session.add(f_fecha)
+    db_session.commit()
+
+    api.create_lead(campaign_id=camp_id, values=[{"field_id": f_fecha.id, "value": "2020-01-01"}])   # fuera de rango
+    lead_mid = api.create_lead(campaign_id=camp_id, values=[{"field_id": f_fecha.id, "value": "2022-06-15"}])   # dentro
+    api.create_lead(campaign_id=camp_id, values=[{"field_id": f_fecha.id, "value": "2024-12-31"}])   # fuera de rango (por arriba)
+
+    # Rango [2021-01-01, 2023-01-01] -> solo el lead de en medio.
+    res = api.client.post("/leads/search", json={
+        "page": 1,
+        "filters": [
+            {"field_id": f_fecha.id, "operator": "gte", "value": "2021-01-01"},
+            {"field_id": f_fecha.id, "operator": "lte", "value": "2023-01-01"},
+        ]
+    }, headers=api.headers)
+    assert res.status_code == 200
+    items = res.json()["items"]
+    assert len(items) == 1
+    assert items[0]["id"] == lead_mid["id"]
+
+    # Un solo lado del rango (solo "Desde") -> los dos leads más nuevos.
+    res_single = api.client.post("/leads/search", json={
+        "page": 1,
+        "filters": [{"field_id": f_fecha.id, "operator": "gte", "value": "2022-01-01"}]
+    }, headers=api.headers)
+    assert res_single.status_code == 200
+    assert len(res_single.json()["items"]) == 2
+
+
+def test_search_leads_bool_filter(api, db_session, initial_structure):
+    """
+    Cobertura de un campo BOOL filtrado con el payload exacto que arma LeadFilters.tsx::onSubmit
+    ("Es verdadero"/"Es falso" -> operator eq, value 1/0 -- entero, no string). El valor se crea
+    con un booleano JSON crudo (True/False), igual que manda el switch real del formulario de
+    Lead (ControlledSwitch) -- no la forma en que test_create_lead_various_types lo arma más
+    arriba (string "true" a mano, atajo válido pero no representativo del payload real).
+    """
+    camp_id = initial_structure["campaign_id"]
+    org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
+    camp_internal_id = _resolve_internal_id(db_session, Campaign, camp_id)
+    section_internal_id = _resolve_internal_id(db_session, LeadFieldSection, section_id)
+
+    f_vip = LeadField(name="Es VIP", field_type_code="BOOL", campaign_id=camp_internal_id, order=1, lead_field_section_id=section_internal_id, organization_id=org_id, active=True)
+    db_session.add(f_vip)
+    db_session.commit()
+
+    lead_vip = api.create_lead(campaign_id=camp_id, values=[{"field_id": f_vip.id, "value": True}])
+    lead_no_vip = api.create_lead(campaign_id=camp_id, values=[{"field_id": f_vip.id, "value": False}])
+
+    res_true = api.client.post("/leads/search", json={
+        "page": 1, "filters": [{"field_id": f_vip.id, "operator": "eq", "value": 1}]
+    }, headers=api.headers)
+    assert res_true.status_code == 200
+    items_true = res_true.json()["items"]
+    assert len(items_true) == 1
+    assert items_true[0]["id"] == lead_vip["id"]
+
+    res_false = api.client.post("/leads/search", json={
+        "page": 1, "filters": [{"field_id": f_vip.id, "operator": "eq", "value": 0}]
+    }, headers=api.headers)
+    assert res_false.status_code == 200
+    items_false = res_false.json()["items"]
+    assert len(items_false) == 1
+    assert items_false[0]["id"] == lead_no_vip["id"]
+
+
+def test_search_leads_selector_in_multiselect(api, db_session, initial_structure):
+    """
+    Cobertura de un campo SELECTOR filtrado con operator="in" y varios public_uuid de
+    NomenclatorItem en value (formato real que arma LeadFilters.tsx tras el fix del
+    2026-08-11 que sacó el Number() de apiFiltersToFormFilters/value_ids -- ver
+    _resolve_item_id en lead_repository.py, que ya resolvía uuid->interno correctamente del
+    lado del backend, pero no tenía cobertura para el caso multi-select).
+    """
+    camp_id = initial_structure["campaign_id"]
+    org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
+    camp_internal_id = _resolve_internal_id(db_session, Campaign, camp_id)
+    section_internal_id = _resolve_internal_id(db_session, LeadFieldSection, section_id)
+
+    nomenclator = Nomenclator(name="Colores", organization_id=org_id)
+    db_session.add(nomenclator)
+    db_session.flush()
+    item_rojo = NomenclatorItem(nomenclator_id=nomenclator.id, value="Rojo", organization_id=org_id)
+    item_azul = NomenclatorItem(nomenclator_id=nomenclator.id, value="Azul", organization_id=org_id)
+    item_verde = NomenclatorItem(nomenclator_id=nomenclator.id, value="Verde", organization_id=org_id)
+    db_session.add_all([item_rojo, item_azul, item_verde])
+    db_session.commit()
+
+    f_color = LeadField(name="Color", field_type_code="SELECTOR", campaign_id=camp_internal_id, order=1, lead_field_section_id=section_internal_id, organization_id=org_id, active=True, nomenclator_id=nomenclator.id)
+    db_session.add(f_color)
+    db_session.commit()
+
+    lead_rojo = api.create_lead(campaign_id=camp_id, values=[{"field_id": f_color.id, "value": item_rojo.id}])
+    lead_azul = api.create_lead(campaign_id=camp_id, values=[{"field_id": f_color.id, "value": item_azul.id}])
+    api.create_lead(campaign_id=camp_id, values=[{"field_id": f_color.id, "value": item_verde.id}])   # no debe aparecer
+
+    res = api.client.post("/leads/search", json={
+        "page": 1,
+        "filters": [{"field_id": f_color.id, "operator": "in", "value": [item_rojo.public_uuid, item_azul.public_uuid]}]
+    }, headers=api.headers)
+    assert res.status_code == 200
+    items = res.json()["items"]
+    assert {i["id"] for i in items} == {lead_rojo["id"], lead_azul["id"]}
+
+
+def test_search_leads_native_id_in_multiselect(api, db_session, initial_structure):
+    """
+    Cobertura de team_id (NATIVE_ID) filtrado con operator="in" y varios public_uuid de Team --
+    mismo formato que manda LeadFilters.tsx para un NATIVE_ID multi-select. Los tests de
+    test_search_leads_native_fields de arriba solo cubren "eq" (una sola selección).
+    """
+    camp_id = initial_structure["campaign_id"]
+    org_id = initial_structure["org_id"]
+    api.create_lead_field(campaign_id=camp_id, name="Campo Libre Native In", field_type_code="STRING", required=False)
+
+    team_a = Team(name="Equipo A", organization_id=org_id)
+    team_b = Team(name="Equipo B", organization_id=org_id)
+    team_c = Team(name="Equipo C", organization_id=org_id)
+    db_session.add_all([team_a, team_b, team_c])
+    db_session.commit()
+
+    lead_a = api.create_lead(campaign_id=camp_id, values=[])
+    lead_b = api.create_lead(campaign_id=camp_id, values=[])
+    lead_c = api.create_lead(campaign_id=camp_id, values=[])
+    api.bulk_assign(lead_ids=[lead_a["id"]], target_team_id=team_a.public_uuid)
+    api.bulk_assign(lead_ids=[lead_b["id"]], target_team_id=team_b.public_uuid)
+    api.bulk_assign(lead_ids=[lead_c["id"]], target_team_id=team_c.public_uuid)   # no debe aparecer
+
+    res = api.client.post("/leads/search", json={
+        "page": 1,
+        "filters": [{"field_id": "team_id", "operator": "in", "value": [team_a.public_uuid, team_b.public_uuid]}]
+    }, headers=api.headers)
+    assert res.status_code == 200
+    items = res.json()["items"]
+    assert {i["id"] for i in items} == {lead_a["id"], lead_b["id"]}
+
+
+def test_search_leads_string_or_same_field_regression(api, db_session, initial_structure):
+    """
+    Regresión: dos filtros STRING (ilike) sobre el MISMO campo deben seguir combinándose con OR
+    ("contiene 'Ana'" OR "contiene 'Beto'") -- el fix de rango del 2026-08-11 (AND para
+    gt/lt/gte/lte del mismo campo) no debe afectar este caso, que sigue usando OR.
+    """
+    camp_id = initial_structure["campaign_id"]
+    org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
+    camp_internal_id = _resolve_internal_id(db_session, Campaign, camp_id)
+    section_internal_id = _resolve_internal_id(db_session, LeadFieldSection, section_id)
+
+    f_nombre = LeadField(name="Nombre OR", field_type_code="STRING", campaign_id=camp_internal_id, order=1, lead_field_section_id=section_internal_id, organization_id=org_id, active=True)
+    db_session.add(f_nombre)
+    db_session.commit()
+
+    lead_ana = api.create_lead(campaign_id=camp_id, values=[{"field_id": f_nombre.id, "value": "Ana"}])
+    lead_beto = api.create_lead(campaign_id=camp_id, values=[{"field_id": f_nombre.id, "value": "Beto"}])
+    api.create_lead(campaign_id=camp_id, values=[{"field_id": f_nombre.id, "value": "Carlos"}])   # no debe aparecer
+
+    res = api.client.post("/leads/search", json={
+        "page": 1,
+        "filters": [
+            {"field_id": f_nombre.id, "operator": "ilike", "value": "Ana"},
+            {"field_id": f_nombre.id, "operator": "ilike", "value": "Beto"},
+        ]
+    }, headers=api.headers)
+    assert res.status_code == 200
+    items = res.json()["items"]
+    assert {i["id"] for i in items} == {lead_ana["id"], lead_beto["id"]}
+
+
 def test_search_leads_text_query(api, db_session, initial_structure):
     """
     Regresión: POST /leads/search debe filtrar por el parámetro `query` (texto libre),
@@ -570,6 +827,82 @@ def test_search_leads_native_fields(api, db_session, initial_structure):
     }, headers=api.headers)
     assert res_created_past.status_code == 200
     assert len(res_created_past.json()["items"]) >= 5
+
+
+def test_search_leads_created_by_updated_by(api, db_session, initial_structure):
+    """
+    Bug real encontrado 2026-08-10 (reportado por el usuario -- filtro "Usuario Modificador"
+    del sidebar no traía resultados existiendo leads modificados por ese usuario):
+    created_by/updated_by quedaban afuera de LEAD_NATIVE_FILTER_FIELDS ("no incluir campos
+    sensibles de infraestructura"), pero el frontend sí los expone como filtros nativos
+    (nativeLeadFields.ts ids -7/-8, "Usuario Creador"/"Usuario Modificador"). Al no estar en
+    el set, el field_id ("created_by"/"updated_by") no entraba por la rama de filtros nativos
+    y caía por descarte en la rama de filtros EAV/custom (para campos LeadField), donde nunca
+    matcheaba ningún LeadField real -> _resolve_custom_field_id devolvía el sentinel -1 y el
+    filtro daba SIEMPRE 0 resultados, sin importar los leads que hubiera. Cubre que ahora
+    resuelven como cualquier otra FK nativa (resolve_fk_filter_value), igual que
+    assigned_to_user_id en el test de arriba.
+    """
+    camp_id = initial_structure["campaign_id"]
+    api.create_lead_field(campaign_id=camp_id, name="Campo Libre", field_type_code="STRING", required=False)
+
+    # Mismo usuario hardcodeado que devuelve override_get_current_user (tests/fixtures/client.py)
+    # para todas las requests hechas con el fixture `api`.
+    creator = db_session.query(User).filter_by(email="francoruiz.admin@crm.com").first()
+    assert creator is not None
+
+    lead = api.create_lead(campaign_id=camp_id, values=[])
+
+    # ── created_by ──
+    res_created_by = api.client.post("/leads/search", json={
+        "page": 1, "filters": [{"field_id": "created_by", "operator": "eq", "value": creator.public_uuid}]
+    }, headers=api.headers)
+    assert res_created_by.status_code == 200
+    items_created_by = res_created_by.json()["items"]
+    assert len(items_created_by) >= 1
+    assert any(item["id"] == lead["id"] for item in items_created_by)
+
+    # uuid inexistente -> no debe romper, solo no matchear (mismo criterio que team_id)
+    res_created_by_missing = api.client.post("/leads/search", json={
+        "page": 1, "filters": [{"field_id": "created_by", "operator": "eq", "value": "00000000-0000-0000-0000-000000000000"}]
+    }, headers=api.headers)
+    assert res_created_by_missing.status_code == 200
+    assert res_created_by_missing.json()["items"] == []
+
+    # ── updated_by ──
+    # update_lead() con values=[] y sin contact_state_id/tag_ids termina con lead_data={}
+    # en LeadService.update() (obj_in.model_dump(exclude_unset=True, exclude={"values",
+    # "tag_ids"})) -- cls.repository.update() ni se llama, así que updated_by queda NULL.
+    # change_contact_state sí dispara un cls.repository.update() real (contact_state_id
+    # cambia de verdad), que es lo que efectivamente pisa updated_by (BaseRepository.update,
+    # línea ~570: "if updated_by is not None ... data['updated_by'] = updated_by").
+    org_id = initial_structure["org_id"]
+    db_session.add(LeadContactState(name="Nuevo UB", organization_id=org_id, is_initial=True, order=1))
+    db_session.add(LeadContactState(name="Contactado UB", organization_id=org_id, is_initial=False, order=2))
+    db_session.commit()
+
+    lead_ub = api.create_lead(campaign_id=camp_id, values=[])
+    current_cs_id = lead_ub["contact_state"]["id"]
+    contact_states = api.client.get("/lead_contact_states/", headers=api.headers).json()["items"]
+    target_cs = next(cs for cs in contact_states if cs["id"] != current_cs_id)
+    change_cs_res = api.client.post(f"/leads/{lead_ub['id']}/change_contact_state",
+                                     json={"new_contact_state_id": target_cs["id"]}, headers=api.headers)
+    assert change_cs_res.status_code == 200
+
+    res_updated_by = api.client.post("/leads/search", json={
+        "page": 1, "filters": [{"field_id": "updated_by", "operator": "eq", "value": creator.public_uuid}]
+    }, headers=api.headers)
+    assert res_updated_by.status_code == 200
+    items_updated_by = res_updated_by.json()["items"]
+    assert len(items_updated_by) >= 1
+    assert any(item["id"] == lead_ub["id"] for item in items_updated_by)
+
+    # uuid inexistente -> tampoco debe romper acá
+    res_updated_by_missing = api.client.post("/leads/search", json={
+        "page": 1, "filters": [{"field_id": "updated_by", "operator": "eq", "value": "00000000-0000-0000-0000-000000000000"}]
+    }, headers=api.headers)
+    assert res_updated_by_missing.status_code == 200
+    assert res_updated_by_missing.json()["items"] == []
 
 
 # --- TESTS DE ORDENAMIENTO (order_by) ---
@@ -968,10 +1301,60 @@ def test_create_lead_int_validation_case_of_huge_int(api, db_session, initial_st
     huge_number = 99999999999999999999999  
     
     res_overflow = api.create_lead(
-        campaign_id=camp_id, 
-        values=[{"field_id": f_int.id, "value": huge_number}], 
+        campaign_id=camp_id,
+        values=[{"field_id": f_int.id, "value": huge_number}],
         expected_status=False
     )
-    
+
     assert res_overflow.status_code == 200
     assert res_overflow.status_code != 500, "Ojo: El error de Overflow no fue capturado y generó un 500."
+
+
+def test_bulk_assign_sets_updated_by(api, db_session, initial_structure):
+    """
+    Bug real encontrado 2026-08-11 (reportado por Franco: "Modificado por" no se actualizaba
+    al reasignar equipo/usuario asignado). bulk_assign() cambiaba team_id/assigned_to_user_id
+    directo con setattr, sin pasar por repository.update() (el único lugar que graba
+    updated_by) -- confirmado con este mismo test antes del fix, `updater` quedaba en None.
+    """
+    camp_id = initial_structure["campaign_id"]
+    org_id = initial_structure["org_id"]
+    api.create_lead_field(campaign_id=camp_id, name="Campo Libre Updated By", field_type_code="STRING", required=False)
+    team_a = Team(name="Equipo Updated By", organization_id=org_id)
+    db_session.add(team_a)
+    db_session.commit()
+
+    lead = api.create_lead(campaign_id=camp_id, values=[])
+    assert lead.get("updater") is None
+
+    api.bulk_assign(lead_ids=[lead["id"]], target_team_id=team_a.public_uuid)
+
+    fetched = api.get_lead(lead["id"])
+    # No comparamos updated_at contra created_at: dentro de la misma transacción de test,
+    # Postgres resuelve func.now() al inicio de la transacción (no por statement), así que
+    # ambos timestamps coinciden aunque el UPDATE sí haya ocurrido -- lo que de verdad prueba
+    # el fix es que updater (antes siempre None en este flujo) ahora esté poblado.
+    assert fetched.get("updater") is not None
+
+
+def test_tag_only_update_sets_updated_by(api, initial_structure):
+    """
+    Mismo bug que test_bulk_assign_sets_updated_by, otro flujo: PUT /leads/{id} con solo
+    tag_ids (sin ningún otro campo) deja lead_data vacío en LeadService.update(), así que se
+    saltea el repository.update() que graba updated_by -- _assign_tags solo toca la relación
+    M2M lead.tags, no una columna del lead.
+    """
+    camp_id = initial_structure["campaign_id"]
+    api.create_lead_field(campaign_id=camp_id, name="Campo Libre Tag Updated By", field_type_code="STRING", required=False)
+    lead = api.create_lead(campaign_id=camp_id, values=[])
+    assert lead.get("updater") is None
+
+    tag_resp = api.client.post("/tags", json={"name": "Tag Updated By", "color": "#123456"}, headers=api.headers)
+    assert tag_resp.status_code in (200, 201), tag_resp.text
+    tag = tag_resp.json()
+
+    resp = api.client.put(f"/leads/{lead['id']}", json={"campaign_id": camp_id, "tag_ids": [tag["id"]]}, headers=api.headers)
+    assert resp.status_code == 200, resp.text
+
+    fetched = api.get_lead(lead["id"])
+    assert fetched.get("updater") is not None

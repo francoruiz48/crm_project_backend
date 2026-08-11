@@ -1270,6 +1270,15 @@ class LeadService(BaseService):
                 elif internal_target_user_id is not None:
                     lead.assigned_to_user_id = internal_target_user_id
 
+                # Bug real encontrado 2026-08-11: este loop cambia team_id/assigned_to_user_id
+                # directo con setattr (no pasa por repository.update(), el único lugar que graba
+                # updated_by), así que "Modificado por" en el detalle del lead nunca se actualizaba
+                # tras reasignar equipo/usuario. `updated_by` ya se calculaba arriba para el log de
+                # auditoría -- solo faltaba aplicarlo al lead (mismo patrón que _do_soft_delete/
+                # bulk_deactivate en base_repository.py).
+                if updated_by is not None:
+                    lead.updated_by = updated_by
+
                 # Motor de Automatizaciones de Campos: bulk-assign tampoco pasaba por update(),
                 # así que una regla "Al actualizar registro" que lea/escriba Equipo/Usuario
                 # asignado nunca se disparaba al reasignar desde acá. Se corre DESPUÉS de aplicar
@@ -1727,6 +1736,15 @@ class LeadService(BaseService):
                     tag_ids=obj_in.tag_ids,
                     org_id=current_lead.organization_id
                 )
+                # Bug real encontrado 2026-08-11: _assign_tags solo toca la relación M2M
+                # lead.tags, no una columna del lead -- así que si el request trae únicamente
+                # tag_ids (lead_data queda vacío más abajo), el `if lead_data:` se saltea
+                # entero y updated_by/updated_at nunca se graban. Se setea acá explícitamente
+                # para que "Modificado por" quede correcto también en un cambio de etiquetas
+                # puro (si además hay otros campos, repository.update() de abajo lo vuelve a
+                # setear con el mismo valor, sin problema).
+                if user_context is not None and user_context.user is not None:
+                    lead_db.updated_by = user_context.user.id
 
             # Update base (campos nativos del lead)
             lead_data = obj_in.model_dump(exclude_unset=True, exclude={"values", "tag_ids"}) if obj_in else {}
