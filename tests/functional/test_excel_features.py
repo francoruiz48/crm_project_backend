@@ -22,11 +22,13 @@ def test_export_campaign_data(api, initial_structure):
     """Prueba la descarga de datos (Export)"""
     camp_id = initial_structure["campaign_id"]
 
-    # Intenta rutas comunes, ajusta según tu router real
-    resp = api.client.get(f"/export/{camp_id}", headers=api.headers)
+    # El endpoint pasó de GET a POST (ver test_export_campaign_data_applies_filters) para poder
+    # mandar filtros/búsqueda en el body -- sin filtros, el body queda vacío ({}) y usa los
+    # defaults de LeadSearchRequest (trae todos los leads, igual que antes).
+    resp = api.client.post(f"/export/{camp_id}", json={}, headers=api.headers)
 
     if resp.status_code == 404:
-        resp = api.client.get(f"/leads/export/{camp_id}", headers=api.headers)
+        resp = api.client.post(f"/leads/export/{camp_id}", json={}, headers=api.headers)
 
     assert resp.status_code in [200, 201, 202], f"Fallo Export: {resp.text}"
     # Validar que sea un archivo (binario o text)
@@ -52,13 +54,61 @@ def test_export_campaign_data_includes_field_values(api, initial_fields):
     values = [{"field_id": field_nombre_id, "value": "Carlos Exportado"}]
     api.create_lead(campaign_id=camp_id, values=values, expected_status=200)
 
-    resp = api.client.get(f"/export/{camp_id}", headers=api.headers)
+    resp = api.client.post(f"/export/{camp_id}", json={}, headers=api.headers)
     assert resp.status_code == 200, f"Fallo Export: {resp.text}"
 
     df = pd.read_excel(BytesIO(resp.content), sheet_name="Leads")
     assert "Nombre" in df.columns, f"Falta la columna 'Nombre' en el export: {df.columns.tolist()}"
     assert "Carlos Exportado" in df["Nombre"].values, \
         f"El valor del lead no aparece en la columna exportada (celdas vacías): {df['Nombre'].tolist()}"
+
+def test_export_campaign_data_applies_filters(api, initial_fields):
+    """
+    Bug real encontrado 2026-08-11 (reportado por el usuario -- "al descargar el excel no aplica
+    los filtros"): export_leads() llamaba a LeadRepository.get_all() sin recibir filtros/búsqueda,
+    así que el Excel exportado siempre traía TODOS los leads activos de la campaña sin importar lo
+    que el usuario tuviera filtrado en el listado. Ahora el endpoint es POST y recibe el mismo
+    LeadSearchRequest que /leads/search -- se crean dos leads con nombres distintos y se verifica
+    que, al exportar con un filtro "ilike" sobre Nombre, el Excel solo trae el que matchea.
+    """
+    import pandas as pd
+    from io import BytesIO
+
+    camp_id = initial_fields["campaign_id"]
+    field_nombre_id = initial_fields["nombre_id"]
+
+    api.create_lead(campaign_id=camp_id, values=[{"field_id": field_nombre_id, "value": "Carlos Filtrado"}], expected_status=200)
+    api.create_lead(campaign_id=camp_id, values=[{"field_id": field_nombre_id, "value": "Beto Excluido"}], expected_status=200)
+
+    payload = {"filters": [{"field_id": field_nombre_id, "operator": "ilike", "value": "Carlos"}]}
+    resp = api.client.post(f"/export/{camp_id}", json=payload, headers=api.headers)
+    assert resp.status_code == 200, f"Fallo Export con filtros: {resp.text}"
+
+    df = pd.read_excel(BytesIO(resp.content), sheet_name="Leads")
+    assert list(df["Nombre"].dropna()) == ["Carlos Filtrado"], \
+        f"El export no aplicó el filtro -- debería traer solo 'Carlos Filtrado': {df['Nombre'].tolist()}"
+
+def test_export_campaign_data_applies_text_query(api, initial_fields):
+    """
+    Mismo bug que test_export_campaign_data_applies_filters, pero para la búsqueda de texto libre
+    (el modo Tablero manda `query` en vez de `filters` estructurados -- ver LeadListPage.tsx,
+    filters y búsqueda son mutuamente excluyentes).
+    """
+    import pandas as pd
+    from io import BytesIO
+
+    camp_id = initial_fields["campaign_id"]
+    field_nombre_id = initial_fields["nombre_id"]
+
+    api.create_lead(campaign_id=camp_id, values=[{"field_id": field_nombre_id, "value": "Carlos Buscado"}], expected_status=200)
+    api.create_lead(campaign_id=camp_id, values=[{"field_id": field_nombre_id, "value": "Beto Excluido"}], expected_status=200)
+
+    resp = api.client.post(f"/export/{camp_id}", json={}, params={"query": "Buscado"}, headers=api.headers)
+    assert resp.status_code == 200, f"Fallo Export con búsqueda: {resp.text}"
+
+    df = pd.read_excel(BytesIO(resp.content), sheet_name="Leads")
+    assert list(df["Nombre"].dropna()) == ["Carlos Buscado"], \
+        f"El export no aplicó la búsqueda de texto -- debería traer solo 'Carlos Buscado': {df['Nombre'].tolist()}"
 
 def test_import_detect_headers(api):
     """Prueba que el backend pueda leer las cabeceras de un Excel"""
