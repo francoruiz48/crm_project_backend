@@ -1824,8 +1824,21 @@ class LeadService(BaseService):
 
                 # Campos nativos (Etapa/Estado/Equipo/Usuario asignado/fechas/creador/modificador)
                 # disponibles para que una regla "Al actualizar registro" los lea o sobreescriba.
+                #
+                # Bug real encontrado 2026-08-11: build_native_context_from_lead() espera un
+                # objeto ORM real (lee getattr(lead, "created_by"/"updated_by", None) -- ver su
+                # propio docstring y el de _run_native_change_automations, que sí usa el ORM).
+                # Acá se le pasaba `current_lead`, que es el schema Pydantic devuelto por
+                # cls.repository.get_by_id() (LeadResponse). Desde el 2026-08-04 ese schema ya
+                # NO expone `created_by`/`updated_by` como int (se sacaron a propósito, ver
+                # lead_schema.py -- quedan solo como `creator`/`updater` con public_uuid), así
+                # que getattr(...) siempre devolvía None para esos dos campos nativos. Cualquier
+                # condición de automatización sobre "Usuario Creador" (-7) o "Usuario
+                # Modificación" (-8) en un ON_UPDATE nunca podía matchear (is_empty → False),
+                # sin ningún error visible. Se resuelve consultando el ORM real acá.
                 from app.core.native_lead_fields import build_native_context_from_lead
-                native_ctx_before = build_native_context_from_lead(current_lead)
+                lead_orm_for_native_ctx = uow.session.query(Lead).filter_by(id=internal_id).first()
+                native_ctx_before = build_native_context_from_lead(lead_orm_for_native_ctx)
                 full_context.update(native_ctx_before)
 
                 # INYECCIÓN DEL MOTOR DE AUTOMATIZACIÓN (ON_UPDATE)

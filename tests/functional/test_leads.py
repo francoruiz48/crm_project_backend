@@ -7,6 +7,9 @@ from app.models.workspace import Workspace
 from app.models.nomenclator import Nomenclator
 from app.models.nomenclator_item import NomenclatorItem
 from app.models.campaign import Campaign
+from app.models.team import Team
+from app.models.security_models import User, UserOrganization
+from app.models.lead_contact_state import LeadContactState
 
 
 def _resolve_internal_id(db_session, model, public_uuid_or_int):
@@ -357,6 +360,216 @@ def test_search_leads_custom_field_filter_by_public_uuid(api, db_session, initia
     res_missing = api.client.post("/leads/search", json=payload_missing, headers=api.headers)
     assert res_missing.status_code == 200
     assert res_missing.json()["items"] == []
+
+def test_search_leads_selector_field_filter_by_public_uuid(api, db_session, initial_structure):
+    """
+    Regresión: filtrar /leads/search por un campo SELECTOR (nomenclador) usando el
+    public_uuid de NomenclatorItem, tal como lo manda el front real (LeadFilters.tsx arma
+    `value_ids` con `item.id`, que a nivel API siempre es public_uuid -- ver
+    getNomenclatorItems). Mismo bug de fondo que el de field_id (public_uuid vs id interno),
+    pero del lado del VALOR: los operadores eq/in del filtro EAV comparaban
+    `NomenclatorItem.id` (entero) contra el uuid crudo y rompían con
+    `invalid input syntax for type integer`.
+
+    También cubre un segundo bug encontrado al escribir este test: `neq` sobre un campo
+    SELECTOR devolvía siempre vacío, incluso ya resuelto el uuid -- LeadFieldValue.value
+    queda NULL para campos SELECTOR (la selección real vive en la tabla M2M
+    nomenclator_items), y `NULL != X` evalúa NULL en SQL, no true, así que el AND de la
+    condición neq descartaba la fila siempre.
+    """
+    camp_id = initial_structure["campaign_id"]
+    org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
+    camp_internal_id = _resolve_internal_id(db_session, Campaign, camp_id)
+    section_internal_id = _resolve_internal_id(db_session, LeadFieldSection, section_id)
+
+    nom = Nomenclator(name="Prioridad Test", organization_id=org_id)
+    db_session.add(nom)
+    db_session.flush()
+    item_alta = NomenclatorItem(nomenclator_id=nom.id, value="Alta", organization_id=org_id)
+    item_baja = NomenclatorItem(nomenclator_id=nom.id, value="Baja", organization_id=org_id)
+    db_session.add_all([item_alta, item_baja])
+    db_session.commit()
+
+    f_prioridad = LeadField(
+        name="Prioridad", field_type_code="SELECTOR", field_subtype_code="SELECTOR_SIMPLE",
+        nomenclator_id=nom.id, campaign_id=camp_internal_id,
+        lead_field_section_id=section_internal_id, organization_id=org_id, order=1, active=True
+    )
+    db_session.add(f_prioridad)
+    db_session.commit()
+
+    api.create_lead(campaign_id=camp_id, values=[{"field_id": f_prioridad.id, "value": [item_alta.id]}])
+    api.create_lead(campaign_id=camp_id, values=[{"field_id": f_prioridad.id, "value": [item_baja.id]}])
+
+    # eq con public_uuid, como manda el front
+    payload_eq = {
+        "page": 1,
+        "filters": [
+            {"field_id": f_prioridad.public_uuid, "operator": "eq", "value": item_alta.public_uuid}
+        ]
+    }
+    res_eq = api.client.post("/leads/search", json=payload_eq, headers=api.headers)
+    assert res_eq.status_code == 200
+    assert len(res_eq.json()["items"]) == 1
+
+    # in con lista de public_uuid -> matchea ambos leads
+    payload_in = {
+        "page": 1,
+        "filters": [
+            {"field_id": f_prioridad.public_uuid, "operator": "in", "value": [item_alta.public_uuid, item_baja.public_uuid]}
+        ]
+    }
+    res_in = api.client.post("/leads/search", json=payload_in, headers=api.headers)
+    assert res_in.status_code == 200
+    assert len(res_in.json()["items"]) == 2
+
+    # neq con public_uuid -> antes del fix de NULL, esto devolvía siempre vacío
+    payload_neq = {
+        "page": 1,
+        "filters": [
+            {"field_id": f_prioridad.public_uuid, "operator": "neq", "value": item_alta.public_uuid}
+        ]
+    }
+    res_neq = api.client.post("/leads/search", json=payload_neq, headers=api.headers)
+    assert res_neq.status_code == 200
+    items_neq = res_neq.json()["items"]
+    assert len(items_neq) == 1
+    val_neq = next(v for v in items_neq[0]["field_values"] if v["field_id"] == f_prioridad.id)
+    assert [i["id"] for i in val_neq["nomenclator_items"]] == [item_baja.public_uuid]
+
+    # public_uuid que no corresponde a ningún NomenclatorItem -> no debe romper, solo no matchear
+    payload_missing = {
+        "page": 1,
+        "filters": [
+            {"field_id": f_prioridad.public_uuid, "operator": "eq", "value": "00000000-0000-0000-0000-000000000000"}
+        ]
+    }
+    res_missing = api.client.post("/leads/search", json=payload_missing, headers=api.headers)
+    assert res_missing.status_code == 200
+    assert res_missing.json()["items"] == []
+
+
+def test_search_leads_native_fields(api, db_session, initial_structure):
+    """
+    Cobertura: filtrar /leads/search por cada uno de los campos nativos de Lead
+    (LEAD_NATIVE_FILTER_FIELDS en lead_repository.py) usando el public_uuid tal como lo
+    manda el front real. A diferencia de los campos custom (EAV, ver los dos tests de
+    arriba), estos ya resuelven public_uuid -> id interno vía
+    BaseRepository.resolve_fk_filter_value -- pero hasta ahora ese camino no tenía ningún
+    test para /leads/search (solo para GET /leads?campaign_id=... vía query param). Cubre
+    los 5 campos FK reales (campaign_id, current_state_id, contact_state_id, team_id,
+    assigned_to_user_id) + un caso de fecha (created_at) + un uuid inexistente.
+    """
+    camp_id = initial_structure["campaign_id"]
+    org_id = initial_structure["org_id"]
+    state_contact_id = initial_structure["state_contact_id"]
+
+    # LeadService.create() rechaza con 400 ("La campaña no tiene campos configurados")
+    # cualquier lead -- incluso con values=[] -- si la campaña no tiene ni un LeadField
+    # definido. `initial_structure` no crea ninguno (eso lo hace el fixture aparte
+    # `initial_fields`, que este test no pide porque su campo "Nombre" es required=True
+    # y rompería los `values=[]` de más abajo). Alcanza con un campo no-requerido.
+    api.create_lead_field(campaign_id=camp_id, name="Campo Libre", field_type_code="STRING", required=False)
+
+    # ── campaign_id ──
+    lead1 = api.create_lead(campaign_id=camp_id, values=[])
+    lead2 = api.create_lead(campaign_id=camp_id, values=[])
+    res_camp = api.client.post("/leads/search", json={
+        "page": 1, "filters": [{"field_id": "campaign_id", "operator": "eq", "value": camp_id}]
+    }, headers=api.headers)
+    assert res_camp.status_code == 200
+    assert len(res_camp.json()["items"]) == 2
+
+    # ── current_state_id (Etapa) ──
+    change_res = api.client.post(f"/leads/{lead2['id']}/change_state",
+                                  json={"new_state_id": state_contact_id}, headers=api.headers)
+    assert change_res.status_code == 200
+    res_state = api.client.post("/leads/search", json={
+        "page": 1, "filters": [{"field_id": "current_state_id", "operator": "eq", "value": state_contact_id}]
+    }, headers=api.headers)
+    assert res_state.status_code == 200
+    items_state = res_state.json()["items"]
+    assert len(items_state) == 1
+    assert items_state[0]["id"] == lead2["id"]
+
+    # ── contact_state_id (Estado) ──
+    # LeadService.create() solo autoasigna un contact_state_id si existe un
+    # LeadContactState con is_initial=True para la organización (ver lead_service.py
+    # ~línea 1014) -- `initial_structure` no crea ninguno (a diferencia de LeadState,
+    # que sí trae 3 vía ese fixture), así que sin esto lead3["contact_state"] queda None.
+    # Necesitamos al menos 2: uno inicial (auto-asignado al crear el lead) y otro
+    # distinto para poder elegir un "target_cs" real más abajo (next(... != current_cs_id)).
+    db_session.add(LeadContactState(name="Nuevo", organization_id=org_id, is_initial=True, order=1))
+    db_session.add(LeadContactState(name="Contactado", organization_id=org_id, is_initial=False, order=2))
+    db_session.commit()
+
+    lead3 = api.create_lead(campaign_id=camp_id, values=[])
+    current_cs_id = lead3["contact_state"]["id"]
+    contact_states = api.client.get("/lead_contact_states/", headers=api.headers).json()["items"]
+    target_cs = next(cs for cs in contact_states if cs["id"] != current_cs_id)
+    change_cs_res = api.client.post(f"/leads/{lead3['id']}/change_contact_state",
+                                     json={"new_contact_state_id": target_cs["id"]}, headers=api.headers)
+    assert change_cs_res.status_code == 200
+    res_cs = api.client.post("/leads/search", json={
+        "page": 1, "filters": [{"field_id": "contact_state_id", "operator": "eq", "value": target_cs["id"]}]
+    }, headers=api.headers)
+    assert res_cs.status_code == 200
+    items_cs = res_cs.json()["items"]
+    assert len(items_cs) == 1
+    assert items_cs[0]["id"] == lead3["id"]
+
+    # ── team_id ──
+    team = Team(name="Equipo Filtro Test", organization_id=org_id)
+    db_session.add(team)
+    db_session.commit()
+
+    lead4 = api.create_lead(campaign_id=camp_id, values=[])
+    api.bulk_assign(lead_ids=[lead4["id"]], target_team_id=team.public_uuid)
+    res_team = api.client.post("/leads/search", json={
+        "page": 1, "filters": [{"field_id": "team_id", "operator": "eq", "value": team.public_uuid}]
+    }, headers=api.headers)
+    assert res_team.status_code == 200
+    items_team = res_team.json()["items"]
+    assert len(items_team) == 1
+    assert items_team[0]["id"] == lead4["id"]
+
+    # uuid de team inexistente -> no debe romper, solo no matchear (mismo criterio que field_id)
+    res_team_missing = api.client.post("/leads/search", json={
+        "page": 1, "filters": [{"field_id": "team_id", "operator": "eq", "value": "00000000-0000-0000-0000-000000000000"}]
+    }, headers=api.headers)
+    assert res_team_missing.status_code == 200
+    assert res_team_missing.json()["items"] == []
+
+    # ── assigned_to_user_id ──
+    user = User(name="Asignado Filtro", last_name="Test", email=f"asignado_filtro_{org_id}@test.com")
+    db_session.add(user)
+    db_session.flush()
+    db_session.add(UserOrganization(user_id=user.id, organization_id=org_id, active=True))
+    db_session.commit()
+
+    lead5 = api.create_lead(campaign_id=camp_id, values=[])
+    api.bulk_assign(lead_ids=[lead5["id"]], target_user_id=user.public_uuid)
+    res_user = api.client.post("/leads/search", json={
+        "page": 1, "filters": [{"field_id": "assigned_to_user_id", "operator": "eq", "value": user.public_uuid}]
+    }, headers=api.headers)
+    assert res_user.status_code == 200
+    items_user = res_user.json()["items"]
+    assert len(items_user) == 1
+    assert items_user[0]["id"] == lead5["id"]
+
+    # ── created_at (fecha, no es FK -- cubre el paso por resolve_fk_filter_value sin romper) ──
+    res_created_future = api.client.post("/leads/search", json={
+        "page": 1, "filters": [{"field_id": "created_at", "operator": "gte", "value": "2099-01-01T00:00:00"}]
+    }, headers=api.headers)
+    assert res_created_future.status_code == 200
+    assert res_created_future.json()["items"] == []
+
+    res_created_past = api.client.post("/leads/search", json={
+        "page": 1, "filters": [{"field_id": "created_at", "operator": "gte", "value": "2000-01-01T00:00:00"}]
+    }, headers=api.headers)
+    assert res_created_past.status_code == 200
+    assert len(res_created_past.json()["items"]) >= 5
 
 # --- TESTS AVANZADOS (NOMENCLADORES) ---
 

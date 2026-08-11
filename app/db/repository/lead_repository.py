@@ -230,6 +230,7 @@ class LeadRepository(BaseRepository):
         # Un JOIN separado por field_id distinto; condiciones del mismo field_id → OR.
         from collections import defaultdict
         from app.db.repository.lead_field_repository import LeadFieldRepository
+        from app.db.repository.nomenclator_item_repository import NomenclatorItemRepository
 
         raw_custom_filters = [
             f for f in search_params.filters
@@ -256,6 +257,30 @@ class LeadRepository(BaseRepository):
         eav_groups: dict = defaultdict(list)   # field_id (int, ya resuelto) → [LeadFilter]
         for f in raw_custom_filters:
             eav_groups[_resolve_custom_field_id(f.field_id)].append(f)
+
+        # Mismo bug de fondo que field_id arriba, del lado del VALOR: para eq/in/neq sobre un
+        # campo SELECTOR, f.value llega como public_uuid de NomenclatorItem (LeadFilters.tsx
+        # arma value_ids con item.id, que a nivel API siempre es public_uuid -- ver
+        # nomenclatorItemsService/getNomenclatorItems), pero NomenclatorItem.id es el id interno
+        # (entero). Sin resolver, `NomenclatorItem.id == val` rompía con el mismo
+        # "invalid input syntax for type integer" que field_id, apenas se filtraba un lead
+        # por un campo Selector/Lista. Se resuelve en bloque, mismo helper que field_id.
+        raw_item_uuids = set()
+        for filters in eav_groups.values():
+            for f in filters:
+                if f.operator in ("eq", "neq") and isinstance(f.value, str) and not f.value.lstrip("-").isdigit():
+                    raw_item_uuids.add(f.value)
+                elif f.operator == "in" and isinstance(f.value, list):
+                    raw_item_uuids.update(v for v in f.value if isinstance(v, str) and not v.lstrip("-").isdigit())
+        item_uuid_to_internal_id = NomenclatorItemRepository.get_internal_ids_by_public_uuids(session, list(raw_item_uuids)) if raw_item_uuids else {}
+
+        def _resolve_item_id(v):
+            if isinstance(v, int):
+                return v
+            if isinstance(v, str) and v.lstrip("-").isdigit():
+                return int(v)
+            # UUID no encontrado -> sentinel que no matchea ningún NomenclatorItem real.
+            return item_uuid_to_internal_id.get(v, cls._MISSING_FK_SENTINEL) if isinstance(v, str) else v
 
         # ── Filtros EAV (campos custom, un JOIN por field_id) ─────────────────
         for field_id, filters in eav_groups.items():
@@ -292,7 +317,8 @@ class LeadRepository(BaseRepository):
                     if isinstance(val, list):
                         val_strs = [str(v).lower() for v in val]
                         cond_text = func.lower(db_val).in_(val_strs)
-                        cond_relation = lv_alias.nomenclator_items.any(NomenclatorItem.id.in_(val))
+                        resolved_ids = [_resolve_item_id(v) for v in val]
+                        cond_relation = lv_alias.nomenclator_items.any(NomenclatorItem.id.in_(resolved_ids))
                         cond = or_(cond_text, cond_relation)
 
                 # ---------------------------------------------------------
@@ -317,12 +343,21 @@ class LeadRepository(BaseRepository):
                 # ---------------------------------------------------------
                 elif f.operator == "eq":
                     cond_text = func.lower(db_val) == str(val).lower()
-                    cond_relation = lv_alias.nomenclator_items.any(NomenclatorItem.id == val)
+                    cond_relation = lv_alias.nomenclator_items.any(NomenclatorItem.id == _resolve_item_id(val))
                     cond = or_(cond_text, cond_relation)
 
                 elif f.operator == "neq":
-                    cond_text = func.lower(db_val) != str(val).lower()
-                    cond_relation = ~lv_alias.nomenclator_items.any(NomenclatorItem.id == val)
+                    # Bug real encontrado 2026-08-06 (al testear el fix de SELECTOR de arriba):
+                    # LeadFieldValue.value queda NULL para campos SELECTOR (la selección real
+                    # vive en la tabla M2M nomenclator_items, ver
+                    # lead_field_value_repository.py). `NULL != X` evalúa a NULL en SQL (ni
+                    # true ni false), así que el AND de abajo descartaba la fila SIEMPRE que
+                    # el campo fuera un SELECTOR -- "neq" nunca devolvía nada. Se cubre ese
+                    # caso tratando "sin valor de texto" como "no es igual" (no hay texto que
+                    # comparar), dejando que cond_relation sea quien realmente decida para
+                    # campos SELECTOR.
+                    cond_text = or_(db_val.is_(None), func.lower(db_val) != str(val).lower())
+                    cond_relation = ~lv_alias.nomenclator_items.any(NomenclatorItem.id == _resolve_item_id(val))
                     cond = and_(cond_text, cond_relation)
 
                 # ---------------------------------------------------------
