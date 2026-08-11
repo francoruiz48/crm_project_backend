@@ -571,6 +571,127 @@ def test_search_leads_native_fields(api, db_session, initial_structure):
     assert res_created_past.status_code == 200
     assert len(res_created_past.json()["items"]) >= 5
 
+
+# --- TESTS DE ORDENAMIENTO (order_by) ---
+#
+# Bug real encontrado 2026-08-11 (reportado por el usuario): LeadRepository._apply_dynamic_ordering
+# solo reconocía `order_by` como id de LeadField si era un string 100% numérico. El front
+# (LeadTablePresentation.tsx::orderKey) manda el public_uuid del LeadField para cualquier columna
+# custom -- un uuid nunca pasa `.isdigit()`, así que ordenar por una columna custom caía SIEMPRE
+# al fallback (id DESC), sin ningún error. Estos tests cubren el fix (resolución uuid -> id
+# interno) tanto en GET /leads como en POST /leads/search (comparten el mismo helper), además del
+# caso nativo (que ya funcionaba, para no perder cobertura) y el fallback ante un valor inválido.
+
+def _value_for_field(lead: dict, field_uuid: str):
+    """Extrae el valor de un campo custom de la respuesta de un lead (LeadResponse.field_values)."""
+    for fv in lead.get("field_values", []):
+        field = fv.get("field") or {}
+        if field.get("id") == field_uuid:
+            return fv.get("value")
+    return None
+
+
+class TestLeadOrdering:
+    def _setup_leads_with_custom_field(self, api, camp_id):
+        """Crea un campo STRING y 3 leads con valores distintos, fuera de orden alfabético
+        y fuera de orden de creación, para poder distinguir "orden real" de "orden por id"."""
+        field = api.create_lead_field(campaign_id=camp_id, name="Nombre Orden", field_type_code="STRING")
+        field_uuid = field["id"]
+
+        lead_charlie = api.create_lead(campaign_id=camp_id, values=[{"field_id": field_uuid, "value": "Charlie"}])
+        lead_alice = api.create_lead(campaign_id=camp_id, values=[{"field_id": field_uuid, "value": "Alice"}])
+        lead_bob = api.create_lead(campaign_id=camp_id, values=[{"field_id": field_uuid, "value": "Bob"}])
+
+        return field_uuid, [lead_charlie, lead_alice, lead_bob]
+
+    def test_get_leads_order_by_custom_field_uuid_ascending(self, api, initial_structure):
+        """GET /leads?order_by=<uuid de LeadField> -- antes del fix, esto caía siempre al
+        fallback (id DESC) sin importar qué se pidiera."""
+        camp_id = initial_structure["campaign_id"]
+        field_uuid, _ = self._setup_leads_with_custom_field(api, camp_id)
+
+        resp = api.client.get(
+            f"/leads?campaign_id={camp_id}&order_by={field_uuid}&ascending=true",
+            headers=api.headers,
+        )
+        assert resp.status_code == 200, resp.text
+        items = resp.json()["items"]
+        values = [_value_for_field(item, field_uuid) for item in items]
+        assert values == ["Alice", "Bob", "Charlie"]
+
+    def test_get_leads_order_by_custom_field_uuid_descending(self, api, initial_structure):
+        camp_id = initial_structure["campaign_id"]
+        field_uuid, _ = self._setup_leads_with_custom_field(api, camp_id)
+
+        resp = api.client.get(
+            f"/leads?campaign_id={camp_id}&order_by={field_uuid}&ascending=false",
+            headers=api.headers,
+        )
+        assert resp.status_code == 200, resp.text
+        items = resp.json()["items"]
+        values = [_value_for_field(item, field_uuid) for item in items]
+        assert values == ["Charlie", "Bob", "Alice"]
+
+    def test_search_leads_order_by_custom_field_uuid(self, api, initial_structure):
+        """Mismo fix, pero por el otro endpoint (POST /leads/search) -- comparten
+        _apply_dynamic_ordering, así que antes del fix tenía el mismo bug."""
+        camp_id = initial_structure["campaign_id"]
+        field_uuid, _ = self._setup_leads_with_custom_field(api, camp_id)
+
+        resp = api.client.post(
+            "/leads/search",
+            json={"page": 1, "filters": []},
+            params={"order_by": field_uuid, "ascending": "true"},
+            headers=api.headers,
+        )
+        assert resp.status_code == 200, resp.text
+        items = resp.json()["items"]
+        values = [_value_for_field(item, field_uuid) for item in items]
+        assert values == ["Alice", "Bob", "Charlie"]
+
+    def test_get_leads_order_by_native_field_respects_direction(self, api, initial_structure):
+        """Caso que ya funcionaba (campo nativo real, ej. id) -- lo cubrimos para no perder
+        esta rama al tocar _apply_dynamic_ordering. También valida el fix del desempate:
+        ascending=False debe dar exactamente el orden inverso de ascending=True."""
+        camp_id = initial_structure["campaign_id"]
+        # LeadService.create() rechaza con 400 cualquier lead si la campaña no tiene ni un
+        # LeadField configurado (ver test_search_leads_native_fields más arriba).
+        api.create_lead_field(campaign_id=camp_id, name="Campo Libre", field_type_code="STRING", required=False)
+        lead_a = api.create_lead(campaign_id=camp_id, values=[])
+        lead_b = api.create_lead(campaign_id=camp_id, values=[])
+        lead_c = api.create_lead(campaign_id=camp_id, values=[])
+
+        resp_asc = api.client.get(
+            f"/leads?campaign_id={camp_id}&order_by=id&ascending=true", headers=api.headers
+        )
+        assert resp_asc.status_code == 200, resp_asc.text
+        ids_asc = [item["id"] for item in resp_asc.json()["items"]]
+
+        resp_desc = api.client.get(
+            f"/leads?campaign_id={camp_id}&order_by=id&ascending=false", headers=api.headers
+        )
+        assert resp_desc.status_code == 200, resp_desc.text
+        ids_desc = [item["id"] for item in resp_desc.json()["items"]]
+
+        assert ids_asc == list(reversed(ids_desc))
+        assert ids_asc.index(lead_a["id"]) < ids_asc.index(lead_b["id"]) < ids_asc.index(lead_c["id"])
+
+    def test_get_leads_order_by_unknown_value_falls_back_without_error(self, api, initial_structure):
+        """Un order_by que no matchea ninguna columna real ni ningún LeadField (uuid
+        inexistente) no debe romper -- debe caer al fallback (id DESC) en silencio,
+        mismo criterio que el resto de la app ante FKs no encontradas."""
+        camp_id = initial_structure["campaign_id"]
+        api.create_lead_field(campaign_id=camp_id, name="Campo Libre", field_type_code="STRING", required=False)
+        api.create_lead(campaign_id=camp_id, values=[])
+
+        resp = api.client.get(
+            f"/leads?campaign_id={camp_id}&order_by=00000000-0000-0000-0000-000000000000",
+            headers=api.headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert len(resp.json()["items"]) >= 1
+
+
 # --- TESTS AVANZADOS (NOMENCLADORES) ---
 
 def test_create_lead_with_multiple_nomenclator(api, db_session, initial_structure):

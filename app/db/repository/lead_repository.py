@@ -35,37 +35,56 @@ class LeadRepository(BaseRepository):
 
     #Helper para aplicar ordenamiento dinámico en get_all y search
     @classmethod
-    def _apply_dynamic_ordering(cls, query, order_by: str, ascending: bool):
+    def _apply_dynamic_ordering(cls, session, query, order_by: str, ascending: bool):
         """
-        Maneja el ordenamiento nativo (ej: created_at) y el ordenamiento 
-        por campos dinámicos (ej: order_by='15' donde 15 es un field_id).
+        Maneja el ordenamiento nativo (ej: created_at) y el ordenamiento
+        por campos dinámicos (LeadField custom).
+
+        Bug real encontrado 2026-08-11 (reportado por el usuario: "el ordenar de lead no
+        anda"): el CASO 2 de abajo solo reconocía `order_by` como field_id si era un string
+        100% numérico (`"15"`). Pero el front (LeadTablePresentation.tsx::orderKey =
+        column.nativeKey ?? column.id) manda el `public_uuid` del LeadField para cualquier
+        columna custom -- ningún campo nativo usa esta rama (esos ya matchean por nombre de
+        columna real en el CASO 1, vía `nativeKey`). Un uuid nunca pasa `.isdigit()`, así
+        que CUALQUIER intento de ordenar por una columna custom caía siempre al fallback
+        (id DESC) sin ningún error visible, ni para el front ni en los logs. Se agrega la
+        resolución uuid -> id interno (mismo patrón que el resto del archivo, ver
+        `_resolve_custom_field_id` en `search()`), antes de recién ahí caer al fallback.
         """
         if not order_by:
             return query.order_by(cls.model.id.desc())
 
-        # CASO 1: Es un campo nativo de la tabla Lead (ej: id, created_at, active)
+        # CASO 1: Es un campo nativo de la tabla Lead (ej: id, created_at, active,
+        # contact_state_id -- lo que el front manda vía `nativeKey` para columnas nativas)
         if hasattr(cls.model, order_by):
             column = getattr(cls.model, order_by)
             return query.order_by(column.asc() if ascending else column.desc())
 
-        # CASO 2: Es un campo dinámico (Asumimos que el string es el field_id)
+        # CASO 2: Campo custom (LeadField) -- acepta tanto el id interno como string
+        # numérico (compatibilidad hacia atrás / uso interno) como el public_uuid real
+        # que manda el front (Fase 3/4, ver comentario de arriba).
+        field_id = None
         if order_by.isdigit():
             field_id = int(order_by)
-            
+        else:
+            from app.db.repository.lead_field_repository import LeadFieldRepository
+            field_id = LeadFieldRepository.get_internal_id_by_public_uuid(session, order_by)
+
+        if field_id is not None:
             # Hacemos un OUTER JOIN específico solo para traer el valor de este campo
             # Usamos un alias para no chocar con otros JOINs de LeadFieldValue en la búsqueda
             sort_lv = aliased(LeadFieldValue)
             query = query.outerjoin(
-                sort_lv, 
+                sort_lv,
                 and_(sort_lv.lead_id == cls.model.id, sort_lv.field_id == field_id)
             )
-            
+
             # Ordenamos por el valor string (Postgres hará un orden alfabético por defecto)
-            # Para números perfectos, idealmente el field_type debería definir el cast, 
+            # Para números perfectos, idealmente el field_type debería definir el cast,
             # pero el orden alfabético de strings suele bastar para la grilla
             return query.order_by(sort_lv.value.asc() if ascending else sort_lv.value.desc())
 
-        # Fallback si no machea nada
+        # Fallback: no matchea ninguna columna real ni ningún LeadField válido
         return query.order_by(cls.model.id.desc())
 
     @classmethod
@@ -141,17 +160,26 @@ class LeadRepository(BaseRepository):
         ascending = kwargs.pop('ascending', True)
 
         # Aplicamos nuestro ordenamiento especial EAV
-        query = cls._apply_dynamic_ordering(query, order_by, ascending)
+        query = cls._apply_dynamic_ordering(session, query, order_by, ascending)
 
         # DELEGAMOS AL PADRE
-        # Nota: Al atrapar 'search' y 'search_fields' en la firma de esta función, 
+        # Nota: Al atrapar 'search' y 'search_fields' en la firma de esta función,
         # evitamos que pasen en los **kwargs y que el padre intente buscar de nuevo.
+        # `ascending` SÍ se reenvía a propósito (aunque `order_by` ya se consumió acá
+        # arriba): BaseRepository.get_all() siempre agrega su propio order_by de
+        # desempate por `id` cuando no recibe uno (ver default_sort_column="id") --
+        # como SQLAlchemy acumula order_by en vez de reemplazarlo, ese desempate no
+        # pisa el ordenamiento real ya aplicado arriba, pero si no le pasamos
+        # `ascending` explícito, ese desempate quedaba siempre ascendente sin importar
+        # lo que haya pedido el usuario. Pasándolo, el desempate por id respeta la
+        # misma dirección que el ordenamiento principal.
         return super().get_all(
             session=session,
             user_context=user_context,
             only_active=only_active,
             detailed=detailed,
             base_query=query,
+            ascending=ascending,
             **kwargs
         )
 
@@ -385,7 +413,7 @@ class LeadRepository(BaseRepository):
             id_subq = db_query.order_by(False).with_entities(cls.model.id).distinct().subquery()
             db_query = session.query(cls.model).filter(cls.model.id.in_(id_subq))
 
-        db_query = cls._apply_dynamic_ordering(db_query, order_by, ascending)
+        db_query = cls._apply_dynamic_ordering(session, db_query, order_by, ascending)
 
         # Paginación y Ejecución
         total, db_query = cls._paginate(db_query, page, page_size)
