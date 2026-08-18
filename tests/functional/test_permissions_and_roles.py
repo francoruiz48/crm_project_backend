@@ -129,6 +129,28 @@ def _make_lead(db_session, campaign_id, org_id, created_by=None):
     return lead
 
 
+def _make_role_with_permissions(db_session, org_id, codenames, name="Rol Test", code="rol_test"):
+    """
+    Crea un Role real de la organización dada (no la plantilla admin/agent/viewer
+    de ADMIN_ORG_ID que usa _link_user_to_org) con el set de permisos indicado por
+    codename. Pensado para los tests de PUT /roles/{role_id}/permissions, que
+    necesitan un rol que sí pase el _apply_tenant_filter estricto de RoleRepository
+    (organization_id == org_id, sin el bypass de ADMIN_ORG_ID que tienen otras
+    entidades en lectura).
+    """
+    role = Role(name=name, code=code, organization_id=org_id)
+    if codenames:
+        perms = db_session.query(Permission).filter(Permission.codename.in_(codenames)).all()
+        assert len(perms) == len(codenames), (
+            f"Setup de test: falta algún permiso seedeado entre {codenames} "
+            f"(encontrados: {[p.codename for p in perms]})"
+        )
+        role.permissions = perms
+    db_session.add(role)
+    db_session.commit()
+    return role
+
+
 def _login(plain_client, email, password):
     resp = plain_client.post("/auth/login", json={"email": email, "password": password})
     assert resp.status_code == 200, f"Login falló: {resp.text}"
@@ -810,3 +832,236 @@ class TestLeadVisibility:
             assert lead_priv.public_uuid in ids
         finally:
             _remove_user_overrides(app)
+
+
+# ===========================================================================
+# 6. PUT /roles/{role_id}/permissions — asociar/desasociar permisos de un rol
+# ===========================================================================
+#
+# Endpoint agregado el 2026-08-10 (ver backend/docs/usuarios_y_permisos.md §5.1).
+# Antes de esto no existía forma de cambiar los permisos de un rol vía API.
+
+class TestRolePermissionsEndpoint:
+    def test_admin_replaces_role_permissions(self, client, db_session, initial_structure):
+        """PUT reemplaza TODO el set: lo que no viene en la lista nueva se quita."""
+        from app.main import app
+
+        org_id = initial_structure["org_id"]
+        role = _make_role_with_permissions(
+            db_session, org_id, ["lead:view", "lead:create"], code="custom_replace"
+        )
+
+        new_perms = db_session.query(Permission).filter(
+            Permission.codename.in_(["lead_comment:view", "tag:view"])
+        ).all()
+        assert len(new_perms) == 2
+
+        admin_user = _make_user(db_session, "Admin Perms", "admin_role_perms@test.com")
+        _link_user_to_org(db_session, admin_user, org_id, role_code="admin")
+        db_session.commit()
+
+        _apply_user_overrides(app, admin_user, org_id)
+        try:
+            resp = client.put(
+                f"/roles/{role.public_uuid}/permissions",
+                json={"permission_ids": [p.public_uuid for p in new_perms]},
+                headers={"X-Organization-Id": str(org_id)},
+            )
+            assert resp.status_code == 200, resp.text
+            codenames = sorted(p["codename"] for p in resp.json()["permissions"])
+            assert codenames == ["lead_comment:view", "tag:view"]
+        finally:
+            _remove_user_overrides(app)
+
+        # Confirmamos también contra la DB (no solo la respuesta serializada)
+        db_session.expire_all()
+        refreshed = db_session.get(Role, role.id)
+        assert sorted(p.codename for p in refreshed.permissions) == ["lead_comment:view", "tag:view"]
+
+    def test_set_permissions_empty_list_clears_all(self, client, db_session, initial_structure):
+        """Mandar permission_ids: [] deja al rol sin ningún permiso."""
+        from app.main import app
+
+        org_id = initial_structure["org_id"]
+        role = _make_role_with_permissions(db_session, org_id, ["lead:view"], code="custom_clear")
+
+        admin_user = _make_user(db_session, "Admin Clear", "admin_role_clear@test.com")
+        _link_user_to_org(db_session, admin_user, org_id, role_code="admin")
+        db_session.commit()
+
+        _apply_user_overrides(app, admin_user, org_id)
+        try:
+            resp = client.put(
+                f"/roles/{role.public_uuid}/permissions",
+                json={"permission_ids": []},
+                headers={"X-Organization-Id": str(org_id)},
+            )
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["permissions"] == []
+        finally:
+            _remove_user_overrides(app)
+
+        db_session.expire_all()
+        refreshed = db_session.get(Role, role.id)
+        assert refreshed.permissions == []
+
+    def test_unknown_permission_id_returns_400_without_partial_apply(self, client, db_session, initial_structure):
+        """
+        Si algún permission_id no resuelve a un Permission real, la operación falla
+        entera (400) -- no se aplica un reemplazo parcial con los que sí eran válidos.
+        """
+        from app.main import app
+
+        org_id = initial_structure["org_id"]
+        role = _make_role_with_permissions(db_session, org_id, ["lead:view"], code="custom_badperm")
+
+        admin_user = _make_user(db_session, "Admin Bad Perm", "admin_role_badperm@test.com")
+        _link_user_to_org(db_session, admin_user, org_id, role_code="admin")
+        db_session.commit()
+
+        good_perm = db_session.query(Permission).filter_by(codename="tag:view").first()
+        assert good_perm is not None
+
+        _apply_user_overrides(app, admin_user, org_id)
+        try:
+            resp = client.put(
+                f"/roles/{role.public_uuid}/permissions",
+                json={"permission_ids": [good_perm.public_uuid, "00000000-0000-0000-0000-000000000000"]},
+                headers={"X-Organization-Id": str(org_id)},
+            )
+            assert resp.status_code == 400, resp.text
+        finally:
+            _remove_user_overrides(app)
+
+        db_session.expire_all()
+        refreshed = db_session.get(Role, role.id)
+        # Ningún cambio parcial: el rol sigue con el set original (ni siquiera se
+        # agregó el permiso válido que venía junto con el inválido).
+        assert [p.codename for p in refreshed.permissions] == ["lead:view"]
+
+    def test_agent_cannot_update_role_permissions(self, client, db_session, initial_structure):
+        """agent no tiene role:update -> 403."""
+        from app.main import app
+
+        org_id = initial_structure["org_id"]
+        role = _make_role_with_permissions(db_session, org_id, ["lead:view"], code="custom_agent403")
+
+        agent_user = _make_user(db_session, "Agent Role Perms", "agent_role_perms@test.com")
+        _link_user_to_org(db_session, agent_user, org_id, role_code="agent")
+        db_session.commit()
+
+        target_perm = db_session.query(Permission).filter_by(codename="tag:view").first()
+
+        _apply_user_overrides(app, agent_user, org_id)
+        try:
+            resp = client.put(
+                f"/roles/{role.public_uuid}/permissions",
+                json={"permission_ids": [target_perm.public_uuid]},
+                headers={"X-Organization-Id": str(org_id)},
+            )
+            assert resp.status_code == 403
+        finally:
+            _remove_user_overrides(app)
+
+        db_session.expire_all()
+        refreshed = db_session.get(Role, role.id)
+        assert [p.codename for p in refreshed.permissions] == ["lead:view"]
+
+    def test_cannot_update_permissions_of_role_from_other_org(self, client, db_session, initial_structure):
+        """Aislamiento de tenant: un admin de la org A no puede tocar un rol de la org B."""
+        from app.main import app
+
+        org_a = initial_structure["org_id"]
+        org_b = Organization(name="Org B Roles", description="Test tenant isolation")
+        db_session.add(org_b)
+        db_session.flush()
+
+        role_b = _make_role_with_permissions(db_session, org_b.id, ["lead:view"], code="custom_otherorg")
+
+        admin_a = _make_user(db_session, "Admin Org A", "admin_orga_roleperm@test.com")
+        _link_user_to_org(db_session, admin_a, org_a, role_code="admin")
+        db_session.commit()
+
+        target_perm = db_session.query(Permission).filter_by(codename="tag:view").first()
+
+        _apply_user_overrides(app, admin_a, org_a)
+        try:
+            resp = client.put(
+                f"/roles/{role_b.public_uuid}/permissions",
+                json={"permission_ids": [target_perm.public_uuid]},
+                headers={"X-Organization-Id": str(org_a)},
+            )
+            assert resp.status_code == 404
+        finally:
+            _remove_user_overrides(app)
+
+    def test_set_permissions_creates_audit_log_with_old_and_new_codenames(self, client, db_session, initial_structure):
+        """El audit log guarda los codenames viejos/nuevos, no los uuids ni ids internos."""
+        from app.main import app
+        from app.models.audit.system_audit_log import SystemAuditLog
+
+        org_id = initial_structure["org_id"]
+        role = _make_role_with_permissions(db_session, org_id, ["lead:view"], code="custom_audit")
+
+        admin_user = _make_user(db_session, "Admin Audit", "admin_role_audit@test.com")
+        _link_user_to_org(db_session, admin_user, org_id, role_code="admin")
+        db_session.commit()
+
+        new_perm = db_session.query(Permission).filter_by(codename="tag:view").first()
+
+        _apply_user_overrides(app, admin_user, org_id)
+        try:
+            resp = client.put(
+                f"/roles/{role.public_uuid}/permissions",
+                json={"permission_ids": [new_perm.public_uuid]},
+                headers={"X-Organization-Id": str(org_id)},
+            )
+            assert resp.status_code == 200, resp.text
+        finally:
+            _remove_user_overrides(app)
+
+        db_session.expire_all()
+        log = (
+            db_session.query(SystemAuditLog)
+            .filter_by(entity_type="Role", entity_uuid=role.public_uuid, action="UPDATED")
+            .order_by(SystemAuditLog.id.desc())
+            .first()
+        )
+        assert log is not None, "No se generó SystemAuditLog para el cambio de permisos"
+        assert log.changes["permissions"]["old"] == ["lead:view"]
+        assert log.changes["permissions"]["new"] == ["tag:view"]
+
+    def test_set_permissions_no_audit_when_set_is_unchanged(self, client, db_session, initial_structure):
+        """Si se manda exactamente el mismo set que ya tenía, no se genera un audit log nuevo."""
+        from app.main import app
+        from app.models.audit.system_audit_log import SystemAuditLog
+
+        org_id = initial_structure["org_id"]
+        role = _make_role_with_permissions(db_session, org_id, ["lead:view"], code="custom_noop")
+
+        admin_user = _make_user(db_session, "Admin NoOp", "admin_role_noop@test.com")
+        _link_user_to_org(db_session, admin_user, org_id, role_code="admin")
+        db_session.commit()
+
+        same_perm = db_session.query(Permission).filter_by(codename="lead:view").first()
+
+        logs_before = db_session.query(SystemAuditLog).filter_by(
+            entity_type="Role", entity_uuid=role.public_uuid
+        ).count()
+
+        _apply_user_overrides(app, admin_user, org_id)
+        try:
+            resp = client.put(
+                f"/roles/{role.public_uuid}/permissions",
+                json={"permission_ids": [same_perm.public_uuid]},
+                headers={"X-Organization-Id": str(org_id)},
+            )
+            assert resp.status_code == 200, resp.text
+        finally:
+            _remove_user_overrides(app)
+
+        db_session.expire_all()
+        logs_after = db_session.query(SystemAuditLog).filter_by(
+            entity_type="Role", entity_uuid=role.public_uuid
+        ).count()
+        assert logs_after == logs_before

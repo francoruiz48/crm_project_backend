@@ -1,4 +1,4 @@
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 import pandas as pd
 import io
 import json
@@ -12,6 +12,7 @@ from app.db.repository.campaign_repository import CampaignRepository
 from app.db.repository.nomenclator_item_repository import NomenclatorItemRepository
 from app.services.lead_service import LeadService
 from app.schemas.lead_schema import LeadCreate, LeadFieldValueCreate
+from app.schemas.filter_schema import LeadFilter, LeadSearchRequest
 from app.models.lead import Lead
 from app.models.lead_field import LeadField
 from app.models.lead_field_value import LeadFieldValue
@@ -272,7 +273,8 @@ class LeadImportExportService:
     # EXPORTACIÓN
     # -------------------------------------------------------------------------
     @classmethod
-    def export_leads(cls, db: Session, campaign_id: str, user_context: Optional[UserContext] = None) -> Tuple[io.BytesIO, str]:
+    def export_leads(cls, db: Session, campaign_id: str, user_context: Optional[UserContext] = None,
+                      filters: Optional[List[LeadFilter]] = None, query: Optional[str] = None) -> Tuple[io.BytesIO, str]:
         # campaign_id llega como public_uuid; se resuelve una vez al id interno.
         campaign_internal_id = CampaignRepository.get_internal_id_by_public_uuid(db, campaign_id)
         campaign = CampaignRepository.get_by_id(db, campaign_internal_id, user_context=user_context, only_active=True) if campaign_internal_id is not None else None
@@ -292,7 +294,16 @@ class LeadImportExportService:
         field_map = {f.id: f.name for f in field_rows}
         columns = [f.name for f in field_rows]
 
-        leads = LeadRepository.get_all(db, user_context=user_context, campaign_id=campaign_internal_id, only_active=True, page=0, page_size=0)
+        # Bug real encontrado 2026-08-11 (reportado por el usuario -- "al exportar el excel no
+        # aplica los filtros"): acá se llamaba a get_all() sin filtros/búsqueda, así que el Excel
+        # siempre traía TODOS los leads activos de la campaña sin importar lo que el usuario tuviera
+        # filtrado/buscado en el listado. Se usa search() (el mismo método que /leads/search, con
+        # los mismos filtros y texto libre que ya ve el usuario en la lista) en su lugar.
+        search_req = LeadSearchRequest(filters=filters or [])
+        _, leads = LeadRepository.search(
+            session=db, user_context=user_context, search_params=search_req,
+            page=0, page_size=0, only_active=True, campaign_id=campaign_internal_id, query=query
+        )
 
         data = []
         for lead in leads:

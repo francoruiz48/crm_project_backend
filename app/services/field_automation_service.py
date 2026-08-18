@@ -2,6 +2,7 @@ from typing import Optional
 from fastapi import HTTPException, status
 from app.services.base_service import BaseService
 from app.core.error_messages import SUCCESS_CREATE, SUCCESS_UPDATE
+from app.core.constans import DEFAULT_PAGE_SIZE
 from app.db.repository.field_automation_repository import FieldAutomationRepository
 from app.db.repository.lead_field_repository import LeadFieldRepository
 from app.db.repository.nomenclator_item_repository import NomenclatorItemRepository
@@ -247,6 +248,132 @@ def _resolve_actions_field_ids(session, actions):
                 action.value = _resolve_native_id_value(session, repo, action.value, "value")
 
 
+# ==========================================
+# RESOLUCIÓN INVERSA PARA LECTURA (id interno -> public_uuid)
+# ==========================================
+# Bug real encontrado 2026-08-15 (reportado por el usuario): todo lo de arriba resuelve
+# public_uuid -> id interno al GUARDAR, pero nunca existía el paso inverso al LEER. El detalle
+# de una automatización (GET .../{id}?detailed=true) devolvía conditions/actions tal cual
+# quedaron persistidos -- con `value` en id interno para SELECTOR/CHECKBOX (NomenclatorItem) y
+# NATIVE_ID (Equipo/Usuario/Etapa/Estado) -- mientras que el front arma sus <Select> con
+# public_uuid (así devuelve el resto de la API, ver BaseResponse.id). El id interno nunca
+# matcheaba ninguna opción, así que el valor se veía vacío aunque el dato estuviera guardado.
+# El usuario confirmó que field_id/target_field_id/source_field_id(s) SÍ se ven bien (son
+# campos nativos con id negativo constante, que nunca pasan por la resolución uuid->interno --
+# ver _resolve_one_field_id), así que el arreglo se limita a `value`.
+
+def _unresolve_one_nomenclator_item_id(session, internal_id):
+    """Sentido inverso de _resolve_one_nomenclator_item_id: id interno de NomenclatorItem ->
+    public_uuid, para mostrarlo en el detalle. Si el item ya no existe (borrado después de
+    guardar la regla), se devuelve el id interno tal cual en vez de fallar -- el detalle debe
+    poder mostrarse igual, aunque esa opción puntual ya no se pueda seleccionar en el <Select>."""
+    if not isinstance(internal_id, int):
+        return internal_id
+    resolved = NomenclatorItemRepository.get_public_uuid_by_internal_id(session, internal_id)
+    return resolved if resolved is not None else internal_id
+
+
+def _unresolve_native_id_value(session, repo, internal_id):
+    """Sentido inverso de _resolve_native_id_value. Mismo criterio de degradación amable que
+    _unresolve_one_nomenclator_item_id."""
+    if not isinstance(internal_id, int):
+        return internal_id
+    resolved = repo.get_public_uuid_by_internal_id(session, internal_id)
+    return resolved if resolved is not None else internal_id
+
+
+def _unresolve_condition_tree_values(session, node, selector_field_ids):
+    """Recorre el árbol de condiciones resolviendo node.value de id interno a public_uuid --
+    sentido inverso combinado de _resolve_condition_tree_selector_values y
+    _resolve_condition_tree_native_values. Requiere `selector_field_ids` de _get_selector_field_ids
+    (mismo criterio que el resto del archivo: field_id ya viene en id interno, tal como se
+    guardó)."""
+    if hasattr(node, "rules"):
+        for child in node.rules:
+            _unresolve_condition_tree_values(session, child, selector_field_ids)
+        return
+
+    if node.value is None:
+        return
+
+    if node.field_id in selector_field_ids:
+        if isinstance(node.value, list):
+            node.value = [_unresolve_one_nomenclator_item_id(session, v) for v in node.value]
+        else:
+            node.value = _unresolve_one_nomenclator_item_id(session, node.value)
+        return
+
+    if isinstance(node.field_id, int):
+        native_field = NATIVE_LEAD_FIELDS.get(node.field_id)
+        if native_field is None:
+            return
+        repo = _NATIVE_ID_REPOSITORIES_BY_ATTR.get(native_field.attr)
+        if repo is None:
+            return
+        if isinstance(node.value, list):
+            node.value = [_unresolve_native_id_value(session, repo, v) for v in node.value]
+        else:
+            node.value = _unresolve_native_id_value(session, repo, node.value)
+
+
+def _unresolve_actions_values(session, actions):
+    """Recorre las acciones resolviendo `value` de id interno a public_uuid -- sentido inverso
+    de los 3 bloques de `value` en _resolve_actions_field_ids (APPEND_TO_LIST/REMOVE_FROM_LIST,
+    SET_VALUE/SET_VALUE_IF_EMPTY sobre SELECTOR/CHECKBOX, y sobre NATIVE_ID). No toca
+    target_field_id/source_field_id(s): esos son ids de LeadField, que en el detalle ya se
+    muestran bien (confirmado por el usuario)."""
+    target_ids = {a.target_field_id for a in actions if a.target_field_id is not None}
+    selector_target_ids = _get_selector_field_ids(session, target_ids)
+
+    for action in actions:
+        if action.value is None:
+            continue
+
+        if action.type in (ActionTypeEnum.APPEND_TO_LIST, ActionTypeEnum.REMOVE_FROM_LIST):
+            values = action.value if isinstance(action.value, list) else [action.value]
+            action.value = [_unresolve_one_nomenclator_item_id(session, v) for v in values]
+            continue
+
+        if action.type not in (ActionTypeEnum.SET_VALUE, ActionTypeEnum.SET_VALUE_IF_EMPTY):
+            continue
+
+        if action.target_field_id in selector_target_ids:
+            if isinstance(action.value, list):
+                action.value = [_unresolve_one_nomenclator_item_id(session, v) for v in action.value]
+            else:
+                action.value = _unresolve_one_nomenclator_item_id(session, action.value)
+            continue
+
+        if isinstance(action.target_field_id, int):
+            native_field = NATIVE_LEAD_FIELDS.get(action.target_field_id)
+            if native_field is None:
+                continue
+            repo = _NATIVE_ID_REPOSITORIES_BY_ATTR.get(native_field.attr)
+            if repo is None:
+                continue
+            if isinstance(action.value, list):
+                action.value = [_unresolve_native_id_value(session, repo, v) for v in action.value]
+            else:
+                action.value = _unresolve_native_id_value(session, repo, action.value)
+
+
+def _unresolve_field_automation_values(session, obj):
+    """Punto de entrada único: aplica la resolución inversa de `value` a conditions/actions de
+    una FieldAutomationDetailedResponse ya armada. Se llama desde FieldAutomationService.get_by_id
+    /get_all -- no hace nada si el objeto no tiene conditions/actions (respuesta no detallada)."""
+    conditions = getattr(obj, "conditions", None)
+    actions = getattr(obj, "actions", None)
+    if conditions is None or actions is None:
+        return obj
+
+    cond_field_ids = set()
+    _collect_condition_field_ids(conditions, cond_field_ids)
+    selector_field_ids = _get_selector_field_ids(session, cond_field_ids)
+    _unresolve_condition_tree_values(session, conditions, selector_field_ids)
+    _unresolve_actions_values(session, actions)
+    return obj
+
+
 class FieldAutomationService(BaseService):
     repository = FieldAutomationRepository
 
@@ -344,3 +471,42 @@ class FieldAutomationService(BaseService):
             return updated_obj
 
         return cls._execute(action="Actualizando", obj_id=obj_id, func=do_update, success_msg=SUCCESS_UPDATE)
+
+    @classmethod
+    def get_by_id(cls, obj_id: str, user_context: Optional[UserContext] = None, detailed: bool = True):
+        """Override de BaseService.get_by_id: aplica la resolución inversa de `value`
+        (id interno -> public_uuid) sobre conditions/actions antes de devolver el detalle --
+        ver _unresolve_field_automation_values. Solo hace algo cuando detailed=True (el único
+        caso en que la respuesta trae conditions/actions, ver FieldAutomationDetailedResponse)."""
+        def do_get(uow):
+            internal_id = cls._resolve_id(uow.session, obj_id)
+            if internal_id is None:
+                return None
+            obj = cls.repository.get_by_id(uow.session, internal_id, user_context=user_context, detailed=detailed)
+            if obj is not None:
+                _unresolve_field_automation_values(uow.session, obj)
+            return obj
+
+        return cls._execute(action="Obteniendo", obj_id=obj_id, func=do_get)
+
+    @classmethod
+    def get_all(cls, user_context: Optional[UserContext] = None, page: int = 1, page_size: int = DEFAULT_PAGE_SIZE,
+                only_active: bool = True, detailed: bool = False, search: str = None, **kwargs):
+        """Override de BaseService.get_all: mismo criterio que get_by_id, por si algún listado
+        llega a pedirse con detailed=True (hoy el listado de automatizaciones no lo usa, pero
+        conditions/actions solo aparecen en la respuesta cuando detailed=True, así que no hace
+        daño cubrir también este camino)."""
+        def do_get_all(uow):
+            total, items = cls.repository.get_all(
+                session=uow.session, user_context=user_context, page=page, page_size=page_size,
+                only_active=only_active, detailed=detailed, search=search, **kwargs
+            )
+            if detailed:
+                for item in items:
+                    _unresolve_field_automation_values(uow.session, item)
+            return total, items
+
+        return cls._execute(
+            action=f"Obteniendo listado de {cls.repository.model.__name__}",
+            func=do_get_all
+        )

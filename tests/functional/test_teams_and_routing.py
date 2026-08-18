@@ -820,6 +820,39 @@ def test_routing_policy_native_field_assigned_to_user(api, db_session, initial_s
     assert lead_libre["team_id"]    is None,        "El lead sin asignar no debería rutearse."
 
 
+def test_routing_policy_native_field_team(api, initial_structure):
+    """Routing basado en campo nativo team_id, usando el public_uuid real del Team (como lo
+    manda RoutingConditionRow.tsx en value_str) -- a diferencia de
+    test_routing_policy_native_field_assigned_to_user de arriba (que arma value_str
+    directamente con el id interno para no depender de la resolución), este test cubre el
+    camino real de _resolve_native_condition_values (lead_routing_policy_service.py) para
+    team_id, que hasta ahora no tenía ningún test con un public_uuid de verdad."""
+    camp_id = initial_structure["campaign_id"]
+
+    origen  = api.create_team("Equipo Origen Nativo")
+    destino = api.create_team("Equipo Destino Por Regla")
+
+    api.create_routing_policy(
+        name           = "Rutear leads del Equipo Origen",
+        target_team_id = destino["id"],
+        conditions     = [{
+            "native_field": "team_id",
+            "operator":     "eq",
+            "value_str":    origen["id"],   # public_uuid real, no el id interno
+            "position":     0,
+        }],
+        priority    = 1,
+        campaign_id = camp_id,
+    )
+
+    f_dummy     = api.create_lead_field(camp_id, "Dato Team Nativo", "STRING")
+    lead_origen = api.create_lead(camp_id, [{"field_id": f_dummy["id"], "value": "x"}], team_id=origen["id"])
+    lead_libre  = api.create_lead(camp_id, [{"field_id": f_dummy["id"], "value": "y"}])
+
+    assert lead_origen["team"]["id"] == destino["id"], "El lead creado en Equipo Origen debería rutearse a Destino."
+    assert lead_libre["team_id"]    is None,           "El lead sin equipo no debería rutearse."
+
+
 def test_agent_cannot_delete_routing_policy(api, two_users, initial_structure):
     """Hallazgo #16: DELETE de una política requiere ser MANAGER del equipo destino,
     igual que create/update — antes no lo exigía.
