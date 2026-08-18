@@ -2,6 +2,7 @@ import pytest
 from io import BytesIO
 import json
 from openpyxl import Workbook
+from app.models.lead_field import LeadField
 
 # --- Helper Local ---
 def create_dummy_excel():
@@ -88,7 +89,7 @@ def test_export_campaign_data_applies_filters(api, initial_fields):
     assert list(df["Nombre"].dropna()) == ["Carlos Filtrado"], \
         f"El export no aplicó el filtro -- debería traer solo 'Carlos Filtrado': {df['Nombre'].tolist()}"
 
-def test_export_campaign_data_applies_text_query(api, initial_fields):
+def test_export_campaign_data_applies_text_query(api, db_session, initial_fields):
     """
     Mismo bug que test_export_campaign_data_applies_filters, pero para la búsqueda de texto libre
     (el modo Tablero manda `query` en vez de `filters` estructurados -- ver LeadListPage.tsx,
@@ -99,6 +100,12 @@ def test_export_campaign_data_applies_text_query(api, initial_fields):
 
     camp_id = initial_fields["campaign_id"]
     field_nombre_id = initial_fields["nombre_id"]
+
+    # Desde 2026-08-15 la búsqueda de texto libre se acotó a los campos que arman el
+    # título del lead (title_order IS NOT NULL, ver LeadRepository.search) -- "Nombre" acá
+    # necesita title_order seteado para poder matchear.
+    db_session.query(LeadField).filter_by(public_uuid=field_nombre_id).update({"title_order": 1})
+    db_session.commit()
 
     api.create_lead(campaign_id=camp_id, values=[{"field_id": field_nombre_id, "value": "Carlos Buscado"}], expected_status=200)
     api.create_lead(campaign_id=camp_id, values=[{"field_id": field_nombre_id, "value": "Beto Excluido"}], expected_status=200)

@@ -522,6 +522,11 @@ def test_search_leads_text_query(api, db_session, initial_structure):
     igual que GET /leads. Antes el controller/servicio/repositorio lo descartaban en
     silencio -- por eso el buscador del modo Tablero (que usa /leads/search) no filtraba
     nada, aunque el mismo buscador en modo Lista (GET /leads) sí funcionaba.
+
+    Desde 2026-08-15, la búsqueda de texto libre se acotó a los campos que arman el
+    título del lead (title_order IS NOT NULL) -- por eso f_nombre se crea con
+    title_order=1 (ver test_search_leads_text_query_ignores_non_title_field más abajo,
+    que cubre el caso contrario).
     """
     camp_id = initial_structure["campaign_id"]
     org_id = initial_structure["org_id"]
@@ -529,7 +534,7 @@ def test_search_leads_text_query(api, db_session, initial_structure):
     camp_internal_id = _resolve_internal_id(db_session, Campaign, camp_id)
     section_internal_id = _resolve_internal_id(db_session, LeadFieldSection, section_id)
 
-    f_nombre = LeadField(name="Nombre", field_type_code="STRING", campaign_id=camp_internal_id, order=1, lead_field_section_id=section_internal_id, organization_id=org_id, active=True)
+    f_nombre = LeadField(name="Nombre", field_type_code="STRING", campaign_id=camp_internal_id, order=1, lead_field_section_id=section_internal_id, organization_id=org_id, active=True, title_order=1)
     db_session.add(f_nombre)
     db_session.commit()
 
@@ -571,6 +576,36 @@ def test_search_leads_text_query(api, db_session, initial_structure):
     assert len(items_combo) == 1
     nombre_val_combo = next(v for v in items_combo[0]["field_values"] if v["field_id"] == f_nombre.id)
     assert nombre_val_combo["value"] == "Beto Sosa"
+
+
+def test_search_leads_text_query_ignores_non_title_field(api, db_session, initial_structure):
+    """
+    Regresión 2026-08-15: la búsqueda de texto libre de /leads/search se acotó a los
+    campos que arman el título del lead (LeadField.title_order IS NOT NULL) -- pedido
+    del usuario para que el buscador no traiga resultados por coincidencias en campos
+    que no se ven como "nombre" del lead (ej. una nota interna). Un campo sin
+    title_order NO debe matchear, aunque el texto coincida.
+    """
+    camp_id = initial_structure["campaign_id"]
+    org_id = initial_structure["org_id"]
+    section_id = initial_structure["section_id"]
+    camp_internal_id = _resolve_internal_id(db_session, Campaign, camp_id)
+    section_internal_id = _resolve_internal_id(db_session, LeadFieldSection, section_id)
+
+    f_nota = LeadField(name="Nota interna", field_type_code="STRING", campaign_id=camp_internal_id, order=1, lead_field_section_id=section_internal_id, organization_id=org_id, active=True)  # sin title_order
+    db_session.add(f_nota)
+    db_session.commit()
+
+    api.create_lead(campaign_id=camp_id, values=[{"field_id": f_nota.id, "value": "Contactar por Whatsapp Rodriguez"}])
+
+    res = api.client.post(
+        "/leads/search",
+        params={"query": "rodrig"},
+        json={"page": 1, "filters": []},
+        headers=api.headers,
+    )
+    assert res.status_code == 200
+    assert res.json()["items"] == []
 
 def test_search_leads_custom_field_filter_by_public_uuid(api, db_session, initial_structure):
     """

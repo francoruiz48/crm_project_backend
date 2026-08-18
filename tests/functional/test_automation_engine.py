@@ -1099,3 +1099,76 @@ def test_wrong_event_rule_does_not_fire(api, automations_setup):
 
     assert res.status_code == 200
     assert _vals(res).get(s["f_resultado_id"]) != "No deberia"
+
+
+# =============================================================================
+# LECTURA DEL DETALLE (GET .../{id}?detailed=true) -- value debe volver como public_uuid
+# =============================================================================
+# Bug real encontrado 2026-08-15 (reportado por el usuario: "no veo el valor con que hace la
+# accion o la condicion"): field_automation_service.py resuelve `value` de public_uuid a id
+# interno al GUARDAR (para que el motor pueda comparar/asignar contra LeadFieldValue real --
+# ver bugs de 2026-08-01/2026-08-06 arriba), pero nunca existía el paso inverso al LEER. El
+# detalle devolvía `value` en id interno crudo, que nunca matchea ninguna opción del <Select>
+# del front (arma sus opciones con public_uuid, igual que el resto de la API) -- el valor se
+# veía vacío aunque el dato estuviera guardado. Estos tests cubren el camino de lectura
+# (_unresolve_*, FieldAutomationService.get_by_id) que los tests de arriba no cubrían -- esos
+# solo verifican que la REGLA se dispare (id interno correcto puertas adentro), no lo que
+# devuelve el GET.
+
+def test_get_field_automation_returns_public_uuid_value_for_selector_condition_and_action(api, automations_setup):
+    """El detalle de una automatización con una condición y una acción sobre un campo SELECTOR
+    debe devolver `value` como el public_uuid real del NomenclatorItem (item_a_id/item_b_id),
+    no como el id interno en el que quedó resuelto al guardar."""
+    s = automations_setup
+
+    rule = _rule(api, s["campaign_id"], "Regla Detalle Selector", "ON_UPDATE",
+                 _cond(s["f_lista_id"], "CONTAINS", [s["item_a_id"]]),
+                 [{"type": "SET_VALUE", "target_field_id": s["f_lista_id"], "value": [s["item_b_id"]]}]).json()
+
+    res = api.client.get(f"/field_automations/{rule['id']}", params={"detailed": "true"}, headers=api.headers)
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["conditions"]["rules"][0]["value"] == [s["item_a_id"]]
+    assert body["actions"][0]["value"] == [s["item_b_id"]]
+
+
+def test_get_field_automation_returns_public_uuid_value_for_native_condition_and_action(api, automations_setup, db_session):
+    """Mismo caso que el test de arriba, para campos nativos tipo NATIVE_ID (Equipo, -3):
+    el detalle debe devolver `value` como el public_uuid real del Team, no como el id interno."""
+    s = automations_setup
+    org_internal_id = db_session.query(Organization.id).filter_by(public_uuid=s["org_id"]).scalar()
+
+    team_a = Team(name="Equipo Detalle A", organization_id=org_internal_id)
+    team_b = Team(name="Equipo Detalle B", organization_id=org_internal_id)
+    db_session.add_all([team_a, team_b])
+    db_session.commit()
+
+    rule = _rule(api, s["campaign_id"], "Regla Detalle Equipo", "ON_UPDATE",
+                 _cond(-3, "EQUALS", [team_a.public_uuid]),
+                 [{"type": "SET_VALUE", "target_field_id": -3, "value": team_b.public_uuid}]).json()
+
+    res = api.client.get(f"/field_automations/{rule['id']}", params={"detailed": "true"}, headers=api.headers)
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["conditions"]["rules"][0]["value"] == [team_a.public_uuid]
+    assert body["actions"][0]["value"] == team_b.public_uuid
+
+
+def test_get_field_automation_value_untouched_for_plain_field(api, automations_setup):
+    """Control: una acción/condición sobre un campo de texto plano (sin resolución de por
+    medio) debe devolver `value` sin ninguna transformación -- la resolución inversa no debe
+    tocar valores que no son ids."""
+    s = automations_setup
+
+    rule = _rule(api, s["campaign_id"], "Regla Detalle Texto Plano", "ON_UPDATE",
+                 _cond(s["f_condicion_id"], "EQUALS", ["Disparar"]),
+                 [{"type": "SET_VALUE", "target_field_id": s["f_resultado_id"], "value": "Magia"}]).json()
+
+    res = api.client.get(f"/field_automations/{rule['id']}", params={"detailed": "true"}, headers=api.headers)
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["conditions"]["rules"][0]["value"] == ["Disparar"]
+    assert body["actions"][0]["value"] == "Magia"

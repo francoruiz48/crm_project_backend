@@ -11,6 +11,14 @@ class NomenclatorLiteResponse(BaseModel, BaseResponse):
     name: str
 
 
+# Versión liviana de NomenclatorItemResponse, usada para exponer solo las opciones
+# seleccionables (id + value) sin arrastrar parent_items/nomenclator/organization_id -- pensada
+# para el endpoint público de formularios web (WebFormFieldResponse.nomenclator_items, ver
+# web_form_field_schema.py), donde no hace falta ni conviene traer más que esto.
+class NomenclatorItemLiteResponse(BaseModel, BaseResponse):
+    value: str
+
+
 class NomenclatorItemBase(BaseModel):
     value: str = Field(..., min_length=1, max_length=100)
     nomenclator_id: int = Field(gt=0)

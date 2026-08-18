@@ -214,18 +214,21 @@ class LeadRepository(BaseRepository):
             campaign_id = cls.resolve_fk_filter_value(session, "campaign_id", campaign_id)
             db_query = db_query.filter(cls.model.campaign_id == campaign_id)
 
-        # Búsqueda de texto libre (mismo criterio que get_all: campos STRING/SELECTOR,
-        # ilike sobre LeadFieldValue.value y NomenclatorItem.value). Antes este parámetro
-        # ni siquiera llegaba hasta acá -- el modo Tablero mandaba `query` pero el
-        # controller/servicio lo descartaban en silencio, así que nunca filtraba nada.
+        # Búsqueda de texto libre -- ilike sobre LeadFieldValue.value y
+        # NomenclatorItem.value, pero SOLO en los campos que arman el título del lead
+        # (LeadField.title_order IS NOT NULL). Antes buscaba en cualquier campo
+        # STRING/SELECTOR de la campaña (mismo criterio que get_all), lo que hacía que el
+        # buscador de la lista de leads devolviera resultados por coincidencias en campos
+        # que ni se ven en la tarjeta/fila (ej. una nota interna) -- pedido del usuario
+        # para acotarlo solo a los campos que arman el título, que es lo que el usuario
+        # identifica visualmente como "nombre" del lead.
         text_search_applied = False
         if query:
-            TEXT_SEARCH_TYPES = ('STRING', 'SELECTOR')
             db_query = db_query.join(LeadFieldValue, cls.model.field_values)
             db_query = db_query.join(LeadField, LeadFieldValue.field)
             db_query = db_query.outerjoin(LeadFieldValue.nomenclator_items)
             db_query = db_query.filter(
-                LeadField.field_type_code.in_(TEXT_SEARCH_TYPES),
+                LeadField.title_order.isnot(None),
                 or_(
                     LeadFieldValue.value.ilike(f"%{query}%"),
                     NomenclatorItem.value.ilike(f"%{query}%"),
