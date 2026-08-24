@@ -1,6 +1,6 @@
 # Convenciones Generales del Backend
 
-Documento transversal (no es un módulo de negocio en sí) que describe el patrón común sobre el que están construidos casi todos los módulos del CRM: `BaseModelDB`, `BaseRepository`, `BaseService` y `BaseController`. Se armó a partir de la ronda de documentación de todos los módulos (2026-07-10) porque el mismo patrón se repetía en cada uno; en vez de explicarlo 20 veces, cada doc de módulo referencia este archivo y solo describe sus particularidades. Última revisión: 2026-07-10.
+Documento transversal (no es un módulo de negocio en sí) que describe el patrón común sobre el que están construidos casi todos los módulos del CRM: `BaseModelDB`, `BaseRepository`, `BaseService` y `BaseController`. Se armó a partir de la ronda de documentación de todos los módulos (2026-07-10) porque el mismo patrón se repetía en cada uno; en vez de explicarlo 20 veces, cada doc de módulo referencia este archivo y solo describe sus particularidades. Última revisión: 2026-08-10 (se agregó el endpoint que expone §9 en vivo, ver nota al final de esa sección).
 
 ## Índice
 
@@ -164,3 +164,5 @@ Referencia rápida (repositorios en `app/db/repository/`), completa a la fecha d
 | `LeadActivityHistory` / `LeadStateHistory` / `SystemAuditLog` | `PROTECTED` |
 
 Los docs de cada módulo repiten solo la fila que les corresponde, con el detalle de por qué se eligió esa estrategia si es relevante.
+
+**[NUEVO 2026-08-10]** Esta tabla ya no es solo referencia estática para quien lea el doc: se agregó la clave `entity_delete_strategies` a `GET /metadata/dictionaries` (ver `metadata.md` §3-bis), que devuelve exactamente este mapeo (`{NombreModelo: delete_strategy}`) calculado en runtime — recorre las subclases de `BaseRepository` y lee el atributo real de cada una, no es una copia hardcodeada. El objetivo fue que el frontend pueda decidir automáticamente qué UI de borrado mostrar por entidad (confirmación simple, toggle de `?force=true`, opción de desactivar aparte, botón deshabilitado si es `PROTECTED`, etc.) sin mantener este mismo mapa a mano del lado del cliente. La tabla de acá arriba puede quedar desactualizada si se agrega un repositorio nuevo y no se actualiza este doc a mano; el endpoint, al ser dinámico, nunca se desincroniza — en caso de duda, el endpoint es la fuente de verdad, no esta tabla.

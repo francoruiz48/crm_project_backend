@@ -55,6 +55,7 @@ class TeamWorkspaceAccessRepository(BaseRepository):
 
 class TeamCampaignAccessRepository(BaseRepository):
     model             = TeamCampaignAccess
+    delete_strategy = DeleteStrategy.HARD_DELETE_ALWAYS
     schema_in         = TeamCampaignAccessCreate
     schema_out        = TeamCampaignAccessResponse
     schema_out_detail = TeamCampaignAccessDetailedResponse
