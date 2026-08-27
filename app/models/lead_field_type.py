@@ -9,4 +9,4 @@ class LeadFieldType(BaseModelDB):
     description = Column(String, nullable=False)
 
     fields = relationship("LeadField", back_populates="field_type")
-    
+    subtypes = relationship("LeadFieldSubtype", back_populates="lead_field_type")

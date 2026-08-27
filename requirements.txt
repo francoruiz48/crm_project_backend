@@ -9,3 +9,16 @@ pydantic[email]
 pytest
 pytest-asyncio
 httpx
+simpleeval
+requests
+supabase
+python-multipart
+faker
+pytest-sugar
+pytest-clarity
+pandas
+openpyxl
+slowapi
+passlib[bcrypt]
+bcrypt==4.0.1
+python-jose[cryptography]

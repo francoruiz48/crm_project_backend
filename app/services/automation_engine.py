@@ -1,0 +1,282 @@
+from typing import Dict, Any, Tuple
+from datetime import datetime, timedelta
+from sqlalchemy.orm import Session
+from app.models.field_automation import FieldAutomation
+from app.schemas.field_automation_schema import (
+    RuleGroup, RuleCondition, LogicalOperatorEnum,
+    ConditionOperatorEnum, ActionTypeEnum, AutomationAction
+)
+from app.core.constans import DATE_FORMAT, DATE_TIME_FORMAT
+from app.core.native_lead_fields import NATIVE_LEAD_FIELDS, WRITABLE_NATIVE_FIELD_IDS
+
+class AutomationEngine:
+
+    # Límite de veces que el motor re-evaluará las reglas si hay cambios (Efecto Dominó)
+    MAX_CASCADES = 5
+
+    # Límite de grupos anidados permitidos en el JSON para evitar Stack Overflow
+    MAX_JSON_DEPTH = 10
+
+    @classmethod
+    def run(cls, session: Session, campaign_id: int, context_data: Dict[int, Any], event: str) -> Tuple[Dict[int, Any], Dict[int, dict]]:
+        audit_log = {}
+
+        rules = session.query(FieldAutomation).filter(
+            FieldAutomation.campaign_id == campaign_id,
+            FieldAutomation.active == True,
+            FieldAutomation.trigger_events.contains([event])
+        ).order_by(FieldAutomation.priority.asc()).all()
+
+        if not rules:
+            return context_data, audit_log
+
+        # --- DEFENSA 1: Bucle de Cascada con Límite ---
+        iterations = 0
+        state_changed = True
+
+        while state_changed and iterations < cls.MAX_CASCADES:
+            state_changed = False
+            iterations += 1
+
+            for rule_db in rules:
+                try:
+                    conditions_tree = RuleGroup.model_validate(rule_db.conditions)
+
+                    if cls._evaluate_group(conditions_tree, context_data, current_depth=1):
+
+                        actions_list = [AutomationAction.model_validate(a) for a in rule_db.actions]
+                        # Retorna True si AL MENOS UN campo mutó realmente
+                        changed_in_rule = cls._apply_actions(actions_list, context_data, audit_log, rule_db.name)
+
+                        if changed_in_rule:
+                            state_changed = True
+
+                except Exception as e:
+                    print(f"⚠️ Error evaluando regla '{rule_db.name}': {e}")
+                    continue
+
+        if iterations >= cls.MAX_CASCADES:
+            print(f"⚠️ ATENCIÓN: Límite de cascada alcanzado ({cls.MAX_CASCADES}) para campaña {campaign_id}.")
+
+        return context_data, audit_log
+
+    # ==========================================
+    # EL MOTOR LÓGICO (RECURSIVIDAD BLINDADA)
+    # ==========================================
+    @classmethod
+    def _evaluate_group(cls, group: RuleGroup, context: Dict[int, Any], current_depth: int) -> bool:
+        # --- DEFENSA 2: Cortafuegos de Stack Overflow ---
+        if current_depth > cls.MAX_JSON_DEPTH:
+            print(f"⚠️ Profundidad máxima de JSON alcanzada ({cls.MAX_JSON_DEPTH}).")
+            return False
+
+        results = []
+        for node in group.rules:
+            if isinstance(node, RuleGroup):
+                results.append(cls._evaluate_group(node, context, current_depth + 1))
+            elif isinstance(node, RuleCondition):
+                results.append(cls._evaluate_condition(node, context))
+
+        if not results:
+            return False  # Un grupo vacío no cumple nada
+
+        if group.operator == LogicalOperatorEnum.AND:
+            return all(results)
+        elif group.operator == LogicalOperatorEnum.OR:
+            return any(results)
+
+        return False
+
+    @classmethod
+    def _evaluate_condition(cls, condition: RuleCondition, context: Dict[int, Any]) -> bool:
+        actual_val = context.get(condition.field_id)
+        target_val = condition.value
+        op = condition.operator
+
+        if isinstance(target_val, str):
+            now = datetime.utcnow()
+
+            if target_val == "{{CURRENT_DATE}}":
+                target_val = now.strftime(DATE_FORMAT)
+            elif target_val == "{{CURRENT_DATETIME}}":
+                target_val = now.strftime(DATE_TIME_FORMAT)
+            elif target_val == "{{YESTERDAY}}":
+                target_val = (now - timedelta(days=1)).strftime(DATE_FORMAT)
+            elif target_val == "{{TOMORROW}}":
+                target_val = (now + timedelta(days=1)).strftime(DATE_FORMAT)
+
+        is_empty = actual_val is None or actual_val == "" or actual_val == []
+        if op == ConditionOperatorEnum.IS_EMPTY: return is_empty
+        if op == ConditionOperatorEnum.IS_NOT_EMPTY: return not is_empty
+
+        if is_empty: return False
+
+        def _to_set(val):
+            if isinstance(val, list): return set(str(v).strip() for v in val)
+            return {str(val).strip()}
+
+        if op == ConditionOperatorEnum.EQUALS:
+            return _to_set(actual_val) == _to_set(target_val)
+
+        if op == ConditionOperatorEnum.NOT_EQUALS:
+            return _to_set(actual_val) != _to_set(target_val)
+
+        if op == ConditionOperatorEnum.CONTAINS:
+            # Para strings simples: búsqueda de substring (ej: "ola" in "hola mundo")
+            if isinstance(actual_val, str) and not isinstance(target_val, (list, set)):
+                return str(target_val) in actual_val
+            return _to_set(target_val).issubset(_to_set(actual_val))
+
+        if op == ConditionOperatorEnum.NOT_CONTAINS:
+            # Para strings simples: búsqueda de substring negada
+            if isinstance(actual_val, str) and not isinstance(target_val, (list, set)):
+                return str(target_val) not in actual_val
+            return not _to_set(target_val).issubset(_to_set(actual_val))
+
+        # --- COMPARACIÓN INTELIGENTE (Números y Fechas) ---
+        if op in (ConditionOperatorEnum.GREATER_THAN, ConditionOperatorEnum.LESS_THAN):
+            try:
+                val_a = float(actual_val)
+                val_t = float(target_val)
+                if op == ConditionOperatorEnum.GREATER_THAN: return val_a > val_t
+                if op == ConditionOperatorEnum.LESS_THAN: return val_a < val_t
+            except (ValueError, TypeError):
+                str_a = str(actual_val).strip()
+                str_t = str(target_val).strip()
+                if op == ConditionOperatorEnum.GREATER_THAN: return str_a > str_t
+                if op == ConditionOperatorEnum.LESS_THAN: return str_a < str_t
+
+        if op == ConditionOperatorEnum.STARTS_WITH:
+            return str(actual_val).startswith(str(target_val))
+
+        if op == ConditionOperatorEnum.ENDS_WITH:
+            return str(actual_val).endswith(str(target_val))
+
+        if op in (ConditionOperatorEnum.IS_PAST, ConditionOperatorEnum.IS_FUTURE):
+            parsed = cls._parse_date_value(actual_val)
+            if parsed is None:
+                return False
+            now = datetime.utcnow()
+            if op == ConditionOperatorEnum.IS_PAST:   return parsed < now
+            if op == ConditionOperatorEnum.IS_FUTURE: return parsed > now
+
+        return False
+
+    # ==========================================
+    # HELPERS INTERNOS
+    # ==========================================
+    @classmethod
+    def _parse_date_value(cls, val) -> datetime | None:
+        """Intenta parsear un valor como DATE_TIME y luego como DATE. Retorna None si falla."""
+        for fmt in (DATE_TIME_FORMAT, DATE_FORMAT):
+            try:
+                return datetime.strptime(str(val).strip(), fmt)
+            except (ValueError, TypeError):
+                continue
+        return None
+
+    # ==========================================
+    # EL MOTOR DE ACCIONES (MUTACIÓN)
+    # ==========================================
+    @classmethod
+    def _apply_actions(cls, actions: list[AutomationAction], context: Dict[int, Any], audit_log: Dict[int, dict], rule_name: str) -> bool:
+        any_change = False
+
+        for action in actions:
+            target_id = action.target_field_id
+
+            # Campos nativos de solo lectura (Fecha de creación/actualización, Usuario
+            # Creador/Modificación): son hechos de auditoría, no algo que una automatización
+            # pueda "setear". Se ignora la acción en vez de fallar toda la regla.
+            if target_id in NATIVE_LEAD_FIELDS and target_id not in WRITABLE_NATIVE_FIELD_IDS:
+                continue
+
+            old_value = context.get(target_id)
+            new_value = None
+
+            if action.type == ActionTypeEnum.SET_VALUE:
+                new_value = action.value
+
+            elif action.type == ActionTypeEnum.CLEAR_VALUE:
+                new_value = None
+
+            elif action.type == ActionTypeEnum.SET_CURRENT_DATE:
+                new_value = datetime.utcnow().strftime(DATE_FORMAT)
+
+            elif action.type == ActionTypeEnum.SET_CURRENT_DATETIME:
+                new_value = datetime.utcnow().strftime(DATE_TIME_FORMAT)
+
+            elif action.type == ActionTypeEnum.COPY_FROM_FIELD:
+                # Solo copiamos si el origen existe y no está vacío
+                if action.source_field_id and action.source_field_id in context:
+                    src = context[action.source_field_id]
+                    if src is not None and src != "" and src != []:
+                        new_value = src
+                    else:
+                        new_value = old_value
+                else:
+                    new_value = old_value
+
+            elif action.type == ActionTypeEnum.INCREMENT:
+                step = int(float(action.value)) if action.value is not None else 1
+                base = int(float(old_value)) if old_value is not None else 0
+                new_value = base + step
+
+            elif action.type == ActionTypeEnum.DECREMENT:
+                step = int(float(action.value)) if action.value is not None else 1
+                base = int(float(old_value)) if old_value is not None else 0
+                new_value = base - step
+
+            elif action.type == ActionTypeEnum.APPEND_TO_LIST:
+                current = list(old_value) if isinstance(old_value, list) else ([old_value] if old_value is not None else [])
+                to_add = action.value if isinstance(action.value, list) else [action.value]
+                for item in to_add:
+                    if item not in current:
+                        current.append(item)
+                new_value = current
+
+            elif action.type == ActionTypeEnum.REMOVE_FROM_LIST:
+                current = list(old_value) if isinstance(old_value, list) else ([old_value] if old_value is not None else [])
+                to_remove = set(action.value) if isinstance(action.value, list) else {action.value}
+                new_value = [item for item in current if item not in to_remove]
+
+            elif action.type == ActionTypeEnum.SET_DATE_OFFSET:
+                days = int(action.value) if action.value is not None else 0
+                new_value = (datetime.utcnow() + timedelta(days=days)).strftime(DATE_FORMAT)
+
+            elif action.type == ActionTypeEnum.SET_VALUE_IF_EMPTY:
+                is_empty = old_value is None or old_value == "" or old_value == []
+                new_value = action.value if is_empty else old_value
+
+            elif action.type == ActionTypeEnum.NORMALIZE_TEXT:
+                if old_value is not None:
+                    mode = str(action.value).upper() if action.value else "TRIM"
+                    text = str(old_value)
+                    if mode == "UPPERCASE":
+                        new_value = text.upper()
+                    elif mode == "LOWERCASE":
+                        new_value = text.lower()
+                    else:
+                        new_value = text.strip()
+                else:
+                    new_value = old_value
+
+            elif action.type == ActionTypeEnum.CONCAT_FIELDS:
+                separator = str(action.value) if action.value is not None else " "
+                field_ids = action.source_field_ids or []
+                parts = [str(context[fid]) for fid in field_ids if context.get(fid) not in (None, "")]
+                new_value = separator.join(parts) if parts else old_value
+
+            # --- ESCRITURA (solo si el valor realmente cambió) ---
+            # Comparamos como strings para manejar int vs "5" sin falsos positivos
+            old_str = str(old_value) if old_value is not None else None
+            new_str = str(new_value) if new_value is not None else None
+
+            if old_str != new_str:
+                context[target_id] = new_value
+                any_change = True
+                if target_id not in audit_log:
+                    audit_log[target_id] = {"old_value": old_value, "new_value": new_value, "source_rule": rule_name}
+                else:
+                    audit_log[target_id]["new_value"] = new_value
+                    audit_log[target_id]["source_rule"] += f" -> {rule_name}"

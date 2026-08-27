@@ -1,6 +1,0 @@
-from app.db.repository.validation_rule_type_compatibility_repository import ValidationRuleTypeCompabilityRepository
-from app.services.base_service import BaseService
-
-
-class ValidationRuleTypeCompatibilityService(BaseService):
-    repository = ValidationRuleTypeCompabilityRepository

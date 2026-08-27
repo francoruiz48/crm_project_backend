@@ -1,0 +1,88 @@
+import uuid
+from supabase import create_client, Client
+from fastapi import UploadFile, HTTPException
+from app.core.config import settings
+from app.core.constans import ALLOWED_IMAGE_TYPES, ALLOWED_DOCUMENT_TYPES, MAX_FILE_SIZE_MB
+
+_MIME_TO_EXTENSIONS = {
+    "image/jpeg": {"jpg", "jpeg"},
+    "image/png": {"png"},
+    "image/webp": {"webp"},
+    "image/gif": {"gif"},
+    "image/avif": {"avif"},
+    "application/pdf": {"pdf"},
+    "application/msword": {"doc"},
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {"docx"},
+    "application/vnd.ms-excel": {"xls"},
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {"xlsx"},
+    "text/plain": {"txt", "text"},
+    "text/csv": {"csv"},
+}
+
+class StorageService:
+    _client: Client = None
+
+    @classmethod
+    def get_client(cls) -> Client:
+        if not cls._client:
+            cls._client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+        return cls._client
+
+    @classmethod
+    def validate_file(cls, file: UploadFile, allowed_types: list):
+        
+        """Valida tamaño y tipo MIME"""
+        # 1. Validar Tipo
+        if file.content_type not in allowed_types:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Tipo de archivo no permitido: {file.content_type}. Esperado: {allowed_types}"
+            )
+        
+        # 2. Validar Tamaño (Opcional, requiere leer el archivo o usar headers)
+        file.file.seek(0, 2)
+        size = file.file.tell()
+        file.file.seek(0)
+        if size > MAX_FILE_SIZE_MB * 1024 * 1024:
+            raise HTTPException(400, f"El archivo excede los {MAX_FILE_SIZE_MB}MB")
+        
+    @classmethod
+    def upload_file(cls, file: UploadFile, folder: str = "uploads") -> str:
+        # Sanitizar nombre y validar extensión contra el MIME type declarado -- se hace ANTES
+        # de tocar el cliente de Supabase a propósito (bug real encontrado 2026-07-30): es una
+        # validación puramente local, no necesita red ni credenciales, así que no tiene sentido
+        # pagar el costo (ni la dependencia) de instanciar el cliente solo para rechazar un
+        # archivo por extensión inválida.
+        file_ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename and "." in file.filename else ""
+        allowed_exts = _MIME_TO_EXTENSIONS.get(file.content_type, set())
+        if allowed_exts and file_ext not in allowed_exts:
+            raise HTTPException(400, f"Extensión de archivo '.{file_ext}' no es válida para el tipo '{file.content_type}'.")
+
+        client = cls.get_client()
+        unique_name = f"{uuid.uuid4()}.{file_ext}"
+        path = f"{folder}/{unique_name}"
+        
+        try:
+            file.file.seek(0)
+            file_content = file.file.read()
+            client.storage.from_(settings.SUPABASE_BUCKET).upload(
+                path=path,
+                file=file_content,
+                file_options={"content-type": file.content_type}
+            )
+            return path
+        except Exception as e:
+            raise HTTPException(500, detail=f"Error subiendo archivo a Supabase: {str(e)}")
+
+    @classmethod
+    def get_public_url(cls, path: str) -> str:
+        # Si el path es nulo, vacío, o puros espacios, devolver None
+        if not path or not str(path).strip(): 
+            return None
+            
+        # Si ya es una URL completa (migración antigua o re-inyección), devolverla
+        if str(path).startswith("http"): 
+            return path
+        
+        client = cls.get_client()
+        return client.storage.from_(settings.SUPABASE_BUCKET).get_public_url(path)

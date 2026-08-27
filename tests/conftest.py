@@ -1,53 +1,30 @@
+"""
+conftest.py actualizado
+========================
+Agrega los fixtures multi-usuario como OPT-IN sin tocar los existentes.
+Los tests actuales siguen funcionando sin cambios.
+"""
+# Plugin de logging por archivo (genera tests/logs/)
+pytest_plugins = ["tests.plugins.log_reporter"]
+
+from tests.fixtures.db_fixtures import db_engine, db_session
+from tests.fixtures.client import client
+from tests.fixtures.data_seeds import initial_structure, initial_fields
+# Importar los nuevos fixtures multi-usuario (OPT-IN)
+from tests.fixtures.user_fixtures import team_users, api_multi
+# Fixtures de aislamiento multi-tenant
+from tests.fixtures.org_fixtures import ctx_alpha, ctx_beta, member_multi
+
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from fastapi.testclient import TestClient
-from app.main import app
-from app.db.base_sql import Base
-from app.db import session as db_session_module  # Importamos el módulo de sesión
+from tests.helpers.api_helpers import ApiClient
 
-# Motor SQLite en memoria para tests
-SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Reemplazamos SessionLocal temporalmente
-db_session_module.SessionLocal = TestingSessionLocal
-
-# Crear tablas en la DB de test
-Base.metadata.create_all(bind=engine)
-
-# Fixture para sesión de base de datos
-@pytest.fixture(scope="function")
-def db_session():
-    session = TestingSessionLocal()
-    try:
-        yield session
-    finally:
-        session.close()
-
-# Fixture para cliente de test (FastAPI)
-@pytest.fixture(scope="function")
-def client(db_session):
-    with TestClient(app) as c:
-        yield c
-
-# Fixture para datos iniciales
-@pytest.fixture(scope="function")
-def initial_fields(db_session):
-    from app.models.lead_field_type import LeadFieldType
-    from app.models.lead_field import LeadField
-
-    # Crear tipos de campo
-    string_type = LeadFieldType(code="STRING", description="Texto")
-    db_session.add(string_type)
-    db_session.commit()
-    db_session.refresh(string_type)
-
-    # Crear campos
-    nombre_field = LeadField(name="Nombre", field_type_id=string_type.id, required=True)
-    apellido_field = LeadField(name="Apellido", field_type_id=string_type.id, required=False)
-    db_session.add_all([nombre_field, apellido_field])
-    db_session.commit()
-
-    return {"nombre": nombre_field, "apellido": apellido_field}
+@pytest.fixture
+def api(client, initial_structure):
+    """
+    Fixture original sin cambios.
+    Usa el superadmin hardcodeado en security.py.
+    Todos los tests existentes siguen funcionando igual.
+    """
+    org_id = initial_structure["org_id"]
+    return ApiClient(client, org_id=org_id)
