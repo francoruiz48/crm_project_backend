@@ -11,7 +11,7 @@ RUN pip install --no-cache-dir -r requirements-prod.txt
 
 # Copiar el código de la app
 COPY ./app /code/app
-COPY start.sh /code/start-prod.sh
+COPY start-prod.sh /code/start-prod.sh
 
 # Dar permisos de ejecución al script
 RUN chmod +x /code/start-prod.sh
