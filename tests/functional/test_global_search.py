@@ -14,6 +14,17 @@ la cobertura básica que faltaba.
 """
 from app.models.nomenclator import Nomenclator
 from app.models.nomenclator_item import NomenclatorItem
+from app.models.lead_field import LeadField
+from app.models.lead_field_section import LeadFieldSection
+from app.models.campaign import Campaign
+
+
+def _resolve_internal_id(db_session, model, public_uuid_or_int):
+    """Ídem tests/functional/test_leads.py::_resolve_internal_id -- initial_structure
+    devuelve public_uuid (Fase 3) pero LeadField necesita el id interno."""
+    if isinstance(public_uuid_or_int, int):
+        return public_uuid_or_int
+    return db_session.query(model.id).filter_by(public_uuid=public_uuid_or_int).scalar()
 
 
 def _create_nomenclator_with_item(db_session, org_id, nom_name, item_value):
@@ -83,3 +94,47 @@ class TestGlobalSearch:
         body = resp.json()
         assert body["nomenclators"] == []
         assert body["nomenclator_items"] == []
+
+    def test_search_leads_only_matches_title_fields(self, api, db_session, initial_structure):
+        """
+        El buscador global (GET /search, usado por el navbar) debía buscar en
+        cualquier campo STRING/SELECTOR del lead -- mismo problema que ya se había
+        corregido para POST /leads/search (ver test_leads.py::
+        test_search_leads_text_query_ignores_non_title_field, fix 2026-08-15).
+        Se acota acá también a los campos que arman el título del lead
+        (LeadField.title_order IS NOT NULL), pedido del usuario para el buscador
+        del navbar.
+        """
+        camp_id = initial_structure["campaign_id"]
+        org_id = initial_structure["org_id"]
+        section_id = initial_structure["section_id"]
+        camp_internal_id = _resolve_internal_id(db_session, Campaign, camp_id)
+        section_internal_id = _resolve_internal_id(db_session, LeadFieldSection, section_id)
+
+        f_nombre = LeadField(
+            name="Nombre", field_type_code="STRING", campaign_id=camp_internal_id,
+            order=1, lead_field_section_id=section_internal_id, organization_id=org_id,
+            active=True, title_order=1,
+        )
+        f_nota = LeadField(
+            name="Nota interna", field_type_code="STRING", campaign_id=camp_internal_id,
+            order=2, lead_field_section_id=section_internal_id, organization_id=org_id,
+            active=True,  # sin title_order
+        )
+        db_session.add_all([f_nombre, f_nota])
+        db_session.commit()
+
+        api.create_lead(campaign_id=camp_id, values=[
+            {"field_id": f_nombre.id, "value": "Carla Ferreyra Buscada Qwe"},
+        ])
+        api.create_lead(campaign_id=camp_id, values=[
+            {"field_id": f_nota.id, "value": "Llamar de nuevo Buscada Qwe"},
+        ])
+
+        # Matchea el lead cuyo campo título contiene el texto
+        resp_titulo = api.client.get("/search", params={"query": "Buscada Qwe"}, headers=api.headers)
+        assert resp_titulo.status_code == 200, resp_titulo.text
+        leads_encontrados = resp_titulo.json()["leads"]
+        assert len(leads_encontrados) == 1
+        nombre_val = next(v for v in leads_encontrados[0]["field_values"] if v["field_id"] == f_nombre.id)
+        assert nombre_val["value"] == "Carla Ferreyra Buscada Qwe"

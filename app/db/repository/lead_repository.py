@@ -146,9 +146,6 @@ class LeadRepository(BaseRepository):
 
         # Si hay búsqueda global, pre-armamos la query con sus JOINs
         if search:
-            # Tipos de campo donde tiene sentido buscar texto libre
-            TEXT_SEARCH_TYPES = ('STRING', 'SELECTOR')
-
             query = query.join(LeadFieldValue, cls.model.field_values)
             query = query.join(LeadField, LeadFieldValue.field)
             query = query.outerjoin(LeadFieldValue.nomenclator_items)
@@ -162,8 +159,16 @@ class LeadRepository(BaseRepository):
                 # Modo explícito: filtrar por nombres de campo específicos
                 query = query.filter(LeadField.name.in_(search_fields), or_(*conditions))
             else:
-                # Modo automático: solo campos STRING y SELECTOR
-                query = query.filter(LeadField.field_type_code.in_(TEXT_SEARCH_TYPES), or_(*conditions))
+                # Modo automático (usado por el buscador global del navbar, ver
+                # SearchService.global_search) -- acotado a los campos que arman el
+                # título del lead (LeadField.title_order IS NOT NULL), mismo criterio
+                # que ya usa LeadRepository.search() para el buscador de la lista/
+                # tablero de leads (ver comentario ahí, fix 2026-08-15). Antes buscaba
+                # en cualquier campo STRING/SELECTOR de la campaña, así que el buscador
+                # del navbar traía leads por coincidencias en campos que ni se ven
+                # como "nombre" del lead (ej. una nota interna) -- pedido del usuario
+                # para acotarlo, igual que ya se había hecho para el buscador interno.
+                query = query.filter(LeadField.title_order.isnot(None), or_(*conditions))
 
             query = query.distinct()
 

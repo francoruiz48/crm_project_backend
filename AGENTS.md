@@ -1064,3 +1064,17 @@ Franco reportó: creó una `FieldAutomation` con condición "si Estado cambia a 
 **Verificado:** `pytest tests/functional/test_automation_engine.py` (45 tests, incluye el nuevo) y `tests/functional/test_lead_flows_and_states.py` (43 tests) sin fallos.
 
 **Pendiente (no bloqueante, no tocado):** los tipos TS `NativeFieldOptions`/`LeadTeam`/`LeadUser` (`number`) siguen desactualizados respecto al `string` real que devuelve la API. No causan ningún bug adicional conocido (el `.id` se usa tal cual, sin operaciones aritméticas), pero convendría corregirlos en algún momento para que TypeScript deje de mentir sobre el tipo real -- posible ítem de una futura auditoría de frontend.
+
+### 58. Buscador global del navbar (`GET /search`) acotado a los campos de título del lead, pedido por el usuario 2026-08-29
+
+Franco pidió limitar el buscador del navbar (`HeaderSearchBar`/`GeneralSearchBar.tsx`, también usado por la página `/search` de resultados completos) para que solo busque en los campos que arman el título del lead (`LeadField.title_order IS NOT NULL`), no en cualquier campo de texto de la campaña.
+
+**Contexto encontrado:** el buscador *dentro* de una campaña (`POST /leads/search`, tabla/tablero de leads) tuvo exactamente el mismo problema y ya se había corregido el 2026-08-15 (`LeadRepository.search()`, ver test `test_search_leads_text_query_ignores_non_title_field` en `test_leads.py`) -- ese fix quedó documentado en el propio código pero no en este archivo. El buscador del navbar usa un método distinto, `LeadRepository.get_all()` (llamado desde `SearchService.global_search`), que todavía tenía el criterio viejo: en su "modo automático" (sin `search_fields` explícito) filtraba por `LeadField.field_type_code.in_(('STRING', 'SELECTOR'))` -- cualquier campo de texto o selector de la campaña, visible o no en la tarjeta/fila del lead (ej. una nota interna).
+
+**Fix aplicado** en `app/db/repository/lead_repository.py::get_all()`: el modo automático ahora filtra por `LeadField.title_order.isnot(None)`, igual que `search()`. Se quitó la constante `TEXT_SEARCH_TYPES` (ya sin uso). El modo explícito (`search_fields` por nombre, usado por Campaign/Workspace/Nomenclator/NomenclatorItem con sus propios campos nativos, no por Lead en ningún caso real detectado) queda intacto.
+
+**Alcance verificado:** el único consumidor real de `LeadRepository.get_all(search=...)` sin `search_fields` es `SearchService.global_search` (navbar + `/search`). El endpoint genérico `GET /leads/?query=...` expone el mismo parámetro pero ningún caller del frontend lo usa hoy (`getLeads()` en `leadService.ts` nunca manda `query`) -- el cambio no tiene otro impacto conocido.
+
+**Test nuevo:** `test_search_leads_only_matches_title_fields` en `test_global_search.py` (clase `TestGlobalSearch`) -- mismo patrón que el test de `test_leads.py` citado arriba, pero contra `GET /search`: crea un campo con `title_order` y otro sin, verifica que solo matchea por el primero.
+
+**Pendiente de verificación:** esta sesión corrió desde la máquina de Franco vía bridge (Linux VM sin `pytest` instalado ni Docker disponible) -- no se pudo ejecutar la suite acá. Falta que Franco corra `pytest tests/functional/test_global_search.py tests/functional/test_leads.py` (o la suite completa) y confirme.
