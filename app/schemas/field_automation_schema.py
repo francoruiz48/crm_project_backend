@@ -105,3 +105,9 @@ class FieldAutomationResponse(FieldAutomationBase, BaseResponse):
 class FieldAutomationDetailedResponse(BaseDetailedResponse, FieldAutomationResponse):
     conditions: RuleGroup
     actions: List[AutomationAction]
+    # Resumen legible ("Si <condiciones> entonces <acciones>") armado al vuelo en
+    # FieldAutomationService.get_by_id/get_all (ver app/services/field_automation_summary.py) --
+    # no es una columna real, no se persiste ni se recibe en create/update. Pedido por el
+    # usuario 2026-08-29 para mostrarlo como subtítulo en el listado del frontend
+    # (AutomationList.tsx) en vez de depender de `description` (texto libre manual).
+    summary: Optional[str] = None

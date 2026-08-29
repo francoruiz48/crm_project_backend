@@ -15,6 +15,7 @@ from app.core.constans import SystemAuditLogAction
 from app.core.native_lead_fields import NATIVE_LEAD_FIELDS
 from app.models.campaign import Campaign
 from app.schemas.field_automation_schema import ActionTypeEnum
+from app.services.field_automation_summary import build_field_automation_summary
 
 # Repositorio real de cada campo nativo tipo NATIVE_ID (Etapa/Estado/Equipo/Asignado a/Creador/
 # Modificación), usado para resolver condition.value/action.value de public_uuid a id interno --
@@ -484,6 +485,10 @@ class FieldAutomationService(BaseService):
                 return None
             obj = cls.repository.get_by_id(uow.session, internal_id, user_context=user_context, detailed=detailed)
             if obj is not None:
+                # El resumen se arma ANTES de _unresolve_field_automation_values -- necesita
+                # conditions/actions todavía en id interno (ver field_automation_summary.py).
+                if getattr(obj, "conditions", None) is not None:
+                    obj.summary = build_field_automation_summary(uow.session, obj)
                 _unresolve_field_automation_values(uow.session, obj)
             return obj
 
@@ -503,6 +508,8 @@ class FieldAutomationService(BaseService):
             )
             if detailed:
                 for item in items:
+                    # Mismo criterio que en get_by_id -- resumen antes de unresolve.
+                    item.summary = build_field_automation_summary(uow.session, item)
                     _unresolve_field_automation_values(uow.session, item)
             return total, items
 
