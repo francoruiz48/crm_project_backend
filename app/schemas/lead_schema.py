@@ -75,6 +75,25 @@ class LeadLiteResponse(LeadBase, BaseResponse):
     current_state_id: int
 
 
+class LeadIndicatorsResponse(BaseModel):
+    """
+    Indicadores fijos (todavia no editables por el usuario -- ver propuesta de modulo de
+    Reportes/Indicadores del 2026-08-15) del lead individual. Se calculan en tiempo real al
+    pedir el detalle (GET /leads/{id}?detailed=true), sin persistir nada nuevo.
+    """
+    days_since_created: int
+    days_in_current_state: int
+    # None si el lead nunca tuvo un CONTACT_STATE_CHANGED registrado en LeadActivityHistory
+    # (todavia no fue contactado) -- no se puede calcular.
+    days_to_first_contact: Optional[int] = None
+    interactions_count: int
+    days_since_last_activity: int
+    # Cantidad de veces que el lead volvio a un estado del flujo en el que ya habia
+    # estado antes (re-entradas a LeadStateHistory.to_state_id ya visto). Pedido por el
+    # usuario 2026-08-15 junto con el rediseno en cards del detalle del lead.
+    back_and_forth_count: int
+
+
 class LeadDetailedResponse(LeadBase, BaseDetailedResponse):
     field_values: List[LeadFieldValueDetailedResponse] = Field(
         default_factory=list
@@ -90,5 +109,6 @@ class LeadDetailedResponse(LeadBase, BaseDetailedResponse):
     team: Optional[TeamResponse] = None
     assigned_to_user: Optional[UserSimpleResponse] = None
     campaign: Optional[CampaignResponse] = None
+    indicators: Optional[LeadIndicatorsResponse] = None
 
 

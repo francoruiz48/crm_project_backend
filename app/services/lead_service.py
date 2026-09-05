@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 import re
 from fastapi import HTTPException, UploadFile, status
 from sqlalchemy import func
@@ -6,6 +6,9 @@ from app.core.constans import ALLOWED_DOCUMENT_TYPES, ALLOWED_IMAGE_TYPES, DATE_
 from app.core.exceptions.exceptions import ValidationError 
 from app.models.lead import Lead
 from app.models.audit.lead_activity_history import LeadActivityHistory
+from app.models.audit.lead_state_history import LeadStateHistory
+from app.models.lead_comment import LeadComment
+from app.schemas.lead_schema import LeadIndicatorsResponse
 from app.services.automation_engine import AutomationEngine
 from app.services.base_service import BaseService
 from app.db.repository.lead_repository import LeadRepository
@@ -790,6 +793,67 @@ class LeadService(BaseService):
             path = StorageService.upload_file(file, folder=folder)
             context_data[field_id] = path
         return context_data
+
+    @classmethod
+    def _build_lead_indicators(cls, session, lead_id: int, created_at: datetime) -> LeadIndicatorsResponse:
+        """
+        Primera tanda de indicadores fijos del lead individual (sin editor todavia -- ver charla
+        del 2026-08-15 sobre el modulo de Reportes/Indicadores). Se calculan en tiempo real con
+        agregados livianos (MAX/MIN/COUNT filtrados por lead_id), sin persistir nada nuevo ni
+        tocar el modelo de datos.
+        """
+        now = datetime.now(timezone.utc)
+
+        last_state_change = session.query(func.max(LeadStateHistory.created_at)).filter(
+            LeadStateHistory.lead_id == lead_id
+        ).scalar()
+
+        first_contact_at = session.query(func.min(LeadActivityHistory.created_at)).filter(
+            LeadActivityHistory.lead_id == lead_id,
+            LeadActivityHistory.activity_type == "CONTACT_STATE_CHANGED",
+        ).scalar()
+
+        activity_count = session.query(func.count(LeadActivityHistory.id)).filter(
+            LeadActivityHistory.lead_id == lead_id
+        ).scalar() or 0
+
+        comment_count = session.query(func.count(LeadComment.id)).filter(
+            LeadComment.lead_id == lead_id,
+            LeadComment.active.is_(True),
+        ).scalar() or 0
+
+        last_activity_at = session.query(func.max(LeadActivityHistory.created_at)).filter(
+            LeadActivityHistory.lead_id == lead_id
+        ).scalar()
+
+        last_comment_at = session.query(func.max(LeadComment.created_at)).filter(
+            LeadComment.lead_id == lead_id,
+            LeadComment.active.is_(True),
+        ).scalar()
+
+        last_event_at = max(filter(None, [last_activity_at, last_comment_at, created_at]))
+
+        # "Idas y vueltas": cuenta cada vez que el lead re-entra a un estado del flujo en el que
+        # ya habia estado antes (no cuenta la primera vez que entra a cada estado).
+        visited_state_ids = session.query(LeadStateHistory.to_state_id).filter(
+            LeadStateHistory.lead_id == lead_id
+        ).order_by(LeadStateHistory.created_at.asc()).all()
+        seen_states = set()
+        back_and_forth_count = 0
+        for (state_id,) in visited_state_ids:
+            if state_id in seen_states:
+                back_and_forth_count += 1
+            else:
+                seen_states.add(state_id)
+
+        return LeadIndicatorsResponse(
+            days_since_created=(now - created_at).days,
+            days_in_current_state=(now - (last_state_change or created_at)).days,
+            days_to_first_contact=(first_contact_at - created_at).days if first_contact_at else None,
+            interactions_count=activity_count + comment_count,
+            days_since_last_activity=(now - last_event_at).days,
+            back_and_forth_count=back_and_forth_count,
+        )
 
     @classmethod
     def _enrich_lead_with_urls(cls, lead):
@@ -1716,6 +1780,14 @@ class LeadService(BaseService):
             # BaseRepository.update() ya resuelve el mismo campo genéricamente (vía
             # _resolve_fk_payload_fields) antes del UPDATE real, pero acá necesitamos el id
             # interno ADEMÁS para esta validación manual, que corre antes de esa llamada.
+            # Hallazgo 2026-08-15 (reportado por el usuario, ver indicador "días hasta el primer
+            # contacto"): change_contact_state ya audita el cambio de contact_state_id (log técnico
+            # + timeline visible), pero este PUT genérico seguía pudiendo tocar la misma columna sin
+            # dejar ningún rastro -- exactamente el bug que el docstring de change_contact_state dice
+            # haber resuelto, pero la puerta de atrás seguía abierta acá. contact_state_change guarda
+            # (id anterior, id nuevo, objeto LeadContactState nuevo) para loguearlo más abajo, una vez
+            # que el UPDATE ya se aplicó.
+            contact_state_change = None
             if obj_in and obj_in.contact_state_id is not None:
                 from app.models.lead_contact_state import LeadContactState
                 contact_state_internal_id = LeadContactStateRepository.get_internal_id_by_public_uuid(uow.session, obj_in.contact_state_id)
@@ -1726,6 +1798,8 @@ class LeadService(BaseService):
                 ).first()
                 if not contact_state:
                     raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=[{"field": "contact_state_id", "message": "El estado de contacto no existe o no pertenece a esta organización."}])
+                if contact_state_internal_id != current_lead.contact_state_id:
+                    contact_state_change = (current_lead.contact_state_id, contact_state_internal_id, contact_state)
 
             # Logica de Tags
             if obj_in and "tag_ids" in obj_in.model_fields_set:
@@ -1756,6 +1830,34 @@ class LeadService(BaseService):
 
             if lead_data:
                 cls.repository.update(uow.session, internal_id, lead_data, user_context=user_context)
+
+            if contact_state_change:
+                previous_contact_state_id, new_contact_state_id, new_contact_state = contact_state_change
+                previous_contact_state = (
+                    uow.session.query(LeadContactState).filter_by(id=previous_contact_state_id).first()
+                    if previous_contact_state_id else None
+                )
+                update_user_id = user_context.user.id if user_context else None
+                cls._log_audit(
+                    uow.session, current_lead, action=SystemAuditLogAction.UPDATED,
+                    changes={"contact_state_id": {"old": previous_contact_state_id, "new": new_contact_state_id}},
+                    user_id=update_user_id,
+                )
+                cls._log_activity(
+                    session=uow.session,
+                    lead_id=internal_id,
+                    activity_type="CONTACT_STATE_CHANGED",
+                    details={
+                        "from_contact_state_id": previous_contact_state_id,
+                        "from_contact_state_name": previous_contact_state.name if previous_contact_state else None,
+                        "from_contact_state_color": previous_contact_state.color if previous_contact_state else None,
+                        "to_contact_state_id": new_contact_state_id,
+                        "to_contact_state_name": new_contact_state.name,
+                        "to_contact_state_color": new_contact_state.color,
+                        "notes": None,
+                    },
+                    user_id=update_user_id,
+                )
 
             if obj_in and obj_in.values is not None:
                 # obj_in.values[].field_id llega como public_uuid del LeadField -- se resuelve
@@ -2042,6 +2144,8 @@ class LeadService(BaseService):
                 return None
             lead = cls.repository.get_by_id(uow.session, internal_id, user_context=user_context, detailed=detailed)
             if lead is None: return None  # Deja que _execute dispare el 404 de siempre
+            if detailed:
+                lead.indicators = cls._build_lead_indicators(uow.session, internal_id, lead.created_at)
             accessible_campaign_ids = CampaignRepository.get_accessible_campaign_ids(uow.session, user_context)
             return lead, accessible_campaign_ids
 

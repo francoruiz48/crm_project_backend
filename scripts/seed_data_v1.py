@@ -14,6 +14,7 @@ Requiere:
 import requests
 import random
 import time
+import os
 from datetime import datetime, timedelta, date
 from faker import Faker
 
@@ -448,11 +449,13 @@ def add_validation_rule(field_id: int, template_code: str, params: dict = None, 
 # ---------------------------------------------------------------------------
 # HELPERS: LEADS
 # ---------------------------------------------------------------------------
-def create_lead(campaign_id: int, values: list[dict], assigned_to_user_id: int = None) -> int | None:
+def create_lead(campaign_id: int, values: list[dict], assigned_to_user_id: int = None, tag_ids: list = None) -> int | None:
     clean = [v for v in values if v.get("field_id") is not None and v.get("value") is not None]
     payload = {"campaign_id": campaign_id, "values": clean}
     if assigned_to_user_id is not None:
         payload["assigned_to_user_id"] = assigned_to_user_id
+    if tag_ids:
+        payload["tag_ids"] = tag_ids
     r = api_post("/leads/", payload)
     if r.status_code in (200, 201):
         return r.json()["id"]
@@ -529,16 +532,24 @@ def delete_lead(lead_id: int):
 # ---------------------------------------------------------------------------
 # HELPERS: VISTAS
 # ---------------------------------------------------------------------------
-def create_lead_view(campaign_id: int, name: str, view_type: str = "LIST", visibility: str = "PUBLIC"):
-    api_post("/lead_views/", {
+def create_lead_view(campaign_id: int, name: str, view_type: str = "TABLE", visibility: str = "PUBLIC",
+                      team_id: int = None, filters: dict = None, ui_config: dict = None, sort_config: dict = None) -> int | None:
+    payload = {
         "campaign_id": campaign_id,
         "name": name,
         "visibility": visibility,
         "view_type": view_type,
-        "filters": {},
-        "ui_config": {},
-        "sort_config": {"sort_by": "created_at", "ascending": False}
-    })
+        "filters": filters if filters is not None else {},
+        "ui_config": ui_config if ui_config is not None else {},
+        "sort_config": sort_config if sort_config is not None else {"sort_by": "created_at", "ascending": False},
+    }
+    if team_id:
+        payload["team_id"] = team_id
+    r = api_post("/lead_views/", payload)
+    if r.status_code not in (200, 201):
+        log(f"Error creando vista '{name}': {r.text}", "WARN")
+        return None
+    return r.json().get("id")
 
 
 # ---------------------------------------------------------------------------
@@ -571,10 +582,113 @@ def create_routing_policy(name: str, target_team_id: int, priority: int, conditi
     return None
 
 
+# ---------------------------------------------------------------------------
+# HELPERS: TAGS (ETIQUETAS)
+# ---------------------------------------------------------------------------
+def create_tag(name: str, color: str = "#3B82F6") -> int | None:
+    r = api_post("/tags/", {"name": name, "color": color})
+    if r.status_code in (200, 201):
+        return r.json()["id"]
+    log(f"Error creando tag '{name}': {r.text}", "ERR")
+    return None
+
+
+# ---------------------------------------------------------------------------
+# HELPERS: ESTADOS DE CONTACTO ("Estado" nativo del lead -- distinto de
+# "Etapa"/current_state_id, que viene del flujo. Es un campo propio de la
+# organización, con 4 valores por defecto creados por OrganizationService:
+# No Contactado / Esperando Respuesta / En Conversación / Rechazado).
+# ---------------------------------------------------------------------------
+def get_org_contact_states() -> list:
+    r = api_get("/lead_contact_states", params={"page_size": 50})
+    return r.json().get("items", []) if r.status_code == 200 else []
+
+def change_lead_contact_state(lead_id: int, new_contact_state_id, notes: str = None) -> bool:
+    payload = {"new_contact_state_id": new_contact_state_id}
+    if notes:
+        payload["notes"] = notes
+    r = api_post(f"/leads/{lead_id}/change_contact_state", payload)
+    return r.status_code in (200, 201)
+
+
+# ---------------------------------------------------------------------------
+# HELPERS: AUTOMATIZACIONES DE CAMPOS (FIELD AUTOMATIONS)
+# ---------------------------------------------------------------------------
+def auto_cond(field_id, operator: str, value=None) -> dict:
+    """Construye una condición atómica (RuleCondition) del árbol de una automatización."""
+    return {"field_id": field_id, "operator": operator, "value": value}
+
+def auto_group(operator: str, rules: list) -> dict:
+    """Construye un grupo lógico (RuleGroup) de condiciones/subgrupos."""
+    return {"operator": operator, "rules": rules}
+
+def auto_action(type_: str, target_field_id, value=None, source_field_id=None, source_field_ids=None) -> dict:
+    """Construye una acción (AutomationAction) del array 'actions' de una automatización."""
+    d = {"type": type_, "target_field_id": target_field_id}
+    if value is not None:
+        d["value"] = value
+    if source_field_id is not None:
+        d["source_field_id"] = source_field_id
+    if source_field_ids is not None:
+        d["source_field_ids"] = source_field_ids
+    return d
+
+def create_field_automation(campaign_id, name: str, trigger_events: list[str], conditions: dict,
+                             actions: list[dict], priority: int = 1, description: str = None) -> int | None:
+    payload = {
+        "campaign_id": campaign_id,
+        "name": name,
+        "trigger_events": trigger_events,
+        "conditions": conditions,
+        "actions": actions,
+        "priority": priority,
+    }
+    if description:
+        payload["description"] = description
+    r = api_post("/field_automations/", payload)
+    if r.status_code in (200, 201):
+        return r.json()["id"]
+    log(f"Error creando automatización '{name}': {r.text}", "ERR")
+    return None
+
+
+# ---------------------------------------------------------------------------
+# HELPERS: FORMULARIOS WEB PÚBLICOS
+# ---------------------------------------------------------------------------
+def create_web_form(campaign_id, name: str, fields: list[dict], title: str = None, description: str = None,
+                     theme_config: dict = None, success_message: str = None, redirect_url: str = None,
+                     allowed_domains: list[str] = None, require_captcha: bool = False) -> int | None:
+    payload = {
+        "campaign_id": campaign_id,
+        "name": name,
+        "fields": fields,
+        "require_captcha": require_captcha,
+        "active": True,
+    }
+    if title:
+        payload["title"] = title
+    if description:
+        payload["description"] = description
+    if theme_config:
+        payload["theme_config"] = theme_config
+    if success_message:
+        payload["success_message"] = success_message
+    if redirect_url:
+        payload["redirect_url"] = redirect_url
+    if allowed_domains:
+        payload["allowed_domains"] = allowed_domains
+    r = api_post("/web_forms/", payload)
+    if r.status_code in (200, 201):
+        return r.json()["id"]
+    log(f"Error creando formulario web '{name}': {r.text}", "ERR")
+    return None
+
+
 # ===========================================================================
 # ███████████████████████  ORGANIZACIÓN 1  ███████████████████████
-# Clínica y Salud — volumen medio (60 leads)
-# Flujo DEFAULT, flujo PERSONALIZADO para una campaña premium
+# Clínica y Salud — 150 leads en 3 campañas, con automatizaciones, tags,
+# formulario web, validaciones personalizadas, vistas guardadas variadas
+# y equipos con usuarios de distintos roles para probar permisos.
 # ===========================================================================
 def build_org_salud():
     log("ORGANIZACIÓN 1: Clínica & Salud", "STEP")
@@ -588,23 +702,94 @@ def build_org_salud():
     set_tenant(org_id)
     log(f"Org creada ID={org_id}", indent=2)
 
-    # --- Usuarios ---
-    users = []
-    for name, email in [
-        ("Valentina Suárez",   "vsuarez@medicare.com"),
-        ("Rodrigo Fernández",  "rfernandez@medicare.com"),
-        ("Camila Torres",      "ctorres@medicare.com"),
-        ("Julieta Gómez",      "jgomez@medicare.com"),
-        ("Nicolás Herrera",    "nherrera@medicare.com"),
-        ("Agustina Molina",    "amolina@medicare.com"),
-        ("Franco Ibáñez",      "fibanez@medicare.com"),
-    ]:
-        uid = create_user(name, email, org_id)
-        if uid:
-            users.append(uid)
-    log(f"Usuarios creados: {len(users)}", indent=2)
+    # -----------------------------------------------------------------------
+    # USUARIOS (con roles de organización variados: admin / agent / viewer,
+    # para poder probar permisos distintos en cada equipo)
+    # -----------------------------------------------------------------------
+    users_def = [
+        # (nombre, email, role_code)
+        ("Valentina Suárez",   "vsuarez@medicare.com",    "admin"),
+        ("Rodrigo Fernández",  "rfernandez@medicare.com", "agent"),
+        ("Camila Torres",      "ctorres@medicare.com",    "admin"),
+        ("Julieta Gómez",      "jgomez@medicare.com",     "viewer"),
+        ("Nicolás Herrera",    "nherrera@medicare.com",   "agent"),
+        ("Agustina Molina",    "amolina@medicare.com",    "agent"),
+        ("Franco Ibáñez",      "fibanez@medicare.com",    "viewer"),
+        ("Bruno Acosta",       "bacosta@medicare.com",    "agent"),
+        ("Lucía Paz",          "lpaz@medicare.com",       "viewer"),
+    ]
+    users_by_email: dict[str, dict] = {}
+    for name, email, role_code in users_def:
+        new_user_id = create_user(name, email, org_id, role_code=role_code)
+        if new_user_id:
+            users_by_email[email] = {"id": new_user_id, "name": name, "role_code": role_code}
+    log(f"Usuarios creados: {len(users_by_email)}", indent=2)
 
-    # --- Nomencladores de organización ---
+    def uid(email: str):
+        info = users_by_email.get(email)
+        return info["id"] if info else None
+
+    valentina = uid("vsuarez@medicare.com")
+    rodrigo   = uid("rfernandez@medicare.com")
+    camila    = uid("ctorres@medicare.com")
+    julieta   = uid("jgomez@medicare.com")
+    nicolas   = uid("nherrera@medicare.com")
+    agustina  = uid("amolina@medicare.com")
+    franco_i  = uid("fibanez@medicare.com")
+    bruno     = uid("bacosta@medicare.com")
+    lucia     = uid("lpaz@medicare.com")
+
+    # -----------------------------------------------------------------------
+    # ETIQUETAS (TAGS) DE LA ORGANIZACIÓN
+    # -----------------------------------------------------------------------
+    tag_defs = [
+        ("VIP",               "#8E44AD"),
+        ("Urgente",            "#E74C3C"),
+        ("Primera Consulta",   "#3498DB"),
+        ("Seguimiento",        "#16A085"),
+        ("Deuda Pendiente",    "#D35400"),
+        ("Reprogramado",       "#F39C12"),
+        ("Alto Riesgo",        "#C0392B"),
+        ("Referido",           "#2980B9"),
+    ]
+    tag_ids_all = []
+    for tname, tcolor in tag_defs:
+        tid = create_tag(tname, tcolor)
+        if tid:
+            tag_ids_all.append(tid)
+    log(f"Tags creados: {len(tag_ids_all)}", indent=2)
+
+    def random_tags(max_k: int = 2) -> list:
+        """~30% de los leads quedan sin etiquetas; el resto recibe 1 o 2 al azar
+        (se usa igual en las 3 campañas de la organización)."""
+        if not tag_ids_all or random.random() > 0.7:
+            return []
+        k = random.randint(1, min(max_k, len(tag_ids_all)))
+        return random.sample(tag_ids_all, k)
+
+    # -----------------------------------------------------------------------
+    # ESTADOS DE CONTACTO ("Estado" nativo -- distinto de la "Etapa" del flujo)
+    # -----------------------------------------------------------------------
+    items_contact_states = get_org_contact_states()
+    log(f"Estados de contacto disponibles: {len(items_contact_states)}", indent=2)
+
+    _contact_state_weights = {
+        "No Contactado": 20, "Esperando Respuesta": 25,
+        "En Conversación": 35, "Rechazado": 20,
+    }
+
+    def random_contact_state_id():
+        """~75% de los leads reciben un cambio de Estado explícito (el resto
+        queda en 'No Contactado', el valor inicial por defecto)."""
+        if not items_contact_states:
+            return None
+        ids = [st["id"] for st in items_contact_states]
+        weights = [_contact_state_weights.get(st.get("name"), 10) for st in items_contact_states]
+        return random.choices(ids, weights=weights)[0]
+
+    # -----------------------------------------------------------------------
+    # NOMENCLADORES DE ORGANIZACIÓN
+    # -----------------------------------------------------------------------
     items_obra_social, nom_obra_social = get_or_create_org_nomenclator(
         "Obra Social / Prepaga",
         ["OSDE", "Swiss Medical", "Galeno", "Medicus", "PAMI", "Particular", "Sancor Salud", "Accord Salud"]
@@ -616,32 +801,65 @@ def build_org_salud():
     )
     items_genero, _  = get_global_nomenclator("Genero")
 
-    # --- Workspaces ---
-    ws_pacientes = create_workspace("Pacientes Generales", "Gestión de pacientes ambulatorios")
-    ws_estetica  = create_workspace("Medicina Estética",   "Tratamientos estéticos y cirugías menores")
+    # -----------------------------------------------------------------------
+    # WORKSPACES
+    # -----------------------------------------------------------------------
+    ws_pacientes    = create_workspace("Pacientes Generales",  "Gestión de pacientes ambulatorios")
+    ws_estetica     = create_workspace("Medicina Estética",    "Tratamientos estéticos y cirugías menores")
+    ws_telemedicina = create_workspace("Telemedicina",         "Consultas médicas a distancia (video/teléfono/chat)")
 
-    # --- Equipos ---
-    team_admision = create_team("Admisión y Recepción", visibility_shared=True)
-    team_medicos  = create_team("Equipo Médico",         visibility_shared=False)
-    if team_admision and users:
-        add_team_member(team_admision, users[0], "MANAGER")
-        for u in users[1:2] + users[3:5]:  # Rodrigo, Julieta, Nicolás
-            add_team_member(team_admision, u, "AGENT")
-    if team_medicos and len(users) > 2:
-        add_team_member(team_medicos, users[2], "MANAGER")
-        for u in users[5:7]:  # Agustina, Franco
-            add_team_member(team_medicos, u, "AGENT")
+    # -----------------------------------------------------------------------
+    # EQUIPOS
+    # -----------------------------------------------------------------------
+    team_admision  = create_team("Admisión y Recepción", visibility_shared=True)
+    team_medicos   = create_team("Equipo Médico",         visibility_shared=False)
+    team_telemed   = create_team("Equipo Telemedicina",   visibility_shared=True)
 
-    # Dar acceso al workspace
+    if team_admision:
+        if valentina:
+            add_team_member(team_admision, valentina, "MANAGER")
+        for u_ in (rodrigo, julieta):
+            if u_:
+                add_team_member(team_admision, u_, "AGENT")
+    if team_medicos:
+        if camila:
+            add_team_member(team_medicos, camila, "MANAGER")
+        for u_ in (agustina, franco_i):
+            if u_:
+                add_team_member(team_medicos, u_, "AGENT")
+    if team_telemed:
+        if nicolas:
+            add_team_member(team_telemed, nicolas, "MANAGER")
+        for u_ in (bruno, lucia):
+            if u_:
+                add_team_member(team_telemed, u_, "AGENT")
+
+    # Dar acceso a los workspaces
     if team_admision and ws_pacientes:
         give_team_workspace_access(team_admision, ws_pacientes)
     if team_medicos and ws_estetica:
         give_team_workspace_access(team_medicos, ws_estetica)
+    if team_telemed and ws_telemedicina:
+        give_team_workspace_access(team_telemed, ws_telemedicina)
 
-    flow_id = get_default_flow(org_id)
-    transitions = get_flow_transitions(flow_id) if flow_id else []
+    # Tabla de credenciales para probar permisos (misma password para todos:
+    # SEED_USER_PASSWORD, fija -- ver cabecera del script). Se imprime al final
+    # y también se guarda en un archivo aparte (ver final de build_org_salud()).
+    credentials_table = [
+        {"team": "Admisión y Recepción", "team_role": "MANAGER", "org_role": "admin",  "name": "Valentina Suárez",  "email": "vsuarez@medicare.com"},
+        {"team": "Admisión y Recepción", "team_role": "AGENT",   "org_role": "agent",  "name": "Rodrigo Fernández", "email": "rfernandez@medicare.com"},
+        {"team": "Admisión y Recepción", "team_role": "AGENT",   "org_role": "viewer", "name": "Julieta Gómez",     "email": "jgomez@medicare.com"},
+        {"team": "Equipo Médico",        "team_role": "MANAGER", "org_role": "admin",  "name": "Camila Torres",     "email": "ctorres@medicare.com"},
+        {"team": "Equipo Médico",        "team_role": "AGENT",   "org_role": "agent",  "name": "Agustina Molina",   "email": "amolina@medicare.com"},
+        {"team": "Equipo Médico",        "team_role": "AGENT",   "org_role": "viewer", "name": "Franco Ibáñez",     "email": "fibanez@medicare.com"},
+        {"team": "Equipo Telemedicina",  "team_role": "MANAGER", "org_role": "agent",  "name": "Nicolás Herrera",   "email": "nherrera@medicare.com"},
+        {"team": "Equipo Telemedicina",  "team_role": "AGENT",   "org_role": "agent",  "name": "Bruno Acosta",      "email": "bacosta@medicare.com"},
+        {"team": "Equipo Telemedicina",  "team_role": "AGENT",   "org_role": "viewer", "name": "Lucía Paz",         "email": "lpaz@medicare.com"},
+    ]
+
+    flow_id      = get_default_flow(org_id)
+    transitions  = get_flow_transitions(flow_id) if flow_id else []
     states       = get_flow_states(flow_id)      if flow_id else []
-    # Estado inicial
     initial_state = next((s for s in states if s.get("is_initial")), None)
 
     # -----------------------------------------------------------------------
@@ -669,18 +887,43 @@ def build_org_salud():
     transitions_estetica = get_flow_transitions(flow_estetica_id) if flow_estetica_id else []
 
     # -----------------------------------------------------------------------
-    # CAMPAÑA 1: Pacientes Clínica General
+    # FLUJO PERSONALIZADO: Telemedicina
     # -----------------------------------------------------------------------
+    telemed_states = [
+        {"name": "Solicitud Recibida",     "category": "OPEN", "is_initial": True,  "order": 1, "color": "#5B9BD5"},
+        {"name": "Triage / Derivación",    "category": "OPEN", "is_initial": False, "order": 2, "color": "#70AD47"},
+        {"name": "Consulta Agendada",      "category": "OPEN", "is_initial": False, "order": 3, "color": "#FFC000"},
+        {"name": "Consulta Realizada",     "category": "WON",  "is_initial": False, "order": None},
+        {"name": "No Asistió",             "category": "LOST", "is_initial": False, "order": None},
+        {"name": "Cancelada por Paciente", "category": "LOST", "is_initial": False, "order": None},
+    ]
+    telemed_transitions = [
+        (0,1),(1,2),(2,3),
+        (0,4),(1,4),(2,4),
+        (0,5),(1,5),(2,5),
+        (4,0),(5,0),  # reingreso
+    ]
+    flow_telemed_id = create_custom_flow("Flujo Telemedicina", telemed_states, telemed_transitions)
+    transitions_telemed = get_flow_transitions(flow_telemed_id) if flow_telemed_id else []
+
+    # =========================================================================
+    # CAMPAÑA 1: Pacientes Clínica General  (70 leads)
+    # =========================================================================
     log("  Campaña: Pacientes Clínica General", "INFO")
     camp_pacientes = create_campaign("Pacientes Clínica General", ws_pacientes, is_public=False)
     if team_admision and camp_pacientes:
         give_team_campaign_access(team_admision, camp_pacientes)
+    # Equipo Médico también recibe leads de Pacientes por la política de
+    # enrutamiento "Coberturas Premium a Equipo Médico" (ver más abajo).
+    if team_medicos and camp_pacientes:
+        give_team_campaign_access(team_medicos, camp_pacientes)
 
     sec_personal  = get_or_create_section("Datos Personales")
     sec_medico    = get_or_create_section("Datos Médicos")
     sec_adicional = get_or_create_section("Información Adicional")
 
     f = {}
+    lead_ids_pac = []
     if camp_pacientes:
         f["nombre"]       = create_field(camp_pacientes, sec_personal, template_code="FIRST_NAME",   required=True,  is_primary=True, title_order=1)
         f["apellido"]     = create_field(camp_pacientes, sec_personal, template_code="LAST_NAME",    required=True,  is_primary=True, title_order=2)
@@ -708,26 +951,35 @@ def build_org_salud():
         f["alergias"]     = create_field(camp_pacientes, sec_adicional, name="Alergias Conocidas",type_code="STRING")
         f["notas"]        = create_field(camp_pacientes, sec_adicional, name="Notas Clínicas",   type_code="STRING")
         f["prox_turno"]   = create_field(camp_pacientes, sec_adicional, name="Próximo Turno",    type_code="DATE_TIME")
+        # Nuevos: control preventivo (lo completa una automatización) y canal de
+        # origen (lo completa el formulario web público, ver más abajo).
+        f["control_preventivo"] = create_field(camp_pacientes, sec_adicional, name="Próximo Control Preventivo", type_code="DATE")
+        f["canal_origen"]       = create_field(camp_pacientes, sec_adicional, name="Canal de Origen",            type_code="STRING")
 
-        # Reglas extra en peso y altura
+        # --- Validaciones personalizadas (además de las que ya trae el template
+        #     DNI_ARG -- ONLY_DIGITS/MIN_LENGTH/MAX_LENGTH -- y el subtipo MOBILE) ---
         if f.get("peso"):
             add_validation_rule(f["peso"],   "MIN_VALUE", {"limit": 20}, "El peso mínimo es 20 kg.")
             add_validation_rule(f["peso"],   "MAX_VALUE", {"limit": 300}, "El peso máximo es 300 kg.")
         if f.get("altura"):
             add_validation_rule(f["altura"], "MIN_VALUE", {"limit": 0.5}, "La altura mínima es 0.5 m.")
             add_validation_rule(f["altura"], "MAX_VALUE", {"limit": 2.5},  "La altura máxima es 2.5 m.")
+        if f.get("telefono"):
+            add_validation_rule(f["telefono"], "REGEX_MATCH", {"pattern": "^[+]549"}, "El teléfono debe ser un celular argentino (+549...).")
+        if f.get("prox_turno"):
+            add_validation_rule(f["prox_turno"], "DATE_FUTURE", {}, "El próximo turno debe ser una fecha futura.")
 
-        create_lead_view(camp_pacientes, "Todos los Pacientes",       "LIST",   "PUBLIC")
-        create_lead_view(camp_pacientes, "Kanban por Estado",         "KANBAN", "PUBLIC")
+        create_lead_view(camp_pacientes, "Todos los Pacientes",       "TABLE",   "PUBLIC")
+        create_lead_view(camp_pacientes, "Kanban por Estado",         "BOARD", "PUBLIC")
 
         # --- Políticas de enrutamiento (deben existir ANTES de crear los leads:
         #     el motor solo enruta en el momento de la creación) ---
         items_os_c, _ = get_or_create_campaign_nomenclator("Cobertura Médica",
             ["OSDE", "Swiss Medical", "Galeno", "PAMI", "Particular", "Sancor Salud"], camp_pacientes)
-        if team_admision and team_medicos and f.get("obra_social"):
-            item_particular = next((i for i in items_os_c if i["value"] == "Particular"), None)
-            ids_premium = [i["id"] for i in items_os_c if i["value"] in ("OSDE", "Swiss Medical")]
+        item_particular = next((i for i in items_os_c if i["value"] == "Particular"), None)
+        ids_premium = [i["id"] for i in items_os_c if i["value"] in ("OSDE", "Swiss Medical")]
 
+        if team_admision and team_medicos and f.get("obra_social"):
             # Ejemplo de campo DINÁMICO (SELECTOR), modo simple: obra_social = "Particular"
             if item_particular:
                 create_routing_policy(
@@ -752,16 +1004,84 @@ def build_org_salud():
                     }],
                 )
 
+        # --- Vistas guardadas privadas y de equipo, con filtros y columnas propias ---
+        if item_particular and f.get("obra_social"):
+            create_lead_view(
+                camp_pacientes, "Mis Pacientes Particulares", "TABLE", "PRIVATE",
+                filters={"filters": [{"field_id": f["obra_social"], "operator": "eq", "value": item_particular["id"]}]},
+                ui_config={"selected_ids": [fid for fid in (f.get("nombre"), f.get("apellido"), f.get("telefono"),
+                                                             f.get("obra_social"), f.get("prox_turno")) if fid]},
+            )
+        # OJO: esta vista queda del lado de Equipo Médico (no Admisión), porque
+        # es a ese equipo al que la política de enrutamiento "Coberturas Premium
+        # a Equipo Médico" deriva estos leads apenas se crean.
+        if team_medicos and ids_premium and f.get("obra_social"):
+            create_lead_view(
+                camp_pacientes, "Equipo Médico - Coberturas Premium", "TABLE", "TEAM", team_id=team_medicos,
+                filters={"filters": [{"field_id": f["obra_social"], "operator": "in", "value": [str(i) for i in ids_premium]}]},
+                ui_config={"selected_ids": [fid for fid in (f.get("nombre"), f.get("apellido"), f.get("obra_social"),
+                                                             f.get("telefono"), f.get("prox_turno")) if fid]},
+            )
+
+        # --- Automatizaciones de campos (deben existir ANTES de crear los leads) ---
+        if item_particular and f.get("obra_social") and f.get("nombre"):
+            create_field_automation(
+                camp_pacientes, "Cobertura por defecto: Particular", ["ON_CREATE"],
+                auto_group("AND", [auto_cond(f["nombre"], "IS_NOT_EMPTY")]),
+                [auto_action("SET_VALUE_IF_EMPTY", f["obra_social"], value=item_particular["id"])],
+                priority=1, description="Si no se informó cobertura médica, se asume Particular.",
+            )
+        if f.get("email"):
+            create_field_automation(
+                camp_pacientes, "Normalizar email a minúsculas", ["ON_CREATE", "ON_UPDATE"],
+                auto_group("AND", [auto_cond(f["email"], "IS_NOT_EMPTY")]),
+                [auto_action("NORMALIZE_TEXT", f["email"], value="LOWERCASE")],
+                priority=2, description="Evita duplicados por mayúsculas/minúsculas en el email.",
+            )
+        if f.get("control_preventivo") and f.get("nombre"):
+            create_field_automation(
+                camp_pacientes, "Agendar control preventivo a 30 días", ["ON_CREATE"],
+                auto_group("AND", [auto_cond(f["nombre"], "IS_NOT_EMPTY")]),
+                [auto_action("SET_DATE_OFFSET", f["control_preventivo"], value=30)],
+                priority=3, description="Todo paciente nuevo recibe una fecha sugerida de control a 30 días.",
+            )
+
+        # --- Formulario web público: "Reservá tu turno" ---
+        if f.get("nombre") and f.get("apellido") and f.get("email") and f.get("telefono"):
+            web_form_fields = [
+                {"lead_field_id": f["nombre"],   "order": 1, "is_required": True},
+                {"lead_field_id": f["apellido"], "order": 2, "is_required": True},
+                {"lead_field_id": f["email"],    "order": 3, "is_required": True, "custom_label": "Tu email"},
+                {"lead_field_id": f["telefono"], "order": 4, "is_required": True, "custom_label": "Tu WhatsApp"},
+            ]
+            if f.get("obra_social"):
+                web_form_fields.append({"lead_field_id": f["obra_social"], "order": 5, "is_required": False,
+                                         "custom_label": "¿Tenés obra social o prepaga?"})
+            if f.get("canal_origen"):
+                # Campo oculto: no lo ve el paciente, el backend lo completa solo al crear el lead.
+                web_form_fields.append({"lead_field_id": f["canal_origen"], "order": 6,
+                                         "hidden_value": "Formulario Web - Landing Turnos"})
+            create_web_form(
+                camp_pacientes, "Landing Turnos - MediCare", web_form_fields,
+                title="Reservá tu turno",
+                description="Dejanos tus datos y te contactamos para coordinar tu consulta.",
+                theme_config={"primary_color": "#2E86C1", "background_color": "#FFFFFF", "text_color": "#1F2937",
+                              "button_text_color": "#FFFFFF", "border_radius": "8px", "font_family": "Inter, sans-serif"},
+                success_message="¡Gracias! Un miembro de Admisión te va a contactar a la brevedad.",
+                allowed_domains=["https://www.medicare-centrodesalud.com.ar"],
+                require_captcha=False,
+            )
+
         # --- Generar leads ---
         log("    Generando leads pacientes...", indent=4)
-        _, _gnom = get_global_nomenclator("Genero")
         items_g, _   = get_global_nomenclator("Genero")
 
         # Agentes de Admisión para simular algunos leads ya tomados (el resto queda sin asignar)
-        admision_agent_ids = (users[1:2] + users[3:5]) if len(users) > 4 else []
+        admision_agent_ids = [u_ for u_ in (rodrigo, julieta) if u_]
 
         lead_ids_pac = []
-        for i in range(50):
+        tagged_count_pac = 0
+        for i in range(70):
             altura = round(random.uniform(1.50, 1.95), 2)
             peso   = round(random.uniform(48.0, 115.0), 1)
             imc_exp = round(peso / (altura * altura), 2)
@@ -778,7 +1098,9 @@ def build_org_salud():
             ]
             if f.get("genero") and items_g:
                 vals.append({"field_id": f["genero"],      "value": rand_nom_id(items_g)})
-            if f.get("obra_social") and items_os_c:
+            # ~25% de los leads llegan sin cobertura informada: la automatización
+            # "Cobertura por defecto: Particular" se encarga de completarla.
+            if f.get("obra_social") and items_os_c and random.random() > 0.25:
                 vals.append({"field_id": f["obra_social"], "value": rand_nom_id(items_os_c)})
             if f.get("telefono") and random.random() > 0.2:
                 vals.append({"field_id": f["telefono"],    "value": f"+549{random.randint(1100000000,1199999999)}"})
@@ -786,13 +1108,18 @@ def build_org_salud():
                 vals.append({"field_id": f["tension"],     "value": f"{random.randint(100,140)}/{random.randint(60,90)}"})
             if f.get("prox_turno") and random.random() > 0.5:
                 vals.append({"field_id": f["prox_turno"],  "value": futuro.strftime("%Y-%m-%d %H:%M:%S")})
+            if f.get("canal_origen") and random.random() > 0.8:
+                vals.append({"field_id": f["canal_origen"], "value": random.choice(["Referido Interno", "Cartelería en Clínica"])})
 
             # ~40% de los leads quedan tomados por un agente puntual; el resto sin asignar
             asignado = random.choice(admision_agent_ids) if admision_agent_ids and random.random() < 0.4 else None
 
-            lid = create_lead(camp_pacientes, vals, assigned_to_user_id=asignado)
+            tag_ids_for_lead = random_tags()
+            lid = create_lead(camp_pacientes, vals, assigned_to_user_id=asignado, tag_ids=tag_ids_for_lead)
             if lid:
                 lead_ids_pac.append((lid, imc_exp))
+                if tag_ids_for_lead:
+                    tagged_count_pac += 1
 
                 # Verificar CALCULATED
                 if random.random() < 0.15:
@@ -808,11 +1135,18 @@ def build_org_salud():
                             except (ValueError, TypeError):
                                 warn_calculated("IMC", imc_exp, imc_field.get("value"))
 
-        # Avanzar estados y agregar comentarios
+        # Avanzar estados y agregar comentarios (rango ampliado para que una
+        # porción real de leads llegue a estados terminales, GANADO/PERDIDO,
+        # y no se quede siempre en las primeras etapas)
         for idx, (lid, _) in enumerate(lead_ids_pac):
-            steps = random.choices([0, 1, 2, 3, 4], weights=[15, 30, 25, 20, 10])[0]
+            steps = random.choices([0, 1, 2, 3, 4, 5, 6], weights=[8, 12, 15, 20, 20, 15, 10])[0]
             if steps > 0 and transitions:
                 advance_lead_through_flow(lid, transitions, steps)
+
+            # Variar el "Estado" de contacto (nativo, distinto de la "Etapa" del
+            # flujo que ya se mueve arriba con advance_lead_through_flow).
+            if items_contact_states and random.random() < 0.75:
+                change_lead_contact_state(lid, random_contact_state_id())
 
             if random.random() > 0.5:
                 comments = [
@@ -837,10 +1171,11 @@ def build_org_salud():
             delete_lead(lid)
 
         log(f"    {len(lead_ids_pac)} leads pacientes generados", indent=4)
+        log(f"    Leads con etiquetas: {tagged_count_pac}/{len(lead_ids_pac)}", indent=4)
 
-    # -----------------------------------------------------------------------
-    # CAMPAÑA 2: Medicina Estética (flujo personalizado)
-    # -----------------------------------------------------------------------
+    # =========================================================================
+    # CAMPAÑA 2: Medicina Estética (flujo personalizado)  (40 leads)
+    # =========================================================================
     log("  Campaña: Medicina Estética", "INFO")
     camp_estetica = create_campaign("Consultas Estética", ws_estetica, lead_flow_id=flow_estetica_id, is_public=False)
     if team_medicos and camp_estetica:
@@ -863,6 +1198,7 @@ def build_org_salud():
     )
 
     fe = {}
+    lead_ids_est = []
     if camp_estetica:
         fe["nombre"]      = create_field(camp_estetica, sec_est_1, template_code="FIRST_NAME", required=True, is_primary=True, title_order=1)
         fe["apellido"]    = create_field(camp_estetica, sec_est_1, template_code="LAST_NAME",  required=True, title_order=2)
@@ -883,14 +1219,21 @@ def build_org_salud():
         fe["satisfaccion"]= create_field(camp_estetica, sec_est_3, name="Satisfacción",               type_code="NUMBER",  subtype_code="STAR_RATING")
         fe["notas_post"]  = create_field(camp_estetica, sec_est_3, name="Notas Post-Tratamiento",      type_code="STRING")
         fe["foto_antes"]  = create_field(camp_estetica, sec_est_3, name="Foto Antes",                  type_code="FILE",   subtype_code="FILE_IMAGE", is_visible=True)
+        # Nuevos: prioridad de atención (la fija una automatización) y nombre
+        # completo (armado automáticamente, ver automatizaciones más abajo).
+        fe["prioridad"]       = create_field(camp_estetica, sec_est_2, name="Prioridad de Atención", type_code="STRING", default_value="Normal")
+        fe["nombre_completo"] = create_field(camp_estetica, sec_est_1, name="Nombre Completo",        type_code="STRING")
 
         if fe.get("presupuesto"):
             add_validation_rule(fe["presupuesto"], "MIN_VALUE", {"limit": 0})
+            add_validation_rule(fe["presupuesto"], "MAX_VALUE", {"limit": 10000}, "El presupuesto máximo aprobable es USD 10.000.")
         if fe.get("sesiones"):
             add_validation_rule(fe["sesiones"], "MIN_VALUE", {"limit": 1})
             add_validation_rule(fe["sesiones"], "MAX_VALUE", {"limit": 20})
+        if fe.get("telefono"):
+            add_validation_rule(fe["telefono"], "REGEX_MATCH", {"pattern": "^[+]549"}, "El teléfono debe ser un celular argentino (+549...).")
 
-        create_lead_view(camp_estetica, "Pipeline Estética", "KANBAN", "PUBLIC")
+        create_lead_view(camp_estetica, "Pipeline Estética", "BOARD", "PUBLIC")
 
         # Política de enrutamiento (debe existir ANTES de crear los leads).
         # Ejemplo de campo NATIVO, política global (sin campaign_id): toda consulta
@@ -905,13 +1248,47 @@ def build_org_salud():
                 }],
             )
 
+        # Vistas guardadas privada y de equipo, con filtros y columnas propias
+        if fe.get("satisfaccion"):
+            create_lead_view(
+                camp_estetica, "Seguimientos Pendientes (baja satisfacción)", "TABLE", "PRIVATE",
+                filters={"filters": [{"field_id": fe["satisfaccion"], "operator": "lte", "value": 3}]},
+                ui_config={"selected_ids": [fid for fid in (fe.get("nombre"), fe.get("apellido"), fe.get("tratamiento"),
+                                                             fe.get("satisfaccion"), fe.get("notas_post")) if fid]},
+            )
+        if team_medicos and fe.get("presupuesto"):
+            create_lead_view(
+                camp_estetica, "Estética - Alto Presupuesto", "TABLE", "TEAM", team_id=team_medicos,
+                filters={"filters": [{"field_id": fe["presupuesto"], "operator": "gte", "value": 3000}]},
+                ui_config={"selected_ids": [fid for fid in (fe.get("nombre"), fe.get("apellido"), fe.get("tratamiento"),
+                                                             fe.get("presupuesto"), fe.get("prioridad")) if fid]},
+            )
+
+        # Automatizaciones de campos (deben existir ANTES de crear los leads)
+        if fe.get("presupuesto") and fe.get("prioridad"):
+            create_field_automation(
+                camp_estetica, "Prioridad alta por presupuesto elevado", ["ON_CREATE", "ON_UPDATE"],
+                auto_group("AND", [auto_cond(fe["presupuesto"], "GREATER_THAN", 3000)]),
+                [auto_action("SET_VALUE", fe["prioridad"], value="Alta")],
+                priority=1, description="Presupuestos aprobados de más de USD 3000 se marcan como prioridad Alta.",
+            )
+        if fe.get("nombre_completo") and fe.get("apellido"):
+            create_field_automation(
+                camp_estetica, "Nombre completo automático", ["ON_CREATE", "ON_UPDATE"],
+                auto_group("AND", [auto_cond(fe["apellido"], "IS_NOT_EMPTY")]),
+                [auto_action("CONCAT_FIELDS", fe["nombre_completo"], value=" ",
+                             source_field_ids=[fe["nombre"], fe["apellido"]])],
+                priority=2, description="Combina Nombre + Apellido en un solo campo para listados/exportes.",
+            )
+
         # Generar leads
         log("    Generando leads estética...", indent=4)
         # Agentes del Equipo Médico para simular algunos leads ya tomados
-        medicos_agent_ids = users[5:7] if len(users) > 6 else []
+        medicos_agent_ids = [u_ for u_ in (agustina, franco_i) if u_]
 
         lead_ids_est = []
-        for _ in range(30):
+        tagged_count_est = 0
+        for _ in range(40):
             sesiones   = random.randint(1, 8)
             costo_ses  = round(random.uniform(80, 600), 2)
             costo_tot_exp = round(sesiones * costo_ses, 2)
@@ -942,9 +1319,12 @@ def build_org_salud():
             # ~40% de los leads quedan tomados por un agente puntual; el resto sin asignar
             asignado = random.choice(medicos_agent_ids) if medicos_agent_ids and random.random() < 0.4 else None
 
-            lid = create_lead(camp_estetica, vals, assigned_to_user_id=asignado)
+            tag_ids_for_lead = random_tags()
+            lid = create_lead(camp_estetica, vals, assigned_to_user_id=asignado, tag_ids=tag_ids_for_lead)
             if lid:
                 lead_ids_est.append((lid, costo_tot_exp))
+                if tag_ids_for_lead:
+                    tagged_count_est += 1
 
                 # Check CALCULATED costo_total
                 if random.random() < 0.2:
@@ -961,9 +1341,11 @@ def build_org_salud():
                                 warn_calculated("Costo Total", costo_tot_exp, ct_fv.get("value"))
 
         for lid, _ in lead_ids_est:
-            steps = random.choices([0, 1, 2, 3, 4, 5], weights=[10, 20, 20, 20, 15, 15])[0]
+            steps = random.choices([0, 1, 2, 3, 4, 5, 6], weights=[6, 10, 15, 18, 18, 18, 15])[0]
             if steps > 0 and transitions_estetica:
                 advance_lead_through_flow(lid, transitions_estetica, steps)
+            if items_contact_states and random.random() < 0.75:
+                change_lead_contact_state(lid, random_contact_state_id())
             if random.random() > 0.4:
                 add_comment(lid, random.choice([
                     "Paciente interesada en paquete completo.",
@@ -979,6 +1361,219 @@ def build_org_salud():
                 ])
 
         log(f"    {len(lead_ids_est)} leads estética generados", indent=4)
+        log(f"    Leads con etiquetas: {tagged_count_est}/{len(lead_ids_est)}", indent=4)
+
+    # =========================================================================
+    # CAMPAÑA 3: Telemedicina / Consultas Virtuales (flujo personalizado)  (40 leads)
+    # =========================================================================
+    log("  Campaña: Telemedicina / Consultas Virtuales", "INFO")
+    camp_telemed = create_campaign("Telemedicina / Consultas Virtuales", ws_telemedicina,
+                                    lead_flow_id=flow_telemed_id, is_public=False)
+    if team_telemed and camp_telemed:
+        give_team_campaign_access(team_telemed, camp_telemed)
+    # Equipo Médico también recibe las consultas urgentes de Telemedicina por
+    # la política de enrutamiento "Telemedicina - Motivo Urgente al Equipo
+    # Médico" (ver más abajo).
+    if team_medicos and camp_telemed:
+        give_team_campaign_access(team_medicos, camp_telemed)
+
+    sec_tele_1 = get_or_create_section("Datos del Paciente")
+    sec_tele_2 = get_or_create_section("Consulta Virtual")
+
+    items_modalidad, nom_modalidad = get_or_create_campaign_nomenclator(
+        "Modalidad de Contacto", ["WhatsApp", "Videollamada", "Teléfono"], camp_telemed
+    )
+
+    ft = {}
+    lead_ids_tele = []
+    if camp_telemed:
+        ft["nombre"]    = create_field(camp_telemed, sec_tele_1, template_code="FIRST_NAME", required=True, is_primary=True, title_order=1)
+        ft["apellido"]  = create_field(camp_telemed, sec_tele_1, template_code="LAST_NAME",  required=True, is_primary=True, title_order=2)
+        # A propósito NO usamos el template DNI_ARG acá: es un campo STRING común
+        # para poder agregarle nosotros mismos una regla REGEX_MATCH manual (modo
+        # "experto") y no depender de las reglas que ya trae el template.
+        ft["dni"]       = create_field(camp_telemed, sec_tele_1, name="DNI", type_code="STRING", required=True)
+        ft["email"]     = create_field(camp_telemed, sec_tele_1, name="Email",   type_code="STRING", subtype_code="EMAIL", required=True)
+        ft["telefono"]  = create_field(camp_telemed, sec_tele_1, name="Teléfono", type_code="STRING", subtype_code="MOBILE", required=True)
+        ft["especialidad"] = create_field(camp_telemed, sec_tele_2, name="Especialidad Solicitada",
+                                           type_code="SELECTOR", subtype_code="SELECTOR_SIMPLE", nom_id=nom_especialidad)
+        ft["modalidad"] = create_field(camp_telemed, sec_tele_2, name="Modalidad de Contacto",
+                                        type_code="SELECTOR", subtype_code="SELECTOR_SIMPLE", nom_id=nom_modalidad, required=True)
+        ft["motivo"]    = create_field(camp_telemed, sec_tele_2, name="Motivo de Consulta", type_code="STRING")
+        ft["es_primera_vez"] = create_field(camp_telemed, sec_tele_2, name="Es Primera Vez", type_code="BOOL")
+        ft["fecha_consulta"] = create_field(camp_telemed, sec_tele_2, name="Fecha y Hora de Consulta", type_code="DATE_TIME")
+        ft["costo_consulta"] = create_field(camp_telemed, sec_tele_2, name="Costo de Consulta (USD)", type_code="NUMBER", subtype_code="MONEY")
+        # Sin subtipo URL a propósito: así la regla IS_URL que le agregamos abajo
+        # es una validación nuestra, no la que trae por defecto ese subtipo.
+        ft["link_videollamada"] = create_field(camp_telemed, sec_tele_2, name="Link de Videollamada", type_code="STRING")
+        ft["satisfaccion"] = create_field(camp_telemed, sec_tele_2, name="Satisfacción", type_code="NUMBER", subtype_code="STAR_RATING")
+        ft["contador_contactos"] = create_field(camp_telemed, sec_tele_2, name="Contador de Contactos", type_code="INT", default_value="0")
+
+        # --- Validaciones personalizadas ---
+        if ft.get("dni"):
+            add_validation_rule(ft["dni"], "REGEX_MATCH", {"pattern": r"^\d{7,8}$"}, "El DNI debe tener 7 u 8 dígitos numéricos.")
+        if ft.get("telefono"):
+            add_validation_rule(ft["telefono"], "REGEX_MATCH", {"pattern": "^[+]549"}, "El teléfono debe ser un celular argentino (+549...).")
+        if ft.get("motivo"):
+            add_validation_rule(ft["motivo"], "MAX_LENGTH", {"limit": 300}, "El motivo de consulta no puede superar los 300 caracteres.")
+        if ft.get("link_videollamada"):
+            add_validation_rule(ft["link_videollamada"], "IS_URL", {}, "El link de videollamada debe ser una URL válida.")
+        if ft.get("costo_consulta"):
+            add_validation_rule(ft["costo_consulta"], "MIN_VALUE", {"limit": 0})
+            add_validation_rule(ft["costo_consulta"], "MAX_VALUE", {"limit": 5000}, "El costo de una consulta virtual no puede superar USD 5000.")
+        if ft.get("fecha_consulta"):
+            add_validation_rule(ft["fecha_consulta"], "DATE_FUTURE", {}, "La consulta debe agendarse a una fecha futura.")
+
+        create_lead_view(camp_telemed, "Pipeline Telemedicina", "BOARD", "PUBLIC")
+
+        item_videollamada = next((i for i in items_modalidad if i["value"] == "Videollamada"), None)
+
+        # OJO: esta vista queda del lado de Equipo Médico (no Telemedicina),
+        # porque es a ese equipo al que la política de enrutamiento "Telemedicina
+        # - Motivo Urgente al Equipo Médico" deriva estos leads apenas se crean.
+        if team_medicos and ft.get("motivo"):
+            create_lead_view(
+                camp_telemed, "Telemedicina - Urgentes Derivadas", "TABLE", "TEAM", team_id=team_medicos,
+                filters={"filters": [{"field_id": ft["motivo"], "operator": "ilike", "value": "urgente"}]},
+                ui_config={"selected_ids": [fid for fid in (ft.get("nombre"), ft.get("apellido"), ft.get("motivo"),
+                                                             ft.get("modalidad"), ft.get("fecha_consulta")) if fid]},
+            )
+
+        # --- Políticas de enrutamiento (deben existir ANTES de crear los leads) ---
+        if team_medicos and ft.get("motivo"):
+            create_routing_policy(
+                "Telemedicina - Motivo Urgente al Equipo Médico", team_medicos, priority=5,
+                campaign_id=camp_telemed,
+                description="Consultas virtuales cuyo motivo menciona 'urgente' se derivan directo al equipo médico presencial.",
+                conditions=[{
+                    "position": 0, "lead_field_id": ft["motivo"],
+                    "operator": "ilike", "value_str": "urgente",
+                }],
+            )
+        if team_telemed:
+            create_routing_policy(
+                "Telemedicina - Resto al Equipo de Telemedicina", team_telemed, priority=25,
+                description="Política global: el resto de las consultas virtuales quedan en el equipo de Telemedicina.",
+                conditions=[{
+                    "position": 0, "native_field": "campaign_id",
+                    "operator": "eq", "value_str": str(camp_telemed),
+                }],
+            )
+
+        # --- Automatizaciones de campos (deben existir ANTES de crear los leads) ---
+        if ft.get("telefono") and ft.get("contador_contactos"):
+            create_field_automation(
+                camp_telemed, "Contador de contactos", ["ON_UPDATE"],
+                auto_group("AND", [auto_cond(ft["telefono"], "IS_NOT_EMPTY")]),
+                [auto_action("INCREMENT", ft["contador_contactos"], value=1)],
+                priority=1, description="Suma 1 cada vez que se actualiza el lead (aproximación a cantidad de contactos).",
+            )
+        if item_videollamada and ft.get("modalidad") and ft.get("link_videollamada"):
+            create_field_automation(
+                camp_telemed, "Link de videollamada por defecto", ["ON_CREATE", "ON_UPDATE"],
+                auto_group("AND", [auto_cond(ft["modalidad"], "EQUALS", item_videollamada["id"])]),
+                [auto_action("SET_VALUE_IF_EMPTY", ft["link_videollamada"], value="https://meet.medicare-salud.com.ar/sala-general")],
+                priority=2, description="Si la modalidad es Videollamada y no hay link cargado, usa la sala general por defecto.",
+            )
+
+        # --- Generar leads ---
+        log("    Generando leads telemedicina...", indent=4)
+        telemed_agent_ids = [u_ for u_ in (bruno, lucia) if u_]
+        motivos = [
+            "Consulta de control de rutina.",
+            "Renovación de receta de medicación crónica.",
+            "Dolor de cabeza persistente, de baja intensidad.",
+            "Fiebre alta y malestar general, caso urgente.",
+            "Duda sobre resultados de análisis de laboratorio.",
+            "Dolor abdominal intenso, requiere atención urgente.",
+            "Seguimiento de tratamiento en curso.",
+            "Erupción en la piel, consulta dermatológica.",
+            "Control de presión arterial.",
+            "Orientación nutricional.",
+        ]
+
+        lead_ids_tele = []
+        tagged_count_tele = 0
+        for _ in range(40):
+            futuro = datetime.now() + timedelta(days=random.randint(1, 30), hours=random.randint(8, 20))
+            vals = [
+                {"field_id": ft["nombre"],   "value": fake.first_name()},
+                {"field_id": ft["apellido"], "value": fake.last_name()},
+                {"field_id": ft["dni"],      "value": str(random.randint(10_000_000, 45_000_000))},
+                {"field_id": ft["email"],    "value": fake.email()},
+                {"field_id": ft["telefono"], "value": f"+549{random.randint(1100000000,1199999999)}"},
+                {"field_id": ft["es_primera_vez"], "value": random.choice(["true", "false"])},
+            ]
+            if ft.get("especialidad") and items_especialidad:
+                vals.append({"field_id": ft["especialidad"], "value": rand_nom_id(items_especialidad)})
+            if ft.get("modalidad") and items_modalidad:
+                vals.append({"field_id": ft["modalidad"],    "value": rand_nom_id(items_modalidad)})
+            if ft.get("motivo"):
+                vals.append({"field_id": ft["motivo"],       "value": random.choice(motivos)})
+            if ft.get("fecha_consulta") and random.random() > 0.3:
+                vals.append({"field_id": ft["fecha_consulta"], "value": futuro.strftime("%Y-%m-%d %H:%M:%S")})
+            if ft.get("costo_consulta") and random.random() > 0.2:
+                vals.append({"field_id": ft["costo_consulta"], "value": round(random.uniform(15, 120), 2)})
+            if ft.get("satisfaccion") and random.random() > 0.5:
+                vals.append({"field_id": ft["satisfaccion"], "value": random.randint(1, 5)})
+
+            asignado = random.choice(telemed_agent_ids) if telemed_agent_ids and random.random() < 0.4 else None
+
+            tag_ids_for_lead = random_tags()
+            lid = create_lead(camp_telemed, vals, assigned_to_user_id=asignado, tag_ids=tag_ids_for_lead)
+            if lid:
+                lead_ids_tele.append(lid)
+                if tag_ids_for_lead:
+                    tagged_count_tele += 1
+
+        for lid in lead_ids_tele:
+            steps = random.choices([0, 1, 2, 3], weights=[15, 25, 30, 30])[0]
+            if steps > 0 and transitions_telemed:
+                advance_lead_through_flow(lid, transitions_telemed, steps)
+            if items_contact_states and random.random() < 0.75:
+                change_lead_contact_state(lid, random_contact_state_id())
+            if random.random() > 0.5:
+                add_comment(lid, random.choice([
+                    "Paciente conectado sin problemas, consulta realizada.",
+                    "Se reprogramó la videollamada por problemas de conexión.",
+                    "Se envió receta digital por email.",
+                    "Paciente no se conectó a la hora pactada.",
+                    "Se derivó a especialidad presencial.",
+                ]))
+
+        log(f"    {len(lead_ids_tele)} leads telemedicina generados", indent=4)
+        log(f"    Leads con etiquetas: {tagged_count_tele}/{len(lead_ids_tele)}", indent=4)
+
+    total_leads = len(lead_ids_pac) + len(lead_ids_est) + len(lead_ids_tele)
+    log(f"Total de leads generados en Salud: {total_leads}", indent=2)
+
+    # -----------------------------------------------------------------------
+    # CREDENCIALES: se imprimen y además se guardan en un archivo aparte para
+    # poder probar los permisos de cada equipo/rol sin volver a correr el script.
+    # -----------------------------------------------------------------------
+    log("Credenciales para probar permisos (misma password para todos):", "INFO", indent=2)
+    log(f"Password: {SEED_USER_PASSWORD}", "INFO", indent=4)
+    for row in credentials_table:
+        log(f"[{row['team']}] {row['name']} <{row['email']}> — rol org: {row['org_role']} / rol equipo: {row['team_role']}",
+            "INFO", indent=4)
+
+    try:
+        creds_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "CREDENCIALES_SALUD.md")
+        lines = [
+            "# Credenciales de prueba — MediCare Centro de Salud\n",
+            "\n",
+            f"Password para **todos** los usuarios: `{SEED_USER_PASSWORD}`\n",
+            "\n",
+            "| Equipo | Usuario | Email | Rol de Organización | Rol de Equipo |\n",
+            "|---|---|---|---|---|\n",
+        ]
+        for row in credentials_table:
+            lines.append(f"| {row['team']} | {row['name']} | {row['email']} | {row['org_role']} | {row['team_role']} |\n")
+        with open(creds_path, "w", encoding="utf-8") as fh:
+            fh.writelines(lines)
+        log(f"Credenciales guardadas en {creds_path}", "OK", indent=2)
+    except OSError as e:
+        log(f"No se pudo escribir el archivo de credenciales: {e}", "WARN", indent=2)
 
     log(f"Organización SALUD completada ✓", indent=2)
 
@@ -1194,7 +1789,7 @@ def build_org_inmobiliaria():
     if team_ventas and camp_ventas:
         give_team_campaign_access(team_ventas, camp_ventas)
     flds_v = setup_camp_inmob(camp_ventas, "venta") if camp_ventas else {}
-    create_lead_view(camp_ventas, "Pipeline Ventas", "KANBAN", "PUBLIC") if camp_ventas else None
+    create_lead_view(camp_ventas, "Pipeline Ventas", "BOARD", "PUBLIC") if camp_ventas else None
     lead_ids_v = gen_leads_inmob(camp_ventas, flds_v, 120, "venta") if camp_ventas and flds_v else []
     log(f"    {len(lead_ids_v)} leads ventas", indent=4)
 
@@ -1204,7 +1799,7 @@ def build_org_inmobiliaria():
     if team_alq and camp_alq:
         give_team_campaign_access(team_alq, camp_alq)
     flds_a = setup_camp_inmob(camp_alq, "alquiler") if camp_alq else {}
-    create_lead_view(camp_alq, "Pipeline Alquileres", "KANBAN", "PUBLIC") if camp_alq else None
+    create_lead_view(camp_alq, "Pipeline Alquileres", "BOARD", "PUBLIC") if camp_alq else None
     lead_ids_a = gen_leads_inmob(camp_alq, flds_a, 120, "alquiler") if camp_alq and flds_a else []
     log(f"    {len(lead_ids_a)} leads alquileres", indent=4)
 
@@ -1214,7 +1809,7 @@ def build_org_inmobiliaria():
     if team_inversores and camp_inv:
         give_team_campaign_access(team_inversores, camp_inv)
     flds_i = setup_camp_inmob(camp_inv, "inversores") if camp_inv else {}
-    create_lead_view(camp_inv, "Pipeline Inversores", "LIST", "PUBLIC") if camp_inv else None
+    create_lead_view(camp_inv, "Pipeline Inversores", "TABLE", "PUBLIC") if camp_inv else None
     lead_ids_i = gen_leads_inmob(camp_inv, flds_i, 200, "inversores") if camp_inv and flds_i else []
     log(f"    {len(lead_ids_i)} leads inversores", indent=4)
 
@@ -1366,8 +1961,8 @@ def build_org_fintech():
             add_validation_rule(fc["score"], "MIN_VALUE", {"limit": 0})
             add_validation_rule(fc["score"], "MAX_VALUE", {"limit": 1000})
 
-        create_lead_view(camp_cred, "Solicitudes Pendientes", "LIST",   "PUBLIC")
-        create_lead_view(camp_cred, "Pipeline de Créditos",   "KANBAN", "PUBLIC")
+        create_lead_view(camp_cred, "Solicitudes Pendientes", "TABLE",   "PUBLIC")
+        create_lead_view(camp_cred, "Pipeline de Créditos",   "BOARD", "PUBLIC")
 
         log("    Generando leads créditos...", indent=4)
         lead_ids_cred = []
@@ -1593,7 +2188,7 @@ def build_org_concesionaria():
     log("  Campaña: Vehículos 0km", "INFO")
     camp_nuevos = create_campaign("Consultas 0km",     ws_nuevos)
     fa_n = setup_camp_autos(camp_nuevos, "nuevo") if camp_nuevos else {}
-    create_lead_view(camp_nuevos, "Pipeline 0km", "KANBAN", "PUBLIC") if camp_nuevos else None
+    create_lead_view(camp_nuevos, "Pipeline 0km", "BOARD", "PUBLIC") if camp_nuevos else None
     if team_ventas_autos and camp_nuevos:
         give_team_campaign_access(team_ventas_autos, camp_nuevos)
     lid_nuevos = gen_leads_autos(camp_nuevos, fa_n, 50, "nuevo") if camp_nuevos and fa_n else []
@@ -1601,7 +2196,7 @@ def build_org_concesionaria():
     log("  Campaña: Vehículos Usados", "INFO")
     camp_usados = create_campaign("Consultas Usados",  ws_usados)
     fa_u = setup_camp_autos(camp_usados, "usado")  if camp_usados else {}
-    create_lead_view(camp_usados, "Pipeline Usados", "KANBAN", "PUBLIC") if camp_usados else None
+    create_lead_view(camp_usados, "Pipeline Usados", "BOARD", "PUBLIC") if camp_usados else None
     if team_ventas_autos and camp_usados:
         give_team_campaign_access(team_ventas_autos, camp_usados)
     lid_usados = gen_leads_autos(camp_usados, fa_u, 30, "usado")  if camp_usados and fa_u else []
@@ -1736,7 +2331,7 @@ def build_org_marketing_b2b():
             add_validation_rule(fb["nps"], "MIN_VALUE", {"limit": 0})
             add_validation_rule(fb["nps"], "MAX_VALUE", {"limit": 10})
 
-        create_lead_view(camp_b2b, "Pipeline B2B", "KANBAN", "PUBLIC")
+        create_lead_view(camp_b2b, "Pipeline B2B", "BOARD", "PUBLIC")
 
         log("    Generando leads B2B...", indent=4)
         lead_ids_b2b = []
