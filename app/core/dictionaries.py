@@ -137,6 +137,44 @@ SYSTEM_DICTIONARIES = {
     "entities": ENTITIES,
     "system_audit_log_actions": SYSTEM_AUDIT_LOG_ACTIONS
 }
+
+
+def get_entity_delete_strategies() -> dict:
+    """
+    Devuelve dinámicamente {NombreDelModelo: delete_strategy} para cada repositorio
+    del sistema (ej: {"Lead": "HARD_DELETE_ALWAYS", "Role": "SOFT_DELETE_ALWAYS", ...}).
+
+    A diferencia del resto de SYSTEM_DICTIONARIES, esto NO es un dict estático: se
+    recorren en runtime todas las subclases de BaseRepository (recursivo, por si algún
+    repo hereda de otro repo en vez de BaseRepository directamente) y se lee el
+    atributo real `delete_strategy` de cada una. Así, si mañana cambia la estrategia
+    de un repo o se agrega uno nuevo, se refleja solo acá sin tocar este archivo.
+
+    Import local (no a nivel de módulo) a propósito: BaseRepository importa
+    app.core.security / app.core.context, y este módulo (core/dictionaries.py) lo
+    importan tanto app/db/init_data.py como app/controllers/meta_data_controller.py
+    en distintos puntos del arranque -- traerlo a nivel de módulo arriesga un ciclo
+    de imports. Es seguro llamarlo desde acá porque quien lo invoca (el endpoint
+    /metadata/dictionaries) solo corre en tiempo de request, momento en el que
+    app/routers/__init__.py ya importó todos los controllers (y por lo tanto todos
+    los repositorios) al arrancar la app.
+    """
+    from app.db.repository.base_repository import BaseRepository
+
+    def _all_subclasses(cls):
+        result = set()
+        for sub in cls.__subclasses__():
+            result.add(sub)
+            result.update(_all_subclasses(sub))
+        return result
+
+    strategies = {}
+    for repo_cls in _all_subclasses(BaseRepository):
+        model = getattr(repo_cls, "model", None)
+        if model is None:
+            continue
+        strategies[model.__name__] = repo_cls.delete_strategy
+    return strategies
     
 
 

@@ -1,6 +1,6 @@
 # Usuarios y Permisos (gestión)
 
-Documentación técnica de los endpoints de **gestión** de `User`, `Role` y `Permission` (`/users`, `/roles`, `/permissions`). El modelo de datos completo (`User`, `Role`, `Permission`, `UserOrganization`), el sistema de RBAC, los tokens y el flujo de login/invitación **ya están documentados en detalle en `autenticacion.md`** — este doc no los repite, solo cubre lo que `autenticacion.md` no cubre: los endpoints de administración de usuarios/roles/permisos fuera del flujo de `/auth/*`. Última revisión: 2026-07-10.
+Documentación técnica de los endpoints de **gestión** de `User`, `Role` y `Permission` (`/users`, `/roles`, `/permissions`). El modelo de datos completo (`User`, `Role`, `Permission`, `UserOrganization`), el sistema de RBAC, los tokens y el flujo de login/invitación **ya están documentados en detalle en `autenticacion.md`** — este doc no los repite, solo cubre lo que `autenticacion.md` no cubre: los endpoints de administración de usuarios/roles/permisos fuera del flujo de `/auth/*`. Última revisión: 2026-08-10 (se agregó `PUT /roles/{role_id}/permissions`, ver §5).
 
 ## Índice
 
@@ -66,11 +66,40 @@ Ambos endpoints están documentados también desde el ángulo de seguridad en `a
 
 ## 5. Endpoints de `/roles` y `/permissions`
 
-- **`RoleController`**: 100% genérico (`BaseController`, `enabled_methods = READ_WRITE`), sin reglas propias en `RoleService` (hereda todo de `BaseService`) — crear/editar/borrar roles de la organización activa (clonados de las plantillas `admin`/`agent`/`viewer`, ver `autenticacion.md` §7) y asignarles permisos es CRUD puro.
+- **`RoleController`**: genérico (`BaseController`, `enabled_methods = READ_WRITE`) para crear/editar/borrar roles de la organización activa (clonados de las plantillas `admin`/`agent`/`viewer`, ver `autenticacion.md` §7). `RoleUpdate` (el schema del `PUT /roles/{id}` genérico) solo permite editar `name`/`code` — **no incluye permisos**. Gestionar el set de permisos de un rol es un endpoint aparte, agregado el 2026-08-10 (ver más abajo), no forma parte del CRUD genérico.
 - **`PermissionController`**: `enabled_methods = READ_ONLY` — el catálogo de permisos (`entidad:acción`, generado automáticamente por `SYSTEM_ENTITIES_REGISTRY`, ver `autenticacion.md` §7) es de solo lectura vía API; no se crean permisos nuevos a mano desde acá.
+
+### 5.1. `PUT /roles/{role_id}/permissions` — asociar/desasociar permisos de un rol
+
+**[NUEVO 2026-08-10]** Antes de este endpoint no existía forma de cambiar los permisos de un rol vía API: la única vía era el seed (`app/db/init_data.py::seed_rbac`) o tocar la base directamente. Implementado en `RoleController.get_router()` (override que agrega la ruta encima de las genéricas de `BaseController`, mismo patrón que usa `UserController` para sus rutas custom, ver `convenciones_generales.md` §3), con la lógica en `RoleRepository.set_permissions` / `RoleService.set_permissions`.
+
+| | |
+|---|---|
+| **Método y ruta** | `PUT /roles/{role_id}/permissions` |
+| **Permiso requerido** | `role:update` (mismo permiso que ya protege editar `name`/`code` del rol — se decidió no crear un permiso separado tipo `role:manage_permissions`; quien puede editar un rol, puede cambiar sus permisos) |
+| **Path param** | `role_id`: `public_uuid` del rol |
+| **Body** | `{"permission_ids": ["<uuid>", "<uuid>", ...]}` — `public_uuid` de cada `Permission` (ver `GET /permissions`) |
+| **Semántica** | **Reemplazo total, no incremental.** La lista enviada pasa a ser el set completo de permisos del rol; cualquier permiso que el rol tenía y no está en la lista, se le quita. Mandar `"permission_ids": []` deja al rol sin ningún permiso. |
+| **Respuesta** | `RoleDetailedResponse` (el rol actualizado, con `permissions` ya reflejando el nuevo set) |
+| **Errores** | `404` si `role_id` no existe o no pertenece a la organización activa (mismo filtro de tenant que el resto de `RoleRepository`, ver `convenciones_generales.md` §6). `400` (`AppException`) si alguno de los `permission_ids` enviados no resuelve a un `Permission` existente — en ese caso no se aplica ningún cambio (falla todo o nada, no hace un reemplazo parcial). |
+| **Auditoría** | Si el set de permisos efectivamente cambió, queda un `SystemAuditLog` con `action=UPDATED` y `changes={"permissions": {"old": [...codenames...], "new": [...codenames...]}}` (lista de `codename`, no de `public_uuid`, para que el log sea legible sin tener que resolver ids). Si se manda la misma lista que ya tenía (no hay diferencia), no se audita nada — mismo criterio que el `update()` genérico de `BaseService` (ver `convenciones_generales.md` §4). |
+
+Ejemplo:
+
+```http
+PUT /roles/3f2a1c4e-.../permissions
+X-Organization-Id: <uuid-org>
+Authorization: Bearer <token>
+
+{
+  "permission_ids": ["b1e0...-perm-lead-view", "b1e0...-perm-lead-create"]
+}
+```
+
+Los permisos son entidades globales (`Permission` no tiene `organization_id`), así que no hay validación de tenant sobre `permission_ids` en sí — solo sobre el `role_id` del path.
 
 ---
 
 ## 6. Cómo se testea
 
-`tests/functional/test_permissions_and_roles.py` cubre ambos ángulos (RBAC y gestión de usuarios) en un solo archivo: clonado de roles plantilla por organización, permisos de `admin`/`agent`/`viewer`, creación de organización clona roles y asigna `admin` al creador, flujo de invitación con roles (`admin`/`agent` pueden o no invitar, rol inválido, rol default), y del lado de este documento específicamente: listar usuarios (`admin` puede, `agent`/`viewer` no pueden — `403`), obtener un usuario puntual (mismo patrón de permisos), promoción a superadmin (no-superadmin no puede, superadmin sí, agente no puede), y `test_superadmin_requires_org_header` (confirma que ni el superadmin escapa la exigencia del header `X-Organization-Id`, ver `autenticacion.md` §8). `GET /users/in-org/members` sí tiene cobertura propia (`TestUsersInOrg` en `test_security_auth.py`): miembro ve a los demás miembros de su organización, alguien ajeno a la organización recibe `403`, y la respuesta usa el schema reducido (`UserPublicResponse`) sin exponer campos sensibles como `is_superuser`. Desde 2026-07-10, `tests/functional/test_promote_to_org_owner.py` cubre `promote_to_org_owner` (5 casos): un owner puede promover a otro miembro de su propia organización (la rama antes inalcanzable), un owner puede promover a alguien que todavía no era miembro de la org (crea el `UserOrganization` con `is_owner=True`), un owner NO puede promover en una organización distinta a la suya, un miembro común (ni owner ni superadmin) recibe `403`, y control de que el superadmin sigue pudiendo promover como antes. **Sigue sin haber tests** para la regla `_assert_can_modify` de edición/borrado de la propia cuenta (§3) — queda como hueco de cobertura de este módulo.
+`tests/functional/test_permissions_and_roles.py` cubre ambos ángulos (RBAC y gestión de usuarios) en un solo archivo: clonado de roles plantilla por organización, permisos de `admin`/`agent`/`viewer`, creación de organización clona roles y asigna `admin` al creador, flujo de invitación con roles (`admin`/`agent` pueden o no invitar, rol inválido, rol default), y del lado de este documento específicamente: listar usuarios (`admin` puede, `agent`/`viewer` no pueden — `403`), obtener un usuario puntual (mismo patrón de permisos), promoción a superadmin (no-superadmin no puede, superadmin sí, agente no puede), y `test_superadmin_requires_org_header` (confirma que ni el superadmin escapa la exigencia del header `X-Organization-Id`, ver `autenticacion.md` §8). `GET /users/in-org/members` sí tiene cobertura propia (`TestUsersInOrg` en `test_security_auth.py`): miembro ve a los demás miembros de su organización, alguien ajeno a la organización recibe `403`, y la respuesta usa el schema reducido (`UserPublicResponse`) sin exponer campos sensibles como `is_superuser`. Desde 2026-07-10, `tests/functional/test_promote_to_org_owner.py` cubre `promote_to_org_owner` (5 casos): un owner puede promover a otro miembro de su propia organización (la rama antes inalcanzable), un owner puede promover a alguien que todavía no era miembro de la org (crea el `UserOrganization` con `is_owner=True`), un owner NO puede promover en una organización distinta a la suya, un miembro común (ni owner ni superadmin) recibe `403`, y control de que el superadmin sigue pudiendo promover como antes. **Sigue sin haber tests** para la regla `_assert_can_modify` de edición/borrado de la propia cuenta (§3) — queda como hueco de cobertura de este módulo. Tampoco hay tests todavía para `PUT /roles/{role_id}/permissions` (§5.1): reemplazo total de permisos, el caso de `permission_ids: []` (deja el rol sin permisos), `404` con un rol de otra organización, `400` con un `permission_id` inexistente (y que en ese caso no se aplique ningún cambio parcial), y que el audit log solo se genere cuando el set realmente cambió.

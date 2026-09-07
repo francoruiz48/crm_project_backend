@@ -6,10 +6,16 @@ from app.db.unit_of_work import UnitOfWork
 from app.models.web_form import WebForm
 from app.models.web_form_field import WebFormField
 from app.models.lead_field import LeadField
+from app.models.nomenclator_item import NomenclatorItem
 from app.db.repository.web_form_repository import WebFormRepository
 from app.db.repository.campaign_repository import CampaignRepository
 from app.services.base_service import BaseService
 from app.core.constans import SystemAuditLogAction
+
+# Tipos de campo cuyo valor se elige de una lista de opciones fija (ver
+# AUTOMATION_COMPATIBILITY_MATRIX en dictionaries.py para el mismo criterio usado en
+# field_automation) -- son los únicos para los que tiene sentido resolver nomenclator_items.
+_SELECTOR_FIELD_TYPES = ("SELECTOR", "CHECKBOX")
 
 class WebFormService(BaseService):
     repository = WebFormRepository
@@ -252,6 +258,44 @@ class WebFormService(BaseService):
     # =========================================================================
 
     @classmethod
+    def _attach_nomenclator_items(cls, session, form):
+        """
+        Puebla, para cada WebFormField cuyo LeadField sea tipo SELECTOR/CHECKBOX con un
+        nomenclador asociado, un atributo transitorio `nomenclator_items` (lista de
+        NomenclatorItemLiteResponse-compatible) con los ítems activos de ese nomenclador. Es lo
+        único que le permite al formulario público (sin login, sin acceso a /nomenclator_items/)
+        saber qué opciones mostrar -- ver comentario en WebFormFieldResponse.nomenclator_items.
+
+        No es una columna ni relación real de WebFormField: es un atributo Python seteado
+        encima del objeto ORM antes de serializarlo, que Pydantic lee vía from_attributes igual
+        que cualquier otro. Una sola query batcheada para todos los campos del formulario.
+        """
+        selector_fields = [
+            f for f in form.fields
+            if f.lead_field and f.lead_field.field_type_code in _SELECTOR_FIELD_TYPES
+            and f.lead_field.nomenclator_id is not None
+        ]
+        if not selector_fields:
+            return form
+
+        nomenclator_ids = {f.lead_field.nomenclator_id for f in selector_fields}
+        items = session.query(NomenclatorItem).filter(
+            NomenclatorItem.nomenclator_id.in_(nomenclator_ids),
+            NomenclatorItem.active.is_(True),
+        ).all()
+
+        items_by_nomenclator = {}
+        for item in items:
+            items_by_nomenclator.setdefault(item.nomenclator_id, []).append(item)
+
+        for f in form.fields:
+            f.nomenclator_items = None
+        for f in selector_fields:
+            f.nomenclator_items = items_by_nomenclator.get(f.lead_field.nomenclator_id, [])
+
+        return form
+
+    @classmethod
     def get_public_form_by_uuid(cls, uuid: str):
         """
         Obtiene un formulario mediante su UUID público.
@@ -261,16 +305,18 @@ class WebFormService(BaseService):
             form = uow.session.query(WebForm).filter_by(public_uuid=uuid, active=True).first()
             if not form:
                 raise HTTPException(
-                    status.HTTP_404_NOT_FOUND, 
+                    status.HTTP_404_NOT_FOUND,
                     detail=[{"field": "general", "message": "El formulario no existe o fue desactivado."}]
                 )
-            
+
             # Verificamos que la organización y la campaña sigan activas
             if not form.organization.active or not form.campaign.active:
                 raise HTTPException(
-                    status.HTTP_404_NOT_FOUND, 
+                    status.HTTP_404_NOT_FOUND,
                     detail=[{"field": "general", "message": "Este formulario ya no está disponible."}]
                 )
+
+            cls._attach_nomenclator_items(uow.session, form)
 
             return form
 

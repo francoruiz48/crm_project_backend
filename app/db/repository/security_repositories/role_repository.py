@@ -22,3 +22,28 @@ class RoleRepository(BaseRepository):
         if org_id is not None:
             query = query.filter(cls.model.organization_id == org_id)
         return query
+
+    @classmethod
+    def set_permissions(cls, session, role_id: int, permission_ids: list):
+        """
+        Reemplaza por completo el set de permisos de un rol (PUT, no incremental).
+        Respeta el filtro de tenant (no se puede tocar un rol de otra organización).
+        Devuelve el objeto ORM del rol (con `.permissions` ya actualizado), o None
+        si el rol no existe / no pertenece al tenant actual.
+        """
+        from app.models.security_models import Permission
+
+        query = session.query(cls.model).filter(cls.model.id == role_id)
+        query = cls._apply_tenant_filter(query, is_read_operation=False)
+        role = query.first()
+        if not role:
+            return None
+
+        permissions = (
+            session.query(Permission).filter(Permission.id.in_(permission_ids)).all()
+            if permission_ids else []
+        )
+        role.permissions = permissions
+        session.flush()
+        session.refresh(role)
+        return role

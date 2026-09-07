@@ -90,15 +90,24 @@ async def submit_public_form(uuid: str, request: Request, payload: Dict[str, Any
     # is_required se declara por campo del FORMULARIO (no confundir con LeadField.required,
     # que es un flag distinto a nivel de CRM). Un campo con hidden_value nunca se exige acá
     # porque el backend lo autocompleta más abajo, sin importar lo que mande el payload.
+    #
+    # Bug real encontrado 2026-08-15 (reportado por el usuario, al diseñar el frontend público):
+    # esto comparaba contra field_config.id, el id INTERNO de WebFormField (columna cruda de la
+    # tabla) -- pero GET /public/forms/{uuid} (WebFormFieldResponse, BaseResponse.id) expone cada
+    # campo con su `id` = public_uuid, no el interno. Un frontend armado correctamente contra el
+    # GET público (usando field.id tal como lo devuelve) nunca iba a matchear ningún campo acá:
+    # todos los valores se perdían y cualquier campo obligatorio tiraba "falta" siempre. Se
+    # corrige usando field_config.public_uuid (columna directa del modelo, sin resolución extra)
+    # en los 3 puntos de este endpoint que antes usaban field_config.id.
     missing_labels = []
     for field_config in form.fields:
         if not field_config.is_required or field_config.hidden_value is not None:
             continue
-        value = payload.get(str(field_config.id))
+        value = payload.get(field_config.public_uuid)
         if value is None or (isinstance(value, str) and not value.strip()):
             missing_labels.append(
                 field_config.custom_label
-                or (field_config.lead_field.name if field_config.lead_field else f"Campo #{field_config.id}")
+                or (field_config.lead_field.name if field_config.lead_field else f"Campo #{field_config.public_uuid}")
             )
 
     if missing_labels:
@@ -112,14 +121,16 @@ async def submit_public_form(uuid: str, request: Request, payload: Dict[str, Any
     TENANT_ORG_ID.set(form.organization_id)
 
     # 5. Mapeo Seguro e Inyección de Valores Ocultos
-    form_fields_map = {str(f.id): f for f in form.fields}
+    # Mismo bug de public_uuid vs id interno explicado arriba -- este mapa es la clave real de
+    # todo el submit (sin esto matcheado, ningún valor llega a crear el lead).
+    form_fields_map = {f.public_uuid: f for f in form.fields}
     lead_values = []
 
     for key_id, value in payload.items():
         if key_id in form_fields_map:
             field_config = form_fields_map[key_id]
             final_value = field_config.hidden_value if field_config.hidden_value is not None else value
-            
+
             lead_values.append(
                 LeadFieldValueCreate(
                     field_id=field_config.lead_field_id,
@@ -130,7 +141,7 @@ async def submit_public_form(uuid: str, request: Request, payload: Dict[str, Any
     # Forzar Valores Ocultos que no vinieron en el payload
     sent_keys = payload.keys()
     for f in form.fields:
-        if str(f.id) not in sent_keys and f.hidden_value is not None:
+        if f.public_uuid not in sent_keys and f.hidden_value is not None:
             lead_values.append(LeadFieldValueCreate(field_id=f.lead_field_id, value=f.hidden_value))
 
     # 6. Estructurar payload final e inyectar al Core

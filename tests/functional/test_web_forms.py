@@ -42,6 +42,7 @@ from app.models.lead_field_section import LeadFieldSection
 from app.models.campaign import Campaign
 from app.models.web_form import WebForm
 from app.models.web_form_field import WebFormField
+from app.models.nomenclator_item import NomenclatorItem
 from app.controllers.web_form_public_controller import limiter as public_forms_limiter
 
 
@@ -261,6 +262,52 @@ class TestPublicFormGet:
         resp = api.client.get(f"/public/forms/{form.public_uuid}")
         assert resp.status_code == 404
 
+    def test_get_public_form_includes_nomenclator_options_for_selector_field(
+        self, api, db_session, initial_structure, initial_fields
+    ):
+        """Gap real encontrado 2026-08-17 (al diseñar el frontend público, a pedido del
+        usuario): un campo SELECTOR en el formulario no traía sus opciones -- LeadFieldLiteResponse
+        (lo único que WebFormFieldResponse.lead_field expone) no incluye el nomenclador, y
+        /nomenclator_items/ requiere login, inalcanzable desde el iframe público. Sin esto, un
+        campo tipo Lista no se podía renderizar. WebFormFieldResponse.nomenclator_items debe
+        traer solo los ítems ACTIVOS; para cualquier otro tipo de campo debe venir None."""
+        campaign_id = initial_structure["campaign_id"]
+        org_id = initial_structure["org_id"]
+
+        nom = api.client.post("/nomenclators/", json={"name": "Provincias Test"}, headers=api.headers).json()
+        item_activo = api.client.post(
+            "/nomenclator_items/", json={"nomenclator_id": nom["id"], "value": "Buenos Aires"}, headers=api.headers
+        ).json()
+        item_inactivo = api.client.post(
+            "/nomenclator_items/", json={"nomenclator_id": nom["id"], "value": "Descontinuada"}, headers=api.headers
+        ).json()
+        # Desactivamos directo en DB (sin depender de si el DELETE hace soft/hard delete).
+        db_session.query(NomenclatorItem).filter_by(public_uuid=item_inactivo["id"]).update({"active": False})
+        db_session.commit()
+
+        f_selector = api.client.post("/lead_fields/", json={
+            "campaign_id": campaign_id, "name": "Provincia", "field_type_code": "SELECTOR",
+            "field_subtype_code": "SELECTOR_SIMPLE", "nomenclator_id": nom["id"],
+        }, headers=api.headers).json()
+
+        form = _create_web_form_db(db_session, org_id, campaign_id)
+        _add_web_form_field(db_session, form.id, f_selector["id"], order=1)
+        _add_web_form_field(db_session, form.id, initial_fields["nombre_id"], order=2)
+
+        resp = api.client.get(f"/public/forms/{form.public_uuid}")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+
+        by_lead_field_id = {f["lead_field"]["id"]: f for f in body["fields"]}
+
+        selector_field = by_lead_field_id[f_selector["id"]]
+        assert selector_field["nomenclator_items"] is not None
+        assert {i["value"] for i in selector_field["nomenclator_items"]} == {"Buenos Aires"}
+        assert {i["id"] for i in selector_field["nomenclator_items"]} == {item_activo["id"]}
+
+        text_field = by_lead_field_id[initial_fields["nombre_id"]]
+        assert text_field["nomenclator_items"] is None
+
 
 # =============================================================================
 # ENDPOINT PÚBLICO — POST /public/forms/{uuid}/submit — las 4 barreras
@@ -282,7 +329,7 @@ class TestPublicFormSubmit:
 
         resp = api.client.post(
             f"/public/forms/{form.public_uuid}/submit",
-            json={str(wf_field.id): "Juan Pérez", "website_url_ext": ""},
+            json={wf_field.public_uuid: "Juan Pérez", "website_url_ext": ""},
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["success"] is True
@@ -304,7 +351,7 @@ class TestPublicFormSubmit:
 
         resp = api.client.post(
             f"/public/forms/{form.public_uuid}/submit",
-            json={str(wf_field.id): "Bot", "website_url_ext": "http://bot-fill.example"},
+            json={wf_field.public_uuid: "Bot", "website_url_ext": "http://bot-fill.example"},
         )
         assert resp.status_code == 200
         assert resp.json()["success"] is True
@@ -326,8 +373,8 @@ class TestPublicFormSubmit:
         resp = api.client.post(
             f"/public/forms/{form.public_uuid}/submit",
             json={
-                str(visible_field.id): "Ana",
-                str(hidden_field.id): "Valor Intentando Sobreescribir",
+                visible_field.public_uuid: "Ana",
+                hidden_field.public_uuid: "Valor Intentando Sobreescribir",
                 "website_url_ext": "",
             },
         )
@@ -360,7 +407,7 @@ class TestPublicFormSubmit:
         # También debe rechazar el string vacío, no solo la ausencia de la clave.
         resp_empty = api.client.post(
             f"/public/forms/{form.public_uuid}/submit",
-            json={str(wf_field.id): "   ", "website_url_ext": ""},
+            json={wf_field.public_uuid: "   ", "website_url_ext": ""},
         )
         assert resp_empty.status_code == 400
 
@@ -374,7 +421,7 @@ class TestPublicFormSubmit:
 
         resp = api.client.post(
             f"/public/forms/{form.public_uuid}/submit",
-            json={str(wf_field.id): "Juan Pérez", "website_url_ext": ""},
+            json={wf_field.public_uuid: "Juan Pérez", "website_url_ext": ""},
         )
         assert resp.status_code == 200, resp.text
 
@@ -395,7 +442,7 @@ class TestPublicFormSubmit:
 
         resp = api.client.post(
             f"/public/forms/{form.public_uuid}/submit",
-            json={str(visible_field.id): "Ana", "website_url_ext": ""},
+            json={visible_field.public_uuid: "Ana", "website_url_ext": ""},
         )
         assert resp.status_code == 200, resp.text
 
@@ -415,7 +462,7 @@ class TestPublicFormSubmit:
 
         resp = api.client.post(
             f"/public/forms/{form.public_uuid}/submit",
-            json={str(wf_field.id): "Juan", "website_url_ext": ""},
+            json={wf_field.public_uuid: "Juan", "website_url_ext": ""},
         )
         assert resp.status_code == 400
         assert "token de verificación" in resp.text
@@ -434,7 +481,7 @@ class TestPublicFormSubmit:
         with patch("httpx.AsyncClient.post", AsyncMock(return_value=fake_response)):
             resp = api.client.post(
                 f"/public/forms/{form.public_uuid}/submit",
-                json={str(wf_field.id): "Juan", "captcha_token": "token-invalido", "website_url_ext": ""},
+                json={wf_field.public_uuid: "Juan", "captcha_token": "token-invalido", "website_url_ext": ""},
             )
         assert resp.status_code == 400
         assert "verificar" in resp.text.lower()
@@ -455,7 +502,7 @@ class TestPublicFormSubmit:
         with patch("httpx.AsyncClient.post", AsyncMock(return_value=fake_response)):
             resp = api.client.post(
                 f"/public/forms/{form.public_uuid}/submit",
-                json={str(wf_field.id): "Juan", "captcha_token": "token-valido", "website_url_ext": ""},
+                json={wf_field.public_uuid: "Juan", "captcha_token": "token-valido", "website_url_ext": ""},
             )
         assert resp.status_code == 200, resp.text
 
@@ -479,7 +526,7 @@ class TestPublicFormSubmit:
         with patch("httpx.AsyncClient.post", mock_post):
             resp = api.client.post(
                 f"/public/forms/{form.public_uuid}/submit",
-                json={str(wf_field.id): "Juan", "captcha_token": "token-valido", "website_url_ext": ""},
+                json={wf_field.public_uuid: "Juan", "captcha_token": "token-valido", "website_url_ext": ""},
                 headers={"X-Forwarded-For": "203.0.113.55, 10.0.0.1"},
             )
         assert resp.status_code == 200, resp.text
@@ -501,7 +548,7 @@ class TestPublicFormSubmit:
         with patch("httpx.AsyncClient.post", AsyncMock(side_effect=httpx.ConnectError("boom"))):
             resp = api.client.post(
                 f"/public/forms/{form.public_uuid}/submit",
-                json={str(wf_field.id): "Juan", "captcha_token": "token-cualquiera", "website_url_ext": ""},
+                json={wf_field.public_uuid: "Juan", "captcha_token": "token-cualquiera", "website_url_ext": ""},
             )
         assert resp.status_code == 503, resp.text
 
@@ -526,7 +573,7 @@ class TestPublicFormSubmit:
         with patch("httpx.AsyncClient.post", AsyncMock(return_value=fake_response)):
             resp = api.client.post(
                 f"/public/forms/{form.public_uuid}/submit",
-                json={str(wf_field.id): "Juan", "captcha_token": "token-cualquiera", "website_url_ext": ""},
+                json={wf_field.public_uuid: "Juan", "captcha_token": "token-cualquiera", "website_url_ext": ""},
             )
         assert resp.status_code == 503, resp.text
 
@@ -543,7 +590,7 @@ class TestPublicFormSubmit:
 
         resp = api.client.post(
             f"/public/forms/{form.public_uuid}/submit",
-            json={str(wf_field.id): "Juan", "website_url_ext": ""},
+            json={wf_field.public_uuid: "Juan", "website_url_ext": ""},
             headers={"Origin": "https://sitio-no-autorizado.com"},
         )
         assert resp.status_code == 403
@@ -562,7 +609,7 @@ class TestPublicFormSubmit:
 
         resp = api.client.post(
             f"/public/forms/{form.public_uuid}/submit",
-            json={str(wf_field.id): "Juan", "website_url_ext": ""},
+            json={wf_field.public_uuid: "Juan", "website_url_ext": ""},
             headers={"Origin": "https://www.miweb.com"},
         )
         assert resp.status_code == 200, resp.text

@@ -383,6 +383,15 @@ class BaseRepository:
         rows = session.query(cls.model.public_uuid, cls.model.id).filter(cls.model.public_uuid.in_(public_uuids)).all()
         return {row[0]: row[1] for row in rows}
 
+    @classmethod
+    def get_public_uuid_by_internal_id(cls, session, internal_id: int) -> Optional[str]:
+        """Sentido inverso de get_internal_id_by_public_uuid: resuelve un id interno al
+        public_uuid. None si no existe ninguna fila con ese id. Usado en el borde de lectura de
+        la API (ej. FieldAutomationService) cuando un valor se guardó resuelto a id interno y
+        hay que devolverlo al front en su formato público."""
+        row = session.query(cls.model.public_uuid).filter(cls.model.id == internal_id).first()
+        return row[0] if row else None
+
     # ----------------- Resolución de FKs embebidas en filtros (Fase 3, parte de Fase 4 adelantada) -----------------
     # El front ahora solo conoce public_uuid, así que un filtro tipo ?campaign_id=<uuid>
     # (usado en GET_ALL de cualquier módulo, ej. GET /lead_fields?campaign_id=...) llega

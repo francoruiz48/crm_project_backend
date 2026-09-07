@@ -3,6 +3,9 @@ from datetime import datetime, timedelta
 from app.models.audit.lead_activity_history import LeadActivityHistory
 from app.models.lead import Lead
 from app.models.lead_field import LeadField
+from app.models.team import Team
+from app.models.security_models import User, UserOrganization
+from app.models.organization import Organization
 
 
 def _internal_lead_id(db_session, lead_uuid):
@@ -916,6 +919,93 @@ def test_native_field_condition_and_action_resolve_public_uuid(api, automations_
     assert body["current_state"]["id"] == target_lead_state["id"]
 
 
+def test_action_set_value_native_team_and_assigned_user(api, automations_setup, db_session):
+    """Cobertura adicional al bug de 2026-08-06 (ver test de arriba): la misma resolución
+    public_uuid -> id interno, pero para los otros dos campos nativos writable que ese test
+    no cubrió -- Equipo (team_id, -3) y Asignado a (assigned_to_user_id, -4). SET_VALUE con
+    el public_uuid real de Team/User, tal como lo manda ActionRow.tsx."""
+    s = automations_setup
+    org_id = s["org_id"]
+    # Bug real encontrado 2026-08-11: OrganizationResponse.id es el public_uuid (Fase 3,
+    # ver backend/AGENTS.md), no el id interno -- automations_setup lo yieldea tal cual
+    # porque para el resto del fixture (payloads JSON hacia la API) eso es correcto, la
+    # API lo resuelve sola. Acá en cambio se construye un Team por ORM directo, que
+    # espera el id interno (int) real en la columna FK organization_id.
+    org_internal_id = db_session.query(Organization.id).filter_by(public_uuid=org_id).scalar()
+
+    team = Team(name="Equipo Auto Test", organization_id=org_internal_id)
+    db_session.add(team)
+    db_session.flush()
+    user = User(name="Auto", last_name="User", email=f"auto_user_{org_id}@test.com")
+    db_session.add(user)
+    db_session.flush()
+    db_session.add(UserOrganization(user_id=user.id, organization_id=org_internal_id, active=True))
+    db_session.commit()
+
+    _rule(api, s["campaign_id"], "Regla Equipo y Asignado", "ON_UPDATE",
+          _cond(s["f_condicion_id"], "EQUALS", ["asignar"]),
+          [
+              {"type": "SET_VALUE", "target_field_id": -3, "value": team.public_uuid},
+              {"type": "SET_VALUE", "target_field_id": -4, "value": user.public_uuid},
+          ])
+
+    res = _update(api, s["lead_id"], s["campaign_id"],
+                  [{"field_id": s["f_condicion_id"], "value": "asignar"}], api.headers)
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["team"]["id"] == team.public_uuid
+    assert body["assigned_to_user"]["id"] == user.public_uuid
+
+
+def test_native_field_condition_on_team(api, automations_setup, db_session):
+    """Condición sobre un campo nativo tipo NATIVE_ID que no fuera Estado/Etapa (ya cubierto
+    arriba): Equipo (team_id, -3). Antes del fix de 2026-08-06 esta condición nunca
+    matcheaba -- comparaba el uuid crudo del Team contra el id interno real del lead."""
+    s = automations_setup
+    org_id = s["org_id"]
+    # Mismo bug que en el test de arriba (public_uuid vs id interno en un ORM directo).
+    org_internal_id = db_session.query(Organization.id).filter_by(public_uuid=org_id).scalar()
+
+    team = Team(name="Equipo Condicion Test", organization_id=org_internal_id)
+    db_session.add(team)
+    db_session.commit()
+
+    api.bulk_assign(lead_ids=[s["lead_id"]], target_team_id=team.public_uuid)
+
+    _rule(api, s["campaign_id"], "Regla Condicion Equipo", "ON_UPDATE",
+          _cond(-3, "EQUALS", [team.public_uuid]),
+          [{"type": "SET_VALUE", "target_field_id": s["f_resultado_id"], "value": "Equipo Correcto"}])
+
+    res = _update(api, s["lead_id"], s["campaign_id"],
+                  [{"field_id": s["f_condicion_id"], "value": "cualquier cosa"}], api.headers)
+
+    assert res.status_code == 200
+    assert _vals(res).get(s["f_resultado_id"]) == "Equipo Correcto"
+
+
+def test_native_field_condition_on_created_by_readonly(api, automations_setup):
+    """Condición sobre un campo nativo de solo lectura (Usuario Creador, created_by, -7) --
+    a diferencia de Estado/Etapa/Equipo/Asignado a, este no se puede usar como destino de
+    una acción (writable=False en native_lead_fields.py), solo como condición. El lead de
+    automations_setup lo crea el propio cliente de test (superadmin), así que su
+    created_by ya apunta a ese usuario."""
+    s = automations_setup
+    me = api.client.get("/auth/me", headers=api.headers)
+    assert me.status_code == 200
+    my_user_id = me.json()["id"]
+
+    _rule(api, s["campaign_id"], "Regla Condicion Creador", "ON_UPDATE",
+          _cond(-7, "EQUALS", [my_user_id]),
+          [{"type": "SET_VALUE", "target_field_id": s["f_resultado_id"], "value": "Creado por mi"}])
+
+    res = _update(api, s["lead_id"], s["campaign_id"],
+                  [{"field_id": s["f_condicion_id"], "value": "cualquier cosa"}], api.headers)
+
+    assert res.status_code == 200
+    assert _vals(res).get(s["f_resultado_id"]) == "Creado por mi"
+
+
 # =============================================================================
 # VULNERABILIDADES Y DEFENSAS
 # =============================================================================
@@ -1009,3 +1099,76 @@ def test_wrong_event_rule_does_not_fire(api, automations_setup):
 
     assert res.status_code == 200
     assert _vals(res).get(s["f_resultado_id"]) != "No deberia"
+
+
+# =============================================================================
+# LECTURA DEL DETALLE (GET .../{id}?detailed=true) -- value debe volver como public_uuid
+# =============================================================================
+# Bug real encontrado 2026-08-15 (reportado por el usuario: "no veo el valor con que hace la
+# accion o la condicion"): field_automation_service.py resuelve `value` de public_uuid a id
+# interno al GUARDAR (para que el motor pueda comparar/asignar contra LeadFieldValue real --
+# ver bugs de 2026-08-01/2026-08-06 arriba), pero nunca existía el paso inverso al LEER. El
+# detalle devolvía `value` en id interno crudo, que nunca matchea ninguna opción del <Select>
+# del front (arma sus opciones con public_uuid, igual que el resto de la API) -- el valor se
+# veía vacío aunque el dato estuviera guardado. Estos tests cubren el camino de lectura
+# (_unresolve_*, FieldAutomationService.get_by_id) que los tests de arriba no cubrían -- esos
+# solo verifican que la REGLA se dispare (id interno correcto puertas adentro), no lo que
+# devuelve el GET.
+
+def test_get_field_automation_returns_public_uuid_value_for_selector_condition_and_action(api, automations_setup):
+    """El detalle de una automatización con una condición y una acción sobre un campo SELECTOR
+    debe devolver `value` como el public_uuid real del NomenclatorItem (item_a_id/item_b_id),
+    no como el id interno en el que quedó resuelto al guardar."""
+    s = automations_setup
+
+    rule = _rule(api, s["campaign_id"], "Regla Detalle Selector", "ON_UPDATE",
+                 _cond(s["f_lista_id"], "CONTAINS", [s["item_a_id"]]),
+                 [{"type": "SET_VALUE", "target_field_id": s["f_lista_id"], "value": [s["item_b_id"]]}]).json()
+
+    res = api.client.get(f"/field_automations/{rule['id']}", params={"detailed": "true"}, headers=api.headers)
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["conditions"]["rules"][0]["value"] == [s["item_a_id"]]
+    assert body["actions"][0]["value"] == [s["item_b_id"]]
+
+
+def test_get_field_automation_returns_public_uuid_value_for_native_condition_and_action(api, automations_setup, db_session):
+    """Mismo caso que el test de arriba, para campos nativos tipo NATIVE_ID (Equipo, -3):
+    el detalle debe devolver `value` como el public_uuid real del Team, no como el id interno."""
+    s = automations_setup
+    org_internal_id = db_session.query(Organization.id).filter_by(public_uuid=s["org_id"]).scalar()
+
+    team_a = Team(name="Equipo Detalle A", organization_id=org_internal_id)
+    team_b = Team(name="Equipo Detalle B", organization_id=org_internal_id)
+    db_session.add_all([team_a, team_b])
+    db_session.commit()
+
+    rule = _rule(api, s["campaign_id"], "Regla Detalle Equipo", "ON_UPDATE",
+                 _cond(-3, "EQUALS", [team_a.public_uuid]),
+                 [{"type": "SET_VALUE", "target_field_id": -3, "value": team_b.public_uuid}]).json()
+
+    res = api.client.get(f"/field_automations/{rule['id']}", params={"detailed": "true"}, headers=api.headers)
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["conditions"]["rules"][0]["value"] == [team_a.public_uuid]
+    assert body["actions"][0]["value"] == team_b.public_uuid
+
+
+def test_get_field_automation_value_untouched_for_plain_field(api, automations_setup):
+    """Control: una acción/condición sobre un campo de texto plano (sin resolución de por
+    medio) debe devolver `value` sin ninguna transformación -- la resolución inversa no debe
+    tocar valores que no son ids."""
+    s = automations_setup
+
+    rule = _rule(api, s["campaign_id"], "Regla Detalle Texto Plano", "ON_UPDATE",
+                 _cond(s["f_condicion_id"], "EQUALS", ["Disparar"]),
+                 [{"type": "SET_VALUE", "target_field_id": s["f_resultado_id"], "value": "Magia"}]).json()
+
+    res = api.client.get(f"/field_automations/{rule['id']}", params={"detailed": "true"}, headers=api.headers)
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["conditions"]["rules"][0]["value"] == ["Disparar"]
+    assert body["actions"][0]["value"] == "Magia"

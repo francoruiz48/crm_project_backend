@@ -14,11 +14,22 @@ from app.models.lead_field import LeadField
 from app.core.security import UserContext
 
 # Atributos nativos del modelo Lead que pueden usarse como filtro en /search.
-# No incluir campos sensibles de infraestructura (organization_id, created_by, etc.)
+# No incluir campos sensibles de infraestructura (organization_id, etc.)
+#
+# Bug real encontrado 2026-08-10: created_by/updated_by quedaban afuera de este set a
+# propósito, pero el frontend sí los expone como filtros nativos ("Usuario Creador"/
+# "Usuario Modificador", ver nativeLeadFields.ts ids -7/-8). Al no estar acá, el filtro
+# no entraba por la rama de filtros nativos (resuelta con resolve_fk_filter_value, que
+# ya sabe resolver FKs como esta) y caía por descarte en la rama de filtros EAV/custom,
+# que trata cualquier field_id no-nativo como uuid de un LeadField -- como "created_by"/
+# "updated_by" no son uuid de ningún LeadField real, _resolve_custom_field_id devolvía el
+# sentinel -1 y el filtro nunca matcheaba nada (0 resultados garantizados, sin importar
+# los leads que hubiera). Son FKs reales (Lead.created_by/updated_by → user.id), así que
+# alcanza con sumarlos acá para que se resuelvan igual que assigned_to_user_id.
 LEAD_NATIVE_FILTER_FIELDS = {
     "campaign_id", "current_state_id", "contact_state_id",
     "team_id", "assigned_to_user_id", "active",
-    "created_at", "updated_at",
+    "created_at", "updated_at", "created_by", "updated_by",
 }
 
 class LeadRepository(BaseRepository):
@@ -35,37 +46,56 @@ class LeadRepository(BaseRepository):
 
     #Helper para aplicar ordenamiento dinámico en get_all y search
     @classmethod
-    def _apply_dynamic_ordering(cls, query, order_by: str, ascending: bool):
+    def _apply_dynamic_ordering(cls, session, query, order_by: str, ascending: bool):
         """
-        Maneja el ordenamiento nativo (ej: created_at) y el ordenamiento 
-        por campos dinámicos (ej: order_by='15' donde 15 es un field_id).
+        Maneja el ordenamiento nativo (ej: created_at) y el ordenamiento
+        por campos dinámicos (LeadField custom).
+
+        Bug real encontrado 2026-08-11 (reportado por el usuario: "el ordenar de lead no
+        anda"): el CASO 2 de abajo solo reconocía `order_by` como field_id si era un string
+        100% numérico (`"15"`). Pero el front (LeadTablePresentation.tsx::orderKey =
+        column.nativeKey ?? column.id) manda el `public_uuid` del LeadField para cualquier
+        columna custom -- ningún campo nativo usa esta rama (esos ya matchean por nombre de
+        columna real en el CASO 1, vía `nativeKey`). Un uuid nunca pasa `.isdigit()`, así
+        que CUALQUIER intento de ordenar por una columna custom caía siempre al fallback
+        (id DESC) sin ningún error visible, ni para el front ni en los logs. Se agrega la
+        resolución uuid -> id interno (mismo patrón que el resto del archivo, ver
+        `_resolve_custom_field_id` en `search()`), antes de recién ahí caer al fallback.
         """
         if not order_by:
             return query.order_by(cls.model.id.desc())
 
-        # CASO 1: Es un campo nativo de la tabla Lead (ej: id, created_at, active)
+        # CASO 1: Es un campo nativo de la tabla Lead (ej: id, created_at, active,
+        # contact_state_id -- lo que el front manda vía `nativeKey` para columnas nativas)
         if hasattr(cls.model, order_by):
             column = getattr(cls.model, order_by)
             return query.order_by(column.asc() if ascending else column.desc())
 
-        # CASO 2: Es un campo dinámico (Asumimos que el string es el field_id)
+        # CASO 2: Campo custom (LeadField) -- acepta tanto el id interno como string
+        # numérico (compatibilidad hacia atrás / uso interno) como el public_uuid real
+        # que manda el front (Fase 3/4, ver comentario de arriba).
+        field_id = None
         if order_by.isdigit():
             field_id = int(order_by)
-            
+        else:
+            from app.db.repository.lead_field_repository import LeadFieldRepository
+            field_id = LeadFieldRepository.get_internal_id_by_public_uuid(session, order_by)
+
+        if field_id is not None:
             # Hacemos un OUTER JOIN específico solo para traer el valor de este campo
             # Usamos un alias para no chocar con otros JOINs de LeadFieldValue en la búsqueda
             sort_lv = aliased(LeadFieldValue)
             query = query.outerjoin(
-                sort_lv, 
+                sort_lv,
                 and_(sort_lv.lead_id == cls.model.id, sort_lv.field_id == field_id)
             )
-            
+
             # Ordenamos por el valor string (Postgres hará un orden alfabético por defecto)
-            # Para números perfectos, idealmente el field_type debería definir el cast, 
+            # Para números perfectos, idealmente el field_type debería definir el cast,
             # pero el orden alfabético de strings suele bastar para la grilla
             return query.order_by(sort_lv.value.asc() if ascending else sort_lv.value.desc())
 
-        # Fallback si no machea nada
+        # Fallback: no matchea ninguna columna real ni ningún LeadField válido
         return query.order_by(cls.model.id.desc())
 
     @classmethod
@@ -141,17 +171,26 @@ class LeadRepository(BaseRepository):
         ascending = kwargs.pop('ascending', True)
 
         # Aplicamos nuestro ordenamiento especial EAV
-        query = cls._apply_dynamic_ordering(query, order_by, ascending)
+        query = cls._apply_dynamic_ordering(session, query, order_by, ascending)
 
         # DELEGAMOS AL PADRE
-        # Nota: Al atrapar 'search' y 'search_fields' en la firma de esta función, 
+        # Nota: Al atrapar 'search' y 'search_fields' en la firma de esta función,
         # evitamos que pasen en los **kwargs y que el padre intente buscar de nuevo.
+        # `ascending` SÍ se reenvía a propósito (aunque `order_by` ya se consumió acá
+        # arriba): BaseRepository.get_all() siempre agrega su propio order_by de
+        # desempate por `id` cuando no recibe uno (ver default_sort_column="id") --
+        # como SQLAlchemy acumula order_by en vez de reemplazarlo, ese desempate no
+        # pisa el ordenamiento real ya aplicado arriba, pero si no le pasamos
+        # `ascending` explícito, ese desempate quedaba siempre ascendente sin importar
+        # lo que haya pedido el usuario. Pasándolo, el desempate por id respeta la
+        # misma dirección que el ordenamiento principal.
         return super().get_all(
             session=session,
             user_context=user_context,
             only_active=only_active,
             detailed=detailed,
             base_query=query,
+            ascending=ascending,
             **kwargs
         )
 
@@ -175,18 +214,21 @@ class LeadRepository(BaseRepository):
             campaign_id = cls.resolve_fk_filter_value(session, "campaign_id", campaign_id)
             db_query = db_query.filter(cls.model.campaign_id == campaign_id)
 
-        # Búsqueda de texto libre (mismo criterio que get_all: campos STRING/SELECTOR,
-        # ilike sobre LeadFieldValue.value y NomenclatorItem.value). Antes este parámetro
-        # ni siquiera llegaba hasta acá -- el modo Tablero mandaba `query` pero el
-        # controller/servicio lo descartaban en silencio, así que nunca filtraba nada.
+        # Búsqueda de texto libre -- ilike sobre LeadFieldValue.value y
+        # NomenclatorItem.value, pero SOLO en los campos que arman el título del lead
+        # (LeadField.title_order IS NOT NULL). Antes buscaba en cualquier campo
+        # STRING/SELECTOR de la campaña (mismo criterio que get_all), lo que hacía que el
+        # buscador de la lista de leads devolviera resultados por coincidencias en campos
+        # que ni se ven en la tarjeta/fila (ej. una nota interna) -- pedido del usuario
+        # para acotarlo solo a los campos que arman el título, que es lo que el usuario
+        # identifica visualmente como "nombre" del lead.
         text_search_applied = False
         if query:
-            TEXT_SEARCH_TYPES = ('STRING', 'SELECTOR')
             db_query = db_query.join(LeadFieldValue, cls.model.field_values)
             db_query = db_query.join(LeadField, LeadFieldValue.field)
             db_query = db_query.outerjoin(LeadFieldValue.nomenclator_items)
             db_query = db_query.filter(
-                LeadField.field_type_code.in_(TEXT_SEARCH_TYPES),
+                LeadField.title_order.isnot(None),
                 or_(
                     LeadFieldValue.value.ilike(f"%{query}%"),
                     NomenclatorItem.value.ilike(f"%{query}%"),
@@ -230,6 +272,7 @@ class LeadRepository(BaseRepository):
         # Un JOIN separado por field_id distinto; condiciones del mismo field_id → OR.
         from collections import defaultdict
         from app.db.repository.lead_field_repository import LeadFieldRepository
+        from app.db.repository.nomenclator_item_repository import NomenclatorItemRepository
 
         raw_custom_filters = [
             f for f in search_params.filters
@@ -257,13 +300,48 @@ class LeadRepository(BaseRepository):
         for f in raw_custom_filters:
             eav_groups[_resolve_custom_field_id(f.field_id)].append(f)
 
+        # Mismo bug de fondo que field_id arriba, del lado del VALOR: para eq/in/neq sobre un
+        # campo SELECTOR, f.value llega como public_uuid de NomenclatorItem (LeadFilters.tsx
+        # arma value_ids con item.id, que a nivel API siempre es public_uuid -- ver
+        # nomenclatorItemsService/getNomenclatorItems), pero NomenclatorItem.id es el id interno
+        # (entero). Sin resolver, `NomenclatorItem.id == val` rompía con el mismo
+        # "invalid input syntax for type integer" que field_id, apenas se filtraba un lead
+        # por un campo Selector/Lista. Se resuelve en bloque, mismo helper que field_id.
+        raw_item_uuids = set()
+        for filters in eav_groups.values():
+            for f in filters:
+                if f.operator in ("eq", "neq") and isinstance(f.value, str) and not f.value.lstrip("-").isdigit():
+                    raw_item_uuids.add(f.value)
+                elif f.operator == "in" and isinstance(f.value, list):
+                    raw_item_uuids.update(v for v in f.value if isinstance(v, str) and not v.lstrip("-").isdigit())
+        item_uuid_to_internal_id = NomenclatorItemRepository.get_internal_ids_by_public_uuids(session, list(raw_item_uuids)) if raw_item_uuids else {}
+
+        def _resolve_item_id(v):
+            if isinstance(v, int):
+                return v
+            if isinstance(v, str) and v.lstrip("-").isdigit():
+                return int(v)
+            # UUID no encontrado -> sentinel que no matchea ningún NomenclatorItem real.
+            return item_uuid_to_internal_id.get(v, cls._MISSING_FK_SENTINEL) if isinstance(v, str) else v
+
         # ── Filtros EAV (campos custom, un JOIN por field_id) ─────────────────
         for field_id, filters in eav_groups.items():
             lv_alias = aliased(LeadFieldValue)
             db_query = db_query.join(lv_alias, cls.model.field_values)
 
             db_val = lv_alias.value
-            per_filter_conds = []   # una condición de valor por filtro del grupo → se combinan con OR
+            per_filter_conds = []   # condiciones no-rango del grupo → se combinan con OR
+            # Bug real encontrado 2026-08-11 (reportado por el usuario -- filtro de rango NUMBER
+            # "no estaría filtrando bien"): un filtro Desde/Hasta de NUMBER o DATE llega desde el
+            # front como DOS LeadFilter separados sobre el mismo field_id (uno "gte", uno "lte" --
+            # ver LeadFilters.tsx::onSubmit), que antes cae acá en el mismo grupo que
+            # per_filter_conds y terminaba OR-eado con el resto (línea de abajo, value_cond).
+            # Eso arma "valor >= Desde OR valor <= Hasta", que matchea casi cualquier valor en vez
+            # de "Desde <= valor <= Hasta". El OR tiene sentido para el caso que originó ese
+            # diseño (dos filas de texto: "contiene 'Juan'" OR "contiene 'Pedro'"), pero no para
+            # gt/lt/gte/lte del mismo campo, que en la UI siempre representan los dos extremos de
+            # UN rango y deben ANDearse entre sí.
+            range_conds = []   # condiciones gt/lt/gte/lte del grupo → se combinan con AND
 
             for f in filters:
                 val = f.value
@@ -292,7 +370,8 @@ class LeadRepository(BaseRepository):
                     if isinstance(val, list):
                         val_strs = [str(v).lower() for v in val]
                         cond_text = func.lower(db_val).in_(val_strs)
-                        cond_relation = lv_alias.nomenclator_items.any(NomenclatorItem.id.in_(val))
+                        resolved_ids = [_resolve_item_id(v) for v in val]
+                        cond_relation = lv_alias.nomenclator_items.any(NomenclatorItem.id.in_(resolved_ids))
                         cond = or_(cond_text, cond_relation)
 
                 # ---------------------------------------------------------
@@ -317,12 +396,21 @@ class LeadRepository(BaseRepository):
                 # ---------------------------------------------------------
                 elif f.operator == "eq":
                     cond_text = func.lower(db_val) == str(val).lower()
-                    cond_relation = lv_alias.nomenclator_items.any(NomenclatorItem.id == val)
+                    cond_relation = lv_alias.nomenclator_items.any(NomenclatorItem.id == _resolve_item_id(val))
                     cond = or_(cond_text, cond_relation)
 
                 elif f.operator == "neq":
-                    cond_text = func.lower(db_val) != str(val).lower()
-                    cond_relation = ~lv_alias.nomenclator_items.any(NomenclatorItem.id == val)
+                    # Bug real encontrado 2026-08-06 (al testear el fix de SELECTOR de arriba):
+                    # LeadFieldValue.value queda NULL para campos SELECTOR (la selección real
+                    # vive en la tabla M2M nomenclator_items, ver
+                    # lead_field_value_repository.py). `NULL != X` evalúa a NULL en SQL (ni
+                    # true ni false), así que el AND de abajo descartaba la fila SIEMPRE que
+                    # el campo fuera un SELECTOR -- "neq" nunca devolvía nada. Se cubre ese
+                    # caso tratando "sin valor de texto" como "no es igual" (no hay texto que
+                    # comparar), dejando que cond_relation sea quien realmente decida para
+                    # campos SELECTOR.
+                    cond_text = or_(db_val.is_(None), func.lower(db_val) != str(val).lower())
+                    cond_relation = ~lv_alias.nomenclator_items.any(NomenclatorItem.id == _resolve_item_id(val))
                     cond = and_(cond_text, cond_relation)
 
                 # ---------------------------------------------------------
@@ -335,11 +423,24 @@ class LeadRepository(BaseRepository):
                     cond = db_val.ilike(f"%{val}%")
 
                 if cond is not None:
-                    per_filter_conds.append(cond)
+                    if f.operator in ("gt", "lt", "gte", "lte"):
+                        range_conds.append(cond)
+                    else:
+                        per_filter_conds.append(cond)
 
+            # range_conds (Desde/Hasta) se ANDean entre sí; per_filter_conds (todo lo demás,
+            # ej. múltiples "contiene") se sigue OR-eando como antes. Si un mismo campo tuviera
+            # de los dos tipos a la vez (no lo arma la UI hoy), se combinan con AND -- cada
+            # bloque configurado para el campo termina restringiendo más, no ampliando.
+            combined = []
+            if range_conds:
+                combined.append(and_(*range_conds) if len(range_conds) > 1 else range_conds[0])
             if per_filter_conds:
+                combined.append(or_(*per_filter_conds) if len(per_filter_conds) > 1 else per_filter_conds[0])
+
+            if combined:
                 field_cond = lv_alias.field_id == field_id
-                value_cond = or_(*per_filter_conds) if len(per_filter_conds) > 1 else per_filter_conds[0]
+                value_cond = and_(*combined) if len(combined) > 1 else combined[0]
                 db_query = db_query.filter(and_(field_cond, value_cond))
 
         # Si hubo JOINs EAV y/o búsqueda de texto libre, el query tiene filas duplicadas
@@ -350,7 +451,7 @@ class LeadRepository(BaseRepository):
             id_subq = db_query.order_by(False).with_entities(cls.model.id).distinct().subquery()
             db_query = session.query(cls.model).filter(cls.model.id.in_(id_subq))
 
-        db_query = cls._apply_dynamic_ordering(db_query, order_by, ascending)
+        db_query = cls._apply_dynamic_ordering(session, db_query, order_by, ascending)
 
         # Paginación y Ejecución
         total, db_query = cls._paginate(db_query, page, page_size)

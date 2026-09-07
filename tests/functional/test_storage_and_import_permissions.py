@@ -11,7 +11,7 @@ Bugs corregidos (2026-07-10):
 - `POST /import/process` exigía estar logueado, pero no un permiso específico
   (cualquier usuario autenticado de la organización podía crear leads vía
   importación, sin necesidad del permiso `lead:create`).
-- `GET /export/{campaign_id}` exigía estar logueado, pero no un permiso
+- `POST /export/{campaign_id}` (antes GET, ver bug de filtros 2026-08-11) exigía estar logueado, pero no un permiso
   específico (cualquier usuario autenticado podía exportar leads de cualquier
   campaña a la que tuviera acceso de lectura por tenant, sin el permiso
   `lead:view`).
@@ -124,8 +124,9 @@ class TestImportExportPermissionChecks:
 
         _apply_user_overrides(app, no_perms_user, org_id)
         try:
-            resp = client.get(
+            resp = client.post(
                 f"/export/{campaign_id}",
+                json={},
                 headers={"X-Organization-Id": str(org_id)},
             )
             assert resp.status_code == 403
@@ -147,5 +148,5 @@ class TestImportExportPermissionChecks:
         )
         assert resp_import.status_code != 403
 
-        resp_export = api.client.get(f"/export/{campaign_id}", headers=api.headers)
+        resp_export = api.client.post(f"/export/{campaign_id}", json={}, headers=api.headers)
         assert resp_export.status_code == 200
